@@ -1,6 +1,6 @@
 # FreeRDP: жизненный цикл клиента в VibeRDPCore
 
-Сверено по исходникам FreeRDP 3.32.0 и тестам `core/tests` — 2026-09-24.
+Сверено по исходникам FreeRDP 3.32.0 и тестам `core/tests` — 2026-09-24, дополнено на задаче 1.1.
 Реализация — `core/src/session.c`, публичный API — `core/include/VibeRDPCore/VibeRDPCore.h`.
 
 ## Поток сессии и остановка
@@ -29,19 +29,56 @@
 
 **Применение:** VibeRDPCore выключает все три функции перед подключением; вернуть их можно, только добавив rdpdr и rdpsnd в сборку — развилка 9 в [decisions.md](../../decisions.md).
 
-## Сертификаты и учётные данные по умолчанию
+## Консольные колбэки клиентской библиотеки
 
 **Суть:**
-- Если не заданы ни `VerifyCertificateEx`, ни `AutoAcceptCertificate`, FreeRDP отклоняет сертификат: `accept_certificate` начинается с 0 (`libfreerdp/crypto/tls.c:1897`)
-- Хранилище принятых сертификатов FreeRDP ведёт в `FreeRDP_ConfigPath` (по умолчанию `~/.config/freerdp`); тесты до TLS не доходят и туда не пишут
+- `freerdp_client_context_new` ставит колбэки для консоли (`set_default_callbacks`, `client/common/client.c:128`): `AuthenticateEx`, `ChooseSmartcard`, `PresentGatewayMessage` и `GetAccessToken` читают stdin, `VerifyCertificateEx`, `VerifyChangedCertificateEx` и `LogonErrorInfo` печатают в него
+- Проверено: без имени пользователя подключение к серверу, выбравшему TLS, напечатало `Username:` и попыталось читать stdin — в приложении это тихая поломка
+- `ClientNew` из точек входа вызывается после них и может их заменить; повторно их ставит только старт клиента с `UseCommonStdioCallbacks`, а эта настройка по умолчанию выключена и включается лишь опцией командной строки
+- Без `AuthenticateEx` движок продолжает без вопросов: `utils_authenticate` возвращает `AUTH_NO_CREDENTIALS` (`libfreerdp/core/utils.c:252-256`); так же обнуляет колбэки собственный тест FreeRDP (`libfreerdp/core/test/TestConnect.c:29`)
 
-**Применение:** до задачи 1.1 VibeRDPCore не принимает ни одного сертификата — безопасное поведение по умолчанию; колбэк проверки появится вместе с диалогом.
+**Применение:** `clientNew` в `core/src/session.c` обнуляет все семь; запрос пароля во время подключения — задача 1.5.
+
+## Сертификат сервера проверяет приложение
+
+**Суть:**
+- С `ExternalCertificateManagement` FreeRDP не смотрит ни в своё хранилище `known_hosts`, ни в хранилище OpenSSL и отдаёт решение `VerifyX509Certificate` (`libfreerdp/crypto/tls.c:1814`)
+- Колбэк получает всю цепочку в PEM: сертификат сервера, затем цепочку пира (`freerdp_certificate_get_pem_ex` с `withCertChain`); на клиенте OpenSSL начинает цепочку пира с того же сертификата сервера, так что он приходит дважды
+- Ответ больше нуля принимает сертификат только для этого подключения, ноль и меньше рвут TLS-рукопожатие (`tls.c:1095`); хранилище в этом режиме только вычисляет пути и ничего не пишет
+- FreeRDP проверяет сертификат после того, как TLS-рукопожатие завершилось: сервер видит успешное рукопожатие и при отказе, а согласие видно лишь по тому, что клиент пошёл дальше — прислал первые данные RDP
+- Отказ даёт `ERRCONNECT_TLS_CONNECT_FAILED` — тот же код, что и сбой самого рукопожатия; различить их может только тот, кто отказал, поэтому ядро помнит свой отказ и сообщает категорию `CertificateRejected`
+
+**Применение:**
+- `verifyX509Certificate` в ядре отдаёт цепочку колбэку `verifyCertificate` и ждёт `VRCSessionResolveCertificate` вместе с событием прерывания `freerdp_abort_event`: отмена снимает ожидание за ~1 мс и не считается ошибкой
+- Без колбэка `verifyCertificate` сертификат отклоняется без вопросов
+- Доверие решает клиент — [macos/certificateTrust.md](../macos/certificateTrust.md)
+
+## Повтор подключения после обрыва транспорта
+
+**Суть:** если `rdp_client_connect` кончается ошибкой `FREERDP_ERROR_CONNECT_TRANSPORT_FAILED`, `freerdp_connect` один раз переподключается сам (`libfreerdp/core/freerdp.c:225`); принятый в этой сессии сертификат на повторе не спрашивается снова.
+
+**Применение:** тест `certificateAccepted` видит, что клиент дважды прошёл поверх TLS, а вопрос о сертификате был один.
+
+## Имя пользователя, безопасность и SIGPIPE
+
+**Суть:**
+- `freerdp_parse_username` (`client/common/cmdline.c:1352`) делит `DOMAIN\user`, а `user@domain` оставляет целиком с пустым доменом — не NULL: так его ждут CredSSP и Client Info PDU
+- Устаревший слой RDP Security выключается `FreeRDP_RdpSecurity = FALSE`; NLA и TLS остаются: клиент запрашивает `SSL|HYBRID|HYBRID_EX`
+- На macOS FreeRDP сам ставит своему сокету `SO_NOSIGPIPE` (`libfreerdp/core/tcp.c:1072`, макрос `__MACOSX__` из `winpr/platform.h`); обработчики сигналов процесса из `freerdp_handle_signals` ядру не нужны
+
+**Применение:** ядро делит имя через `freerdp_parse_username`, только когда домен не задан отдельно; тестовый TLS-сервер ставит `SO_NOSIGPIPE` своему сокету — без этого клиент, ушедший посреди рукопожатия, убивал тестовый процесс сигналом.
+
+## Категории ошибок
+
+**Суть:** коды `FREERDP_ERROR_*` ядро сводит к `VRCErrorKind`: имя не найдено, узел не принимает подключения, обрыв, сбой защиты, сертификат не принят, неверные учётные данные, ограничения учётной записи, смена пароля, прочее; текст для пользователя пишет приложение, английское имя кода остаётся для поддержки.
 
 ## Коды ошибок, которые видят тесты
 
 - Порт закрыт: `0x00020006` `ERRCONNECT_CONNECT_FAILED` — «The connection failed.»
 - Сервер принял TCP и сразу закрыл: `0x0002000d` `ERRCONNECT_CONNECT_TRANSPORT_FAILED` — «The connection transport layer failed.»
 - Канал не загрузился на этапе подготовки: `0x00020001` `ERRCONNECT_PRE_CONNECT_FAILED`
+- Сертификат не принят: `0x00020008` `ERRCONNECT_TLS_CONNECT_FAILED`
+- Имя в зоне `.invalid` не разрешилось: категория `HostNotFound`
 
 ## Swift видит API как задумано
 
@@ -54,4 +91,5 @@
 - `core/third_party/FreeRDP/client/Sample/tf_freerdp.c`, `client/Mac/mf_client.m`, `client/Mac/MRDPView.m`
 - `core/third_party/FreeRDP/client/common/client.c`, `client/common/cmdline.c:6198-6420`
 - `core/third_party/FreeRDP/libfreerdp/core/freerdp.c`, `libfreerdp/core/rdp.c`, `libfreerdp/core/tcp.c`, `libfreerdp/crypto/tls.c`
-- `core/tests/sessionTests.c`, `core/tests/swift/main.swift`
+- `core/third_party/FreeRDP/libfreerdp/crypto/tls.c:1757-2090`, `libfreerdp/core/utils.c:230-285`, `libfreerdp/core/tcp.c:1072`
+- `core/tests/sessionTests.c`, `core/tests/tlsServer.c`, `core/tests/swift/main.swift`
