@@ -122,3 +122,25 @@
 - Минимальная macOS 14.0 записана во всех объектах: в `libcrypto` 1035 объектов arm64 и 1044 x86_64, в `libfreerdp3` по 185
 - Строки бинарей не содержат путей сборочной машины; зашитые пути — только под `/opt/viberdp` и `/etc/opt/viberdp`
 
+
+## API новее минимальной macOS: pipe2
+
+**Суть:**
+- В SDK Xcode 27 у `pipe2` и `dup3` стоит `__API_AVAILABLE(macos(27.0))` (`usr/include/sys/unistd.h:216-219`)
+- `check_symbol_exists(pipe2 unistd.h WINPR_HAVE_PIPE2)` (`winpr/CMakeLists.txt:232`) лишь берёт адрес функции — такое использование компилятор не проверяет на доступность, и проверка проходит
+- С `WINPR_HAVE_PIPE2` WinPR зовёт `pipe2` в `winpr_event_init` (`winpr/libwinpr/synch/event.c:120`) и в семафорах (`synch/semaphore.c:147`); при цели macOS 14 ссылка на неё становится слабой
+- На macOS 26.6 `dlsym(RTLD_DEFAULT, "pipe2")` возвращает NULL: каждое создание контекста FreeRDP падало вызовом по нулевому адресу в `CreateEventA`
+- Проверка линковки 0.2 этого не увидела — она не создаёт событий; поймали тесты ядра 0.3
+
+**Применение:**
+- `-DWINPR_HAVE_PIPE2=OFF` задаёт результат проверки заранее, и WinPR берёт `pipe()`
+- `-Werror=unguarded-availability-new` делает любое использование API новее цели ошибкой компиляции FreeRDP
+- Скрипт падает, если в любом объекте есть слабая внешняя ссылка (`nm -m`: `(undefined) weak external`) — это и есть API новее минимальной macOS
+
+**Источники:**
+- Заголовок `usr/include/sys/unistd.h` из SDK Xcode 27.0
+- `core/third_party/FreeRDP/winpr/CMakeLists.txt:232`, `winpr/libwinpr/synch/event.c:96-138`
+
+## Повторы OpenSSL в интерфейсе WinPR
+
+**Суть:** пакет CMake `WinPR3` перечисляет `libssl.a` и `libcrypto.a` в своём интерфейсе дважды, поэтому каждая линковка через него печатает `ld: warning: ignoring duplicate libraries` — это безвредно.

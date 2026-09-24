@@ -10,37 +10,14 @@
 # shellcheck source-path=SCRIPTDIR
 set -euo pipefail
 
-SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-REPO_ROOT=$(cd "$SCRIPT_DIR/../.." && pwd)
+# shellcheck source=common.sh
+. "$(dirname "${BASH_SOURCE[0]}")/common.sh"
+
 FREERDP_SRC="$REPO_ROOT/core/third_party/FreeRDP"
-
-# shellcheck source=../../build.env
-. "$REPO_ROOT/build.env"
-
-CACHE_DIR=${VIBERDP_CACHE_DIR:-$REPO_ROOT/core/build}
-CMAKE=${CMAKE:-cmake}
-JOBS=$(sysctl -n hw.ncpu)
-
 DOWNLOADS="$CACHE_DIR/downloads"
 SOURCES="$CACHE_DIR/src"
-BUILD="$CACHE_DIR/build"
 STAGE="$CACHE_DIR/stage"
-PREFIX="$CACHE_DIR/prefix"
 OPENSSL_SRC="$SOURCES/openssl-$OPENSSL_VERSION"
-
-# Host package managers stay invisible to CMake: their libraries are built for a single architecture
-HOST_PREFIXES="/opt/homebrew;/usr/local;/opt/local"
-
-GENERATOR="Unix Makefiles"
-if command -v ninja >/dev/null; then
-    GENERATOR=Ninja
-fi
-
-log() { printf '\n==> %s\n' "$*"; }
-die() {
-    printf 'error: %s\n' "$*" >&2
-    exit 1
-}
 
 is_enabled_channel() {
     case " $FREERDP_CHANNELS " in
@@ -64,7 +41,7 @@ object_list() {
 
 check_prerequisites() {
     local tool channel
-    for tool in "$CMAKE" perl make curl shasum tar lipo otool strings; do
+    for tool in "$CMAKE" perl make curl shasum tar lipo otool nm strings; do
         command -v "$tool" >/dev/null || die "$tool not found, see docs/manuals/devSetup.md"
     done
     [ -f "$FREERDP_SRC/CMakeLists.txt" ] || die "FreeRDP submodule is missing: git submodule update --init"
@@ -136,7 +113,13 @@ build_freerdp() {
     mkdir -p "$no_pkgconfig"
     # pkg-config sees an empty directory for the same reason as HOST_PREFIXES
     # LTO stays off: the archives must hold machine code, not LLVM bitcode tied to one compiler version
-    PKG_CONFIG_LIBDIR="$no_pkgconfig" "$CMAKE" -G "$GENERATOR" -S "$FREERDP_SRC" -B "$build_dir" \
+    # The configure checks see the SDK, not the deployment target, and adopt APIs the oldest supported macOS lacks
+    # Using such an API is a compile error here, since its weak reference would be NULL on that macOS
+    # pipe2 arrived in macOS 27 and its check only takes the function address, which passes: the result is preset
+    # --fresh drops cached check results, so they always follow the current flags
+    PKG_CONFIG_LIBDIR="$no_pkgconfig" "$CMAKE" --fresh -G "$GENERATOR" -S "$FREERDP_SRC" -B "$build_dir" \
+        -DCMAKE_C_FLAGS="-Werror=unguarded-availability-new" \
+        -DWINPR_HAVE_PIPE2=OFF \
         -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
         -DCMAKE_OSX_ARCHITECTURES="$arch" \
         -DCMAKE_OSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET" \
@@ -228,15 +211,11 @@ make_universal() {
 
 verify() {
     local dir="$PREFIX/universal"
-    local arch file minos leaked
+    local arch file leaked
 
-    log "Verifying slices, deployment target and baked paths"
+    log "Verifying slices, deployment target, API availability and baked paths"
     object_list "$dir" | while IFS= read -r file; do
-        for arch in $ARCHS; do
-            lipo "$dir/$file" -verify_arch "$arch" || die "$file lacks the $arch slice"
-            minos=$(otool -arch "$arch" -l "$dir/$file" | awk '$1 == "minos" { print $2 }' | sort -u | tr '\n' ' ')
-            [ "$minos" = "$MACOSX_DEPLOYMENT_TARGET " ] || die "$file ($arch) targets macOS '$minos'"
-        done
+        check_binary "$dir/$file"
     done
 
     # Install locations of this machine must never reach the binaries: a lookup there could load planted files
@@ -265,14 +244,14 @@ link_check() {
         -DCMAKE_PREFIX_PATH="$PREFIX/universal" \
         -DCMAKE_IGNORE_PREFIX_PATH="$HOST_PREFIXES" >/dev/null
     "$CMAKE" --build "$build_dir"
+    check_binary "$binary"
 
     for arch in $ARCHS; do
         log "Link check ($arch)"
-        if arch -"$arch" /usr/bin/true 2>/dev/null; then
+        if can_execute "$arch"; then
             # shellcheck disable=SC2086 # channel lists are space-separated names
-            arch -"$arch" "$binary" "$RUNTIME_PREFIX" $FREERDP_CHANNELS -- $disabled
+            run_bounded "$FOREIGN_RUN_TIMEOUT" arch -"$arch" "$binary" "$RUNTIME_PREFIX" $FREERDP_CHANNELS -- $disabled
         else
-            lipo "$binary" -verify_arch "$arch" || die "link-check lacks the $arch slice"
             log "This Mac cannot execute $arch code: the $arch slice is linked but not run"
         fi
     done
