@@ -34,7 +34,7 @@ $dependents = & $dumpbin /nologo /dependents $Exe |
     Where-Object { $_ -match '^\s+\S+\.dll\s*$' } |
     ForEach-Object { $_.Trim() }
 if (-not $dependents) {
-    throw "dumpbin listed no DLLs for $Exe: the check cannot tell what it needs"
+    throw "dumpbin listed no DLLs for ${Exe}: the check cannot tell what it needs"
 }
 
 # A statically linked C runtime leaves none of these: the helper installs by copying one file
