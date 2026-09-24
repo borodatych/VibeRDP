@@ -11,7 +11,7 @@
 ## macos
 
 - [pasteboardPrivacy.md](macos/pasteboardPrivacy.md) — запрос разрешения на программное чтение буфера: `accessBehavior`, методы `detect*`, флаг developer preview; путь Mac → Win под ударом, план проверки на 2.1
-- [toolingHangs.md](macos/toolingHangs.md) — lldb и atos висят без разрешения на отладку (санитайзер — с `symbolize=0`, адреса офлайн через `atos -o`); Rosetta может перестать переводить новые программы — лечится перезапуском `oahd` или перезагрузкой
+- [toolingHangs.md](macos/toolingHangs.md) — lldb и atos висят без разрешения на отладку (санитайзер — с `symbolize=0`, адреса офлайн через `atos -o`); Rosetta может перестать переводить новые программы — сперва пробный запуск с таймаутом; бывает, отпускает само, иначе перезапуск `oahd` или перезагрузка
 
 ## rdp
 
