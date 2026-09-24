@@ -27,6 +27,12 @@ shellcheck -x core/scripts/*.sh
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer VIBERDP_CACHE_DIR=/Volumes/Storage/Caches/VibeRDP CMAKE=/Volumes/Storage/Caches/VibeRDP/tools/cmake-4.4.3-macos-universal/CMake.app/Contents/bin/cmake core/scripts/build-freerdp.sh
 ```
 
+Ядро — сборка под все архитектуры, тесты, санитайзеры и универсальная библиотека:
+
+```bash
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer VIBERDP_CACHE_DIR=/Volumes/Storage/Caches/VibeRDP CMAKE=/Volumes/Storage/Caches/VibeRDP/tools/cmake-4.4.3-macos-universal/CMake.app/Contents/bin/cmake core/scripts/build-core.sh
+```
+
 Проверки клиента (0.4) и хелпера (0.5) появятся вместе с их кодом.
 Перед коммитом — отсутствие атрибуции ассистента в истории, вывод должен быть пустым:
 

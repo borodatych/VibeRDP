@@ -1,0 +1,4 @@
+module VibeRDPCore {
+    header "VibeRDPCore/VibeRDPCore.h"
+    export *
+}

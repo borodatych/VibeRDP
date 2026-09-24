@@ -5,11 +5,13 @@
 
 ## freerdp
 
-- [buildMacOS.md](freerdp/buildMacOS.md) — сборка под macOS: OpenSSL 3.5 LTS с проверкой подписи, встроенные MD4 и RC4 для NTLM, раздельная сборка архитектур, опции, которые надо выключать явно, зашитые пути под `/opt/viberdp`, подключение через пакеты CMake, а не pkg-config
+- [buildMacOS.md](freerdp/buildMacOS.md) — сборка под macOS: OpenSSL 3.5 LTS с проверкой подписи, встроенные MD4 и RC4 для NTLM, раздельная сборка архитектур, опции, которые надо выключать явно, зашитые пути под `/opt/viberdp`, подключение через пакеты CMake, а не pkg-config; `pipe2` из SDK 27 ронял FreeRDP на macOS 26 — ловится запретом API новее цели и поиском слабых ссылок
+- [clientLifecycle.md](freerdp/clientLifecycle.md) — жизненный цикл клиента в ядре: поток сессии по образцу Mac-клиента, прерывание на любом этапе, отмена отличима от сбоя, RDP8-функции тянут rdpdr и rdpsnd, сертификаты без колбэка отклоняются, наблюдаемые коды ошибок
 
 ## macos
 
 - [pasteboardPrivacy.md](macos/pasteboardPrivacy.md) — запрос разрешения на программное чтение буфера: `accessBehavior`, методы `detect*`, флаг developer preview; путь Mac → Win под ударом, план проверки на 2.1
+- [toolingHangs.md](macos/toolingHangs.md) — lldb и atos висят без разрешения на отладку (санитайзер — с `symbolize=0`, адреса офлайн через `atos -o`); Rosetta может перестать переводить новые программы — лечится перезапуском `oahd` или перезагрузкой
 
 ## rdp
 
