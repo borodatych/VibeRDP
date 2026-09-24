@@ -1,0 +1,6 @@
+# Pinned exactly: CI and the local checks run the same compiler, so a lint cannot pass in one place and fail in the other
+[toolchain]
+channel = "1.97.1"
+components = ["rustfmt", "clippy"]
+targets = ["x86_64-pc-windows-msvc"]
+profile = "default"

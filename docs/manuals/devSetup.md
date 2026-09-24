@@ -66,7 +66,20 @@ VIBERDP_CACHE_DIR=<папка кэша> core/scripts/build-core.sh
 
 ---
 
-## 5. Что получается
+## 5. Хелпер: helper-win
+
+Тулчейн закреплён в `helper-win/rust-toolchain.toml` (Rust 1.97.1 с таргетом `x86_64-pc-windows-msvc`); сборочный кэш — через `CARGO_TARGET_DIR`.
+
+```bash
+cd helper-win && cargo fmt --check && cargo clippy -- -D warnings && cargo clippy --target x86_64-pc-windows-msvc -- -D warnings
+```
+
+- clippy под Windows-таргет проверяет код так, как его увидит Windows, и не требует линкера
+- Сам exe линкуется только на Windows — `link.exe` есть лишь там; на Маке `cargo build --target x86_64-pc-windows-msvc` падает, так и должно быть
+
+---
+
+## 6. Что получается
 
 ```
 <папка кэша>/
@@ -91,7 +104,7 @@ VIBERDP_CACHE_DIR=<папка кэша> core/scripts/build-core.sh
 
 ---
 
-## 6. Что проверяют скрипты
+## 7. Что проверяют скрипты
 
 - sha256 архива OpenSSL совпадает с `build.env`
 - У всех архитектур одинаковый набор объектов и одинаковые заголовки
@@ -104,14 +117,14 @@ VIBERDP_CACHE_DIR=<папка кэша> core/scripts/build-core.sh
 
 ---
 
-## 7. Если что-то зависло
+## 8. Если что-то зависло
 
 - **Запуск кода x86_64 оборвался по таймауту** — Rosetta перестала переводить новые программы: `sudo launchctl kickstart -k system/com.apple.oahd`, не помогло — перезагрузка; подробности в [knowledge/macos/toolingHangs.md](../knowledge/macos/toolingHangs.md)
 - **Тест под санитайзером упал с адресами вместо имён** — так задумано, `atos` не подключается к процессу; имена даёт офлайн `xcrun atos -o <бинарь> -arch arm64 -l 0x100000000 <адреса>`
 
 ---
 
-## 8. Обновить FreeRDP
+## 9. Обновить FreeRDP
 
 ```bash
 git -C core/third_party/FreeRDP fetch --depth 1 origin tag <версия>
@@ -132,7 +145,7 @@ gh api repos/FreeRDP/FreeRDP/git/tags/<sha объекта тега> --jq .verifi
 
 ---
 
-## 9. Обновить OpenSSL
+## 10. Обновить OpenSSL
 
 1. Скачать `openssl-<версия>.tar.gz` и `openssl-<версия>.tar.gz.asc` из релиза на github.com/openssl/openssl и `pubkeys.asc` с https://openssl-library.org/source/
 2. Проверить подпись в отдельной связке ключей, не трогая свою:

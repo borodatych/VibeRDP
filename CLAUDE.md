@@ -33,7 +33,13 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer VIBERDP_CACHE_DIR=/Volu
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer VIBERDP_CACHE_DIR=/Volumes/Storage/Caches/VibeRDP CMAKE=/Volumes/Storage/Caches/VibeRDP/tools/cmake-4.4.3-macos-universal/CMake.app/Contents/bin/cmake core/scripts/build-core.sh
 ```
 
-Проверки клиента (0.4) и хелпера (0.5) появятся вместе с их кодом.
+Хелпер — форматирование и clippy под хост и под Windows; сам exe собирается только на Windows:
+
+```bash
+cd helper-win && CARGO_TARGET_DIR=/Volumes/Storage/Caches/VibeRDP/cargo cargo fmt --check && CARGO_TARGET_DIR=/Volumes/Storage/Caches/VibeRDP/cargo cargo clippy -- -D warnings && CARGO_TARGET_DIR=/Volumes/Storage/Caches/VibeRDP/cargo cargo clippy --target x86_64-pc-windows-msvc -- -D warnings
+```
+
+Проверки клиента (0.4) появятся вместе с его кодом.
 Перед коммитом — отсутствие атрибуции ассистента в истории, вывод должен быть пустым:
 
 ```bash
@@ -45,6 +51,6 @@ git log --all --format='%B' | grep -niE "co-authored-by|generated with|anthropic
 - Xcode 27.0 стоит в `/Applications/Xcode.app`, но `xcode-select` указывает на CommandLineTools: сборку вести с `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`, системную настройку не менять
 - CMake 4.4.3 лежит в `/Volumes/Storage/Caches/VibeRDP/tools/` и не стоит в `PATH` — скрипту его передаёт переменная `CMAKE`
 - Не скачан компонент Metal Toolchain (нужен на 1.2), нет `xcodegen` (0.4) — установка по согласованию с владельцем
-- Rust 1.97.1 через rustup, установлен только target `aarch64-apple-darwin`
+- Rust 1.97.1 через rustup; у тулчейна `1.97.1` уже есть `x86_64-pc-windows-msvc`, у `stable` — только `aarch64-apple-darwin`; хелпер закрепляет `1.97.1`
 - Сборочные кэши и скачанные зависимости — в `/Volumes/Storage/Caches/VibeRDP/` (`VIBERDP_CACHE_DIR`), не в репозиторий и не в `~`
 - start0 не используется — [docs/decisions.md](docs/decisions.md), раздел 2

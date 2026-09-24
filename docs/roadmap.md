@@ -11,7 +11,7 @@
 - [x] **Исправление 0.2: FreeRDP падал на macOS младше 27** — ✅ (2026-09-24, `next`) проверка FreeRDP приняла `pipe2` из SDK Xcode 27, и каждое создание контекста падало на macOS 26; `WINPR_HAVE_PIPE2=OFF`, API новее минимальной macOS — ошибка компиляции, слабые ссылки ловит проверка скрипта — [buildMacOS.md](knowledge/freerdp/buildMacOS.md); срез x86_64 проверки линковки после исправления не запущен — Rosetta зависла
 - [ ] 0.3 `VibeRDPCore`: плоский C API (create/connect/disconnect/callbacks), CMake-таргет — сделано и проверено на arm64: 7 тестов, санитайзеры, импорт в Swift; x86_64 собран и склеен в универсальную библиотеку, **осталось прогнать тесты x86_64** — Rosetta на машине зависла, см. [toolingHangs.md](knowledge/macos/toolingHangs.md)
 - [ ] 0.4 `client-macos` через XcodeGen, пустое окно приложения, линковка с `VibeRDPCore`
-- [ ] 0.5 `helper-win` — cargo-проект, пустой exe, сборка в CI
+- [ ] 0.5 `helper-win` — cargo-проект, пустой exe, сборка в CI — проект готов: exe без консоли, C-рантайм внутри (`+crt-static`), тулчейн 1.97.1 закреплён; rustfmt и clippy чисты под хост и под `x86_64-pc-windows-msvc`; **осталось собрать exe в CI** — линкер MSVC есть только на Windows, CI — задача 0.6
 - [ ] 0.6 GitHub Actions: сборка клиента (macOS) и хелпера (Windows) на каждый push
 
 ## Этап 1 — Базовый RDP (Desktop-режим)
