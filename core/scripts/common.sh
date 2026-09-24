@@ -57,6 +57,12 @@ run_bounded() {
     wait "$pid"
 }
 
+# Weak references the toolchain emits by design, each with a fallback, rather than calls to a newer API:
+# the __swift_FORCE_LOAD_$_ markers of the Swift overlays are autolinking hooks,
+# and ___chkstk_darwin, the stack probe of x86_64 code, falls back to a private copy linked from compiler-rt
+# shellcheck disable=SC2016 # the dollar sign belongs to the symbol names, nothing expands here
+TOOLCHAIN_WEAK_SYMBOLS=' __swift_FORCE_LOAD_\$_| ____chkstk_darwin '
+
 # Every slice is present, records the deployment target and uses no API newer than it
 # A weak reference to such an API resolves to NULL on an older macOS and crashes there
 check_binary() {
@@ -67,7 +73,8 @@ check_binary() {
         lipo "$file" -verify_arch "$arch" || die "$file lacks the $arch slice"
         minos=$(otool -arch "$arch" -l "$file" | awk '$1 == "minos" { print $2 }' | sort -u | tr '\n' ' ')
         [ "$minos" = "$MACOSX_DEPLOYMENT_TARGET " ] || die "$file ($arch) targets macOS '$minos'"
-        weak=$(nm -arch "$arch" -m "$file" 2>/dev/null | grep '(undefined) weak external' || true)
+        weak=$(nm -arch "$arch" -m "$file" 2>/dev/null | grep '(undefined) weak external' |
+            grep -vE "$TOOLCHAIN_WEAK_SYMBOLS" || true)
         [ -z "$weak" ] || die "$file ($arch) uses APIs newer than macOS $MACOSX_DEPLOYMENT_TARGET: $weak"
     done
 }

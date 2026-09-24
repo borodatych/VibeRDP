@@ -1,0 +1,20 @@
+import AppKit
+
+/// The main window: empty until the session view arrives (roadmap 1.2)
+@MainActor
+enum MainWindow {
+    static let defaultSize = NSSize(width: 1024, height: 640)
+
+    static func make(title: String) -> NSWindow {
+        let window = NSWindow(
+            contentRect: NSRect(origin: .zero, size: defaultSize),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false)
+        window.title = title
+        // The delegate owns the window; AppKit must not free it behind that reference when it closes
+        window.isReleasedWhenClosed = false
+        window.center()
+        return window
+    }
+}

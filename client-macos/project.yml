@@ -1,0 +1,67 @@
+# XcodeGen spec of the macOS client: client-macos/scripts/build-client.sh generates VibeRDP.xcodeproj from it
+# The ${...} values come from build.env and the core build through the environment of that script
+name: VibeRDP
+
+options:
+  bundleIdPrefix: tech.vibebrains
+  developmentLanguage: ru
+  deploymentTarget:
+    macOS: "${MACOSX_DEPLOYMENT_TARGET}"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    MARKETING_VERSION: "${VERSION}"
+    CURRENT_PROJECT_VERSION: "${VERSION}"
+    ARCHS: "${ARCHS}"
+    SWIFT_VERSION: "6.0"
+    # Strict like the core: a warning in our code fails the build
+    SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
+    GCC_TREAT_WARNINGS_AS_ERRORS: YES
+    # Ad-hoc signature until Developer ID signing and notarization (roadmap 8.4)
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "-"
+    DEVELOPMENT_TEAM: ""
+
+targets:
+  VibeRDP:
+    type: application
+    platform: macOS
+    sources:
+      - path: App
+    dependencies:
+      - framework: "${VIBERDP_CORE_FRAMEWORK}"
+        embed: true
+    settings:
+      base:
+        PRODUCT_NAME: VibeRDP
+        PRODUCT_BUNDLE_IDENTIFIER: tech.vibebrains.viberdp
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_NSPrincipalClass: NSApplication
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
+
+  VibeRDPTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests
+    dependencies:
+      - target: VibeRDP
+      # Linked, not embedded: inside the host app the tests share the copy the app carries
+      - framework: "${VIBERDP_CORE_FRAMEWORK}"
+        embed: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: tech.vibebrains.viberdp.tests
+        GENERATE_INFOPLIST_FILE: YES
+
+schemes:
+  VibeRDP:
+    build:
+      targets:
+        VibeRDP: all
+        VibeRDPTests: [test]
+    test:
+      config: Debug
+      targets:
+        - VibeRDPTests
