@@ -20,7 +20,8 @@ final class ConnectionTests: XCTestCase {
     }
 
     /// The whole path from the session thread to the main thread: a refused connection arrives in order
-    func testRefusedConnectionReportsUnreachable() throws {
+    /// The events reach the main actor through tasks, so the test suspends for them instead of blocking the thread
+    func testRefusedConnectionReportsUnreachable() async throws {
         var events: [SessionController.Event] = []
         let ended = expectation(description: "Disconnected")
         let controller = SessionController(trusted: TrustedCertificates(defaults: defaults)) { event in
@@ -32,7 +33,7 @@ final class ConnectionTests: XCTestCase {
 
         let address = try XCTUnwrap(ServerAddress("127.0.0.1:\(Self.unusedPort())"))
         XCTAssertTrue(controller.connect(to: address, username: "", password: ""))
-        wait(for: [ended], timeout: 10)
+        await fulfillment(of: [ended], timeout: 10)
 
         XCTAssertEqual(events.first, .state(.connecting))
         XCTAssertEqual(events.last, .state(.disconnected))
