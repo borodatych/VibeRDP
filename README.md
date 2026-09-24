@@ -2,7 +2,7 @@
 
 Open-source RDP-клиент для macOS на замену Microsoft Windows App.
 
-> **Статус:** ранняя разработка, этап 0 — каркас. Приложения ещё нет, собираются только зависимости ядра — [docs/manuals/devSetup.md](docs/manuals/devSetup.md); план — [docs/roadmap.md](docs/roadmap.md).
+> **Статус:** ранняя разработка, этап 0 — каркас. Приложение собирается и открывает пустое окно, RDP-подключения в нём ещё нет — [docs/manuals/devSetup.md](docs/manuals/devSetup.md); план — [docs/roadmap.md](docs/roadmap.md).
 
 ## Что решает
 
