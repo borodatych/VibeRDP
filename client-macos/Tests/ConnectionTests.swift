@@ -1,5 +1,4 @@
 import AppKit
-import Darwin
 import VibeRDPCore
 import XCTest
 
@@ -19,9 +18,11 @@ final class ConnectionTests: XCTestCase {
         defaults.removePersistentDomain(forName: suiteName)
     }
 
-    /// The whole path from the session thread to the main thread: a refused connection arrives in order
+    /// The whole path from the session thread to the main thread: a failed connection arrives in order
     /// The events reach the main actor through tasks, so the test suspends for them instead of blocking the thread
-    func testRefusedConnectionReportsUnreachable() async throws {
+    /// A name in the reserved .invalid zone fails at resolution, before any socket: an app that opens one
+    /// is subject to the Local Network privilege, and on a CI runner nobody answers its alert
+    func testUnresolvableHostReportsHostNotFound() async throws {
         var events: [SessionController.Event] = []
         let ended = expectation(description: "Disconnected")
         let controller = SessionController(trusted: TrustedCertificates(defaults: defaults)) { event in
@@ -31,14 +32,14 @@ final class ConnectionTests: XCTestCase {
             }
         }
 
-        let address = try XCTUnwrap(ServerAddress("127.0.0.1:\(Self.unusedPort())"))
+        let address = try XCTUnwrap(ServerAddress("viberdp-test.invalid"))
         XCTAssertTrue(controller.connect(to: address, username: "", password: ""))
         await fulfillment(of: [ended], timeout: 10)
 
         XCTAssertEqual(events.first, .state(.connecting))
         XCTAssertEqual(events.last, .state(.disconnected))
-        let unreachable = events.contains { if case .failed(.unreachable, _) = $0 { true } else { false } }
-        XCTAssertTrue(unreachable, "\(events)")
+        let notFound = events.contains { if case .failed(.hostNotFound, _) = $0 { true } else { false } }
+        XCTAssertTrue(notFound, "\(events)")
         XCTAssertFalse(controller.connect(to: address, username: "", password: ""), "a controller connects once")
     }
 
@@ -77,22 +78,5 @@ final class ConnectionTests: XCTestCase {
         XCTAssertTrue(unknown.informativeText.contains(Fixtures.certificateFingerprint))
         XCTAssertTrue(CertificatePrompt.accepts(.alertFirstButtonReturn, verdict: .unknown(.untrustedIssuer)))
         XCTAssertFalse(CertificatePrompt.accepts(.abort, verdict: .unknown(.untrustedIssuer)))
-    }
-
-    /// A loopback port that was free a moment ago: connecting to it is refused
-    private static func unusedPort() -> UInt16 {
-        let fd = socket(AF_INET, SOCK_STREAM, 0)
-        defer { close(fd) }
-        var address = sockaddr_in()
-        address.sin_family = sa_family_t(AF_INET)
-        address.sin_addr.s_addr = in_addr_t(INADDR_LOOPBACK).bigEndian
-        var length = socklen_t(MemoryLayout<sockaddr_in>.size)
-        // Darwin.bind: inside an NSObject subclass a bare bind names the Cocoa bindings method
-        _ = withUnsafeMutablePointer(to: &address) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                Darwin.bind(fd, $0, length) == 0 && getsockname(fd, $0, &length) == 0
-            }
-        }
-        return UInt16(bigEndian: address.sin_port)
     }
 }

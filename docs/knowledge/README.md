@@ -14,6 +14,7 @@
 
 ## macos
 
+- [localNetworkPrivacy.md](macos/localNetworkPrivacy.md) — приложению нужен `NSLocalNetworkUsageDescription`, консольные программы из Terminal проверку не проходят; в CI `connect` приложения к `127.0.0.1` висел 35 с и не прерывался отменой — причина, вероятно, в этой проверке
 - [pasteboardPrivacy.md](macos/pasteboardPrivacy.md) — запрос разрешения на программное чтение буфера: `accessBehavior`, методы `detect*`, флаг developer preview; путь Mac → Win под ударом, план проверки на 2.1
 - [certificateTrust.md](macos/certificateTrust.md) — SecTrust называет одну главную проблему: для самоподписанного всегда -67843 при любом имени и дате, срок больше предела даёт -67901; первая оценка в свежей сборке однажды шла 64 с; отпечаток SHA-256 и хранение в `UserDefaults`
 - [xcodeClient.md](macos/xcodeClient.md) — фреймворк ядра: CMake не ставит ссылку `Modules`, экспорт только `_VRC*` и `-dead_strip`; слабые ссылки тулчейна Swift и `___chkstk_darwin` — не API новее цели; XcodeGen с переменными окружения, тесты внутри приложения под обе архитектуры и счёт тестов по xcresult; `grep -q` в конвейере под pipefail падает от SIGPIPE пишущего
