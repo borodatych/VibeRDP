@@ -7,7 +7,7 @@
 
 ## Этап 0 — Каркас
 - [x] **0.1 Монорепо по структуре выше, `.gitignore`, лицензия Apache-2.0, README-заглушка** — ✅ (2026-09-24, `next`) дерево по §2 [idea.md](idea.md), документы — по стандарту семейства ([карта путей](README.md)); `.vibe/` из эталона VibeBrains `c1f9476` (95 файлов, sha256 сверены), правила проекта — `.vibe/rules/viberdp.mdc` и `CLAUDE.md`; лицензия — эталон apache.org; ветки `main` и `next`; пять уточнений к спецификации — в [базе знаний](knowledge/README.md)
-- [ ] 0.2 FreeRDP 3.x как submodule в `core/third_party`, скрипт сборки universal static libs (arm64+x86_64) с нужными каналами (cliprdr, rail, disp, rdpgfx, drdynvc)
+- [x] **0.2 FreeRDP 3.x как submodule в `core/third_party`, скрипт сборки universal static libs (arm64+x86_64) с нужными каналами (cliprdr, rail, disp, rdpgfx, drdynvc)** — ✅ (2026-09-24, `next`) FreeRDP 3.32.0 — подписанный тег, неглубокий подмодуль; OpenSSL 3.5.8 LTS — подпись проверена, sha256 в `build.env`; `core/scripts/build-freerdp.sh` собирает каждую архитектуру отдельно и склеивает `lipo`; зашитый префикс `/opt/viberdp`, OpenSSL без подгрузки модулей; скрипт проверяет срезы, macOS 14.0, пути в бинарях и линковку через пакеты CMake на arm64 и x86_64 — [devSetup.md](manuals/devSetup.md), [buildMacOS.md](knowledge/freerdp/buildMacOS.md)
 - [ ] 0.3 `VibeRDPCore`: плоский C API (create/connect/disconnect/callbacks), CMake-таргет
 - [ ] 0.4 `client-macos` через XcodeGen, пустое окно приложения, линковка с `VibeRDPCore`
 - [ ] 0.5 `helper-win` — cargo-проект, пустой exe, сборка в CI

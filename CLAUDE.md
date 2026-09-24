@@ -15,8 +15,20 @@ Open-source RDP-клиент для macOS на замену Microsoft Windows Ap
 
 ## Проверки перед завершением задачи
 
-Сборочных проверок пока нет: они появятся вместе с кодом — ядро (0.2–0.3), клиент (0.4), хелпер (0.5).
-До тех пор перед коммитом — отсутствие атрибуции ассистента в истории, вывод должен быть пустым:
+Скрипты — shellcheck:
+
+```bash
+shellcheck -x core/scripts/*.sh
+```
+
+Зависимости ядра — сборка с проверками срезов, минимальной macOS, зашитых путей и линковки ([docs/manuals/devSetup.md](docs/manuals/devSetup.md)):
+
+```bash
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer VIBERDP_CACHE_DIR=/Volumes/Storage/Caches/VibeRDP CMAKE=/Volumes/Storage/Caches/VibeRDP/tools/cmake-4.4.3-macos-universal/CMake.app/Contents/bin/cmake core/scripts/build-freerdp.sh
+```
+
+Проверки клиента (0.4) и хелпера (0.5) появятся вместе с их кодом.
+Перед коммитом — отсутствие атрибуции ассистента в истории, вывод должен быть пустым:
 
 ```bash
 git log --all --format='%B' | grep -niE "co-authored-by|generated with|anthropic\.com|claude-code"
@@ -25,7 +37,8 @@ git log --all --format='%B' | grep -niE "co-authored-by|generated with|anthropic
 ## Окружение
 
 - Xcode 27.0 стоит в `/Applications/Xcode.app`, но `xcode-select` указывает на CommandLineTools: сборку вести с `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`, системную настройку не менять
-- Не скачан компонент Metal Toolchain (нужен на 1.2), нет `cmake` (0.2) и `xcodegen` (0.4) — установка по согласованию с владельцем
+- CMake 4.4.3 лежит в `/Volumes/Storage/Caches/VibeRDP/tools/` и не стоит в `PATH` — скрипту его передаёт переменная `CMAKE`
+- Не скачан компонент Metal Toolchain (нужен на 1.2), нет `xcodegen` (0.4) — установка по согласованию с владельцем
 - Rust 1.97.1 через rustup, установлен только target `aarch64-apple-darwin`
-- Сборочные кэши и скачанные зависимости — в `/Volumes/Storage/Caches/VibeRDP/`, не в репозиторий и не в `~`
+- Сборочные кэши и скачанные зависимости — в `/Volumes/Storage/Caches/VibeRDP/` (`VIBERDP_CACHE_DIR`), не в репозиторий и не в `~`
 - start0 не используется — [docs/decisions.md](docs/decisions.md), раздел 2
