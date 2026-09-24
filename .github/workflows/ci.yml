@@ -1,0 +1,107 @@
+# CI: the macOS client with its core and dependencies, the Windows helper, the shell scripts and this workflow
+# Action majors, runner images and tool checksums verified 2026-09-24: docs/knowledge/ci/githubActions.md
+name: CI
+
+on:
+  push:
+    branches: [main, next]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pinned with checksums: the shellcheck of the runner image lags and disagrees with a developer's own
+  SHELLCHECK_VERSION: "0.11.0"
+  SHELLCHECK_SHA256: "8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198"
+  ACTIONLINT_VERSION: "1.7.12"
+  ACTIONLINT_SHA256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
+
+jobs:
+  macos:
+    name: macOS · FreeRDP, core, client
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - name: Cache folder and the XcodeGen pinned in build.env
+        run: |
+          . ./build.env
+          echo "VIBERDP_CACHE_DIR=$RUNNER_TEMP/viberdp" >> "$GITHUB_ENV"
+          archive="$RUNNER_TEMP/xcodegen.zip"
+          curl -fsSL -o "$archive" "https://github.com/yonaskolb/XcodeGen/releases/download/$XCODEGEN_VERSION/xcodegen.zip"
+          echo "$XCODEGEN_SHA256  $archive" | shasum -a 256 -c -
+          unzip -q "$archive" -d "$RUNNER_TEMP/xcodegen"
+          echo "XCODEGEN=$RUNNER_TEMP/xcodegen/xcodegen/bin/xcodegen" >> "$GITHUB_ENV"
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          cmake --version
+          ninja --version
+          if arch -x86_64 /usr/bin/true 2>/dev/null; then
+            echo "Rosetta: x86_64 code is built and tested"
+          else
+            echo "Rosetta: none, x86_64 code is built and linked but not run"
+          fi
+      - name: OpenSSL and FreeRDP
+        run: core/scripts/build-freerdp.sh
+      - name: VibeRDPCore
+        run: core/scripts/build-core.sh
+      - name: Client
+        run: client-macos/scripts/build-client.sh
+      - name: Pack the app
+        run: ditto -c -k --keepParent "$VIBERDP_CACHE_DIR/client/DerivedData/Build/Products/Release/VibeRDP.app" "$RUNNER_TEMP/VibeRDP.zip"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: VibeRDP-app
+          path: ${{ runner.temp }}/VibeRDP.zip
+          if-no-files-found: error
+
+  helper:
+    name: Windows · helper exe
+    runs-on: windows-2025
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: helper-win
+    steps:
+      - uses: actions/checkout@v7
+      - name: Toolchain pinned in rust-toolchain.toml
+        run: rustc --version
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --target x86_64-pc-windows-msvc -- -D warnings
+      - run: cargo build --locked --release --target x86_64-pc-windows-msvc
+      - name: GUI subsystem, x64, no C runtime DLL
+        run: ./scripts/check-exe.ps1 target/x86_64-pc-windows-msvc/release/vibe-seam-helper.exe
+      - uses: actions/upload-artifact@v7
+        with:
+          name: vibe-seam-helper
+          path: helper-win/target/x86_64-pc-windows-msvc/release/vibe-seam-helper.exe
+          if-no-files-found: error
+
+  lint:
+    name: shellcheck · actionlint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Pinned shellcheck and actionlint, checksums verified
+        run: |
+          shellcheck_archive="shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          curl -fsSLO "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/${shellcheck_archive}"
+          echo "${SHELLCHECK_SHA256}  ${shellcheck_archive}" | sha256sum -c -
+          tar -xJf "${shellcheck_archive}"
+          sudo install -m 755 "shellcheck-v${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck
+          actionlint_archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -fsSLO "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${actionlint_archive}"
+          echo "${ACTIONLINT_SHA256}  ${actionlint_archive}" | sha256sum -c -
+          tar -xzf "${actionlint_archive}" actionlint
+          shellcheck --version
+      - run: shellcheck -x core/scripts/*.sh client-macos/scripts/*.sh
+      # actionlint runs the shellcheck installed above over every run: block
+      - run: ./actionlint -color
