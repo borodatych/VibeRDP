@@ -53,15 +53,26 @@ jobs:
         run: core/scripts/build-freerdp.sh
       - name: VibeRDPCore
         run: core/scripts/build-core.sh
+      # xcodebuild hands TEST_RUNNER_ variables to the app under test without the prefix:
+      # the engine writes its debug log to a file, since the result bundles keep no console output of the app
       - name: Client
-        run: client-macos/scripts/build-client.sh
-      # xcodebuild -quiet names a failing test but not its assertions: the result bundles hold them
+        env:
+          TEST_RUNNER_WLOG_LEVEL: DEBUG
+          TEST_RUNNER_WLOG_APPENDER: FILE
+          TEST_RUNNER_WLOG_FILEAPPENDER_OUTPUT_FILE_NAME: engine.log
+        run: |
+          logs="$RUNNER_TEMP/viberdp/client/logs"
+          mkdir -p "$logs"
+          TEST_RUNNER_WLOG_FILEAPPENDER_OUTPUT_FILE_PATH="$logs" client-macos/scripts/build-client.sh
+      # xcodebuild -quiet names a failing test but not its assertions: the result bundles and the engine log hold them
       - name: Keep the test results of a failed run
         if: failure()
         uses: actions/upload-artifact@v7
         with:
           name: client-test-results
-          path: ${{ runner.temp }}/viberdp/client/results
+          path: |
+            ${{ runner.temp }}/viberdp/client/results
+            ${{ runner.temp }}/viberdp/client/logs
           if-no-files-found: ignore
       - name: Pack the app
         run: ditto -c -k --keepParent "$VIBERDP_CACHE_DIR/client/DerivedData/Build/Products/Release/VibeRDP.app" "$RUNNER_TEMP/VibeRDP.zip"
