@@ -1,4 +1,4 @@
-// Swift sees VibeRDPCore through module.modulemap, as the app will
+// Swift imports the VibeRDPCore framework module, as the app does
 // A refused connection must come back through C callbacks as native Swift enums and values
 
 import Darwin

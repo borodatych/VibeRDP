@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds and tests VibeRDPCore for every architecture of build.env, then merges the library into one universal archive
+# Builds and tests VibeRDPCore for every architecture of build.env, then merges the slices into one universal framework
 # Needs the prefix that build-freerdp.sh produces; how to run it: docs/manuals/devSetup.md
 #
 # Environment: the same as build-freerdp.sh
@@ -12,6 +12,7 @@ set -euo pipefail
 
 CORE_SRC="$REPO_ROOT/core"
 CORE_OUT="$CACHE_DIR/core"
+FRAMEWORK_NAME=VibeRDPCore.framework
 HOST_ARCH=$(uname -m)
 
 # Configures and builds one variant of the core; extra arguments go to CMake after the common ones
@@ -22,6 +23,7 @@ build_variant() {
     log "VibeRDPCore: building $name"
     "$CMAKE" --fresh -G "$GENERATOR" -S "$CORE_SRC" -B "$BUILD/core-$name" \
         -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
+        -DVRC_VERSION="$VERSION" \
         -DCMAKE_OSX_ARCHITECTURES="$arch" \
         -DCMAKE_OSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET" \
         -DCMAKE_PREFIX_PATH="$PREFIX/universal" \
@@ -41,17 +43,35 @@ test_variant() {
     fi
 }
 
-merge_library() {
-    local output="$CORE_OUT/lib/libVibeRDPCore.a"
+# The framework exports the VRC API and nothing else: an engine symbol in the export table is a linker setup error
+check_exports() {
+    local file=$1
+    local arch foreign
+
+    for arch in $ARCHS; do
+        foreign=$(nm -arch "$arch" -gU "$file" | awk '{ print $3 }' | grep -v '^_VRC' || true)
+        [ -z "$foreign" ] || die "$file ($arch) exports symbols beyond the VRC API: $foreign"
+    done
+}
+
+# The bundle of the first architecture carries the headers, the module map and Info.plist; lipo merges the binaries
+merge_framework() {
+    local framework="$CORE_OUT/$FRAMEWORK_NAME"
+    local binary="$framework/Versions/A/VibeRDPCore"
+    local base=${ARCHS%% *}
     local inputs=() arch
 
-    log "Merging $ARCHS into $output"
+    log "Merging $ARCHS into $framework"
     for arch in $ARCHS; do
-        inputs+=("$BUILD/core-$arch/libVibeRDPCore.a")
+        inputs+=("$BUILD/core-$arch/$FRAMEWORK_NAME/Versions/A/VibeRDPCore")
     done
-    mkdir -p "$(dirname "$output")"
-    lipo -create "${inputs[@]}" -output "$output"
-    check_binary "$output"
+    rm -rf "$CORE_OUT"
+    mkdir -p "$CORE_OUT"
+    ditto "$BUILD/core-$base/$FRAMEWORK_NAME" "$framework"
+    lipo -create "${inputs[@]}" -output "$binary"
+    check_binary "$binary"
+    check_exports "$binary"
+    [ -f "$framework/Modules/module.modulemap" ] || die "$framework has no module map: Swift cannot import it"
 }
 
 main() {
@@ -67,13 +87,13 @@ main() {
     for arch in $ARCHS; do
         [ "$arch" = "$HOST_ARCH" ] || build_variant "$arch" "$arch"
     done
-    merge_library
+    merge_framework
 
     # The other architectures run through Rosetta: their tests go last, so a stuck translation withholds no result
     for arch in $ARCHS; do
         [ "$arch" = "$HOST_ARCH" ] || test_variant "$arch" "$arch"
     done
-    log "Done: $CORE_OUT/lib/libVibeRDPCore.a"
+    log "Done: $CORE_OUT/$FRAMEWORK_NAME"
 }
 
 main "$@"

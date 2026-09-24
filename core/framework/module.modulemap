@@ -1,0 +1,4 @@
+framework module VibeRDPCore {
+    umbrella header "VibeRDPCore.h"
+    export *
+}

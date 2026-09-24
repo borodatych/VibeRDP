@@ -25,7 +25,7 @@ foreach(test IN LISTS VRC_SESSION_TESTS)
   set_tests_properties(${test} PROPERTIES TIMEOUT 60 ENVIRONMENT "${VRC_TEST_ENVIRONMENT}")
 endforeach()
 
-# Swift reads the API through module.modulemap, as the app will
+# Swift imports the module of the built framework, as the app does
 # swiftc accepts no UndefinedBehaviorSanitizer and CMake builds Swift only with Ninja or Xcode
 if(NOT VRC_SANITIZE AND CMAKE_GENERATOR MATCHES "Ninja")
   # CMake compiles Swift for the host whatever CMAKE_OSX_ARCHITECTURES says: a one-slice build names the target itself
@@ -36,6 +36,8 @@ if(NOT VRC_SANITIZE AND CMAKE_GENERATOR MATCHES "Ninja")
   enable_language(Swift)
   add_executable(swiftImport swift/main.swift)
   target_link_libraries(swiftImport PRIVATE VibeRDPCore)
+  target_compile_options(swiftImport PRIVATE "-F$<TARGET_BUNDLE_DIR:VibeRDPCore>/..")
+  add_dependencies(swiftImport VibeRDPCoreModules)
   add_test(NAME swiftImport COMMAND swiftImport)
   set_tests_properties(swiftImport PROPERTIES TIMEOUT 60 ENVIRONMENT "${VRC_TEST_ENVIRONMENT}")
 endif()
