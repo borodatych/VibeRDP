@@ -1,0 +1,124 @@
+// Xiaomi MiMo — OpenAI-совместимый маршрут вендора. Ключ: MIMO_API_KEY=<ключ> в .vibe/.env
+// (взять: консоль mimo.mi.com).
+//
+// ПОЧЕМУ OPENAI, А НЕ ANTHROPIC. В режиме размышления вендор требует рассуждение обратно: каждый ответ
+// ассистента с вызовами инструментов в истории обязан его нести, иначе 400 — и называет это обязательным
+// на ОБОИХ протоколах (mimo.mi.com/docs, раздел deep-thinking, сверено 23.09.2026). На этом маршруте
+// рассуждение приходит полем reasoning_content и так же уходит обратно — клиент обязан это уметь.
+// Anthropic-маршрут — закомментированным блоком ниже, с предупреждением.
+//
+// АВТОРИЗАЦИЯ. Ключ принимается и в "Authorization: Bearer", и в заголовке "api-key": оба способа
+// документированы на обоих маршрутах (mimo.mi.com/docs, api/chat/openai-api, сверено 23.09.2026).
+//
+// МОДЕЛИ: mimo-v2.6-pro, mimo-v2.6-flash, mimo-v2.6-pro-ultraspeed. У всех окно 1 048 576, выход до
+// 131 072, на входе текст, картинки, аудио и видео. Имена строчными и с точкой — на написание через дефис
+// вендор отвечает 400 «Not supported model». mimo-v2.5-pro и mimo-v2.5 вендор снимает 21.10.2026
+// в 10:00 по Пекину без замены — в этот набор они не входят. Веса v2.6 открыты под MIT
+// (huggingface.co/XiaomiMiMo): у Pro 1,02T параметров, из них 42B активных; у Flash 309B и 15B.
+//
+// ЦЕНЫ — зарубежный прайс вендора, доллары за 1M (mimo.mi.com/docs, price/pay-as-you-go, сверено
+// 23.09.2026). Запись в кэш пока бесплатна («limited-time free»), поэтому цены записи в записях нет;
+// когда акция кончится — допишите "cacheWrite" сами, иначе отчёт о расходе будет считать запись нулём.
+// UltraSpeed вдесятеро дороже Pro, и лимиты у неё индивидуальные — по запросу к вендору.
+//
+// МЫШЛЕНИЕ — переключатель, а не уровни: {"thinking": {"type": "enabled" | "disabled"}}, включено по
+// умолчанию. Поэтому у записей объявлено "reasoning": {"off": …} — положение «выключено» шлёт выключатель,
+// а low / medium / high для MiMo одно и то же: рассуждение включено.
+//
+// ЧТО ЕЩЁ ЗНАТЬ:
+//  1. В режиме размышления temperature и top_p вендор ставит сам — 1.0 и 0.95: переданное значение не
+//     ошибка, а молча игнорируется.
+//  2. Нестандартные причины остановки: repetition_truncation (обрыв по зацикливанию) и content_filter,
+//     а у фильтра содержимого ещё и HTTP 421.
+//  3. Ключ подписки Token Plan (начинается с tp- или ttp-) здесь не работает, а ключ этого маршрута
+//     (sk-) не работает в подписке — у неё свои адреса, см. блок в конце файла.
+//
+// Живьём не проверено — ключа Xiaomi нет.
+{
+  "version": 1,
+  "providers": [
+    {
+      "id": "xiaomi-mimo",
+      "name": "Xiaomi MiMo",
+      "active": true, // тумблер: false — провайдер скрыт из списков (в слиянии и extends участвует)
+      "protocol": "openai",
+      "baseURL": "https://api.xiaomimimo.com/v1",
+      "auth": "bearer",
+      "apiKeyEnv": "MIMO_API_KEY",
+      "order": 73,
+      "models": {
+        // Каталог у вендора есть (GET /v1/models), но в нём и снимаемые v2.5, и модели распознавания
+        // речи — список задан вручную.
+        "fetch": false,
+        "static": [
+          {
+            "id": "mimo-v2.6-pro",
+            "name": "MiMo v2.6 Pro",
+            "default": true,
+            "pinned": true,
+            "contextWindow": 1048576,
+            "maxOutputTokens": 131072,
+            "vision": true,
+            "reasoning": { "off": { "thinking": { "type": "disabled" } } },
+            "cost": { "input": 0.435, "output": 0.87, "cacheRead": 0.0036, "currency": "USD" }
+          },
+          {
+            "id": "mimo-v2.6-flash",
+            "name": "MiMo v2.6 Flash",
+            "contextWindow": 1048576,
+            "maxOutputTokens": 131072,
+            "vision": true,
+            "reasoning": { "off": { "thinking": { "type": "disabled" } } },
+            "cost": { "input": 0.14, "output": 0.28, "cacheRead": 0.0028, "currency": "USD" }
+          },
+          {
+            "id": "mimo-v2.6-pro-ultraspeed",
+            "name": "MiMo v2.6 Pro Ultraspeed",
+            "contextWindow": 1048576,
+            "maxOutputTokens": 131072,
+            "vision": true,
+            "reasoning": { "off": { "thinking": { "type": "disabled" } } },
+            "cost": { "input": 4.35, "output": 8.7, "cacheRead": 0.036, "currency": "USD" }
+          }
+        ]
+      }
+    }
+
+    // ── Xiaomi MiMo по протоколу Anthropic ──────────────────────────────────────────────────────
+    // Тот же ключ и те же модели. ВНИМАНИЕ: рассуждение с инструментами здесь тоже обязано уходить
+    // обратно — блоками thinking, — и клиент, который их не возвращает, получит 400 на втором раунде
+    // инструментов. VibeIDEA блоки возвращает; прежде чем включать блок в другой IDE, проверьте, что она это умеет.
+    // Адрес: дока называет полный путь .../anthropic/v1/messages, а клиент дописывает к базе РОВНО
+    // "/messages", поэтому версионный сегмент входит в baseURL — без него вендор отвечает 404.
+    // На этом маршруте tool_choice работает только со значением "auto": остальное вендор молча убирает.
+    // Раскомментируйте блок целиком — вместе с ведущей запятой и скобками.
+    // ,{
+    //   "id": "xiaomi-mimo-anthropic", "extends": "xiaomi-mimo", "name": "Xiaomi MiMo (Anthropic-протокол)",
+    //   "protocol": "anthropic", "baseURL": "https://api.xiaomimimo.com/anthropic/v1",
+    //   "auth": { "type": "header", "name": "api-key" }, "order": 74
+    // }
+
+    // ── Xiaomi MiMo Token Plan — подписка ───────────────────────────────────────────────────────
+    // Свой ключ (tp- или ttp-) и свои адреса по регионам: https://token-plan-cn.xiaomimimo.com/v1,
+    // https://token-plan-sgp.xiaomimimo.com/v1, https://token-plan-ams.xiaomimimo.com/v1; Anthropic-маршрут —
+    // тот же хост с /anthropic (mimo.mi.com/docs, раздел tokenplan, сверено 23.09.2026). Тарифы помесячно:
+    // Lite $6, Standard $16, Pro $50, Max $100; ночью по Пекину (00:00–08:00) расход считается с коэффициентом
+    // 0.8. UltraSpeed в подписку не входит. Сторонние инструменты вендор перечисляет с «и т. д.» —
+    // закрытого списка клиентов нет. Запись самостоятельная, без "extends": наследник получил бы цены за
+    // токены, а подписка платится помесячно — отчёт о расходе показывал бы деньги, которых вы не платите.
+    // Раскомментируйте блок целиком и поставьте хост своего региона.
+    // ,{
+    //   "id": "xiaomi-mimo-token-plan", "name": "Xiaomi MiMo (Token Plan)",
+    //   "protocol": "openai", "baseURL": "https://token-plan-sgp.xiaomimimo.com/v1",
+    //   "auth": "bearer", "apiKeyEnv": "MIMO_TOKEN_PLAN_KEY", "order": 75,
+    //   "models": { "fetch": false, "static": [
+    //     { "id": "mimo-v2.6-pro", "name": "MiMo v2.6 Pro (Token Plan)", "default": true,
+    //       "contextWindow": 1048576, "maxOutputTokens": 131072, "vision": true,
+    //       "reasoning": { "off": { "thinking": { "type": "disabled" } } } },
+    //     { "id": "mimo-v2.6-flash", "name": "MiMo v2.6 Flash (Token Plan)",
+    //       "contextWindow": 1048576, "maxOutputTokens": 131072, "vision": true,
+    //       "reasoning": { "off": { "thinking": { "type": "disabled" } } } }
+    //   ] }
+    // }
+  ]
+}

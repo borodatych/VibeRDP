@@ -1,0 +1,129 @@
+// Z.AI (Zhipu / GLM) — OpenAI-совместимый API.
+// Ключ: ZAI_API_KEY=<ключ> в .vibe/.env (взять: z.ai/manage-apikey/apikey-list, дока: docs.z.ai).
+//
+// ТРИ РАЗНЫХ ЭНДПОИНТА — выберите тот, за который вы платите
+// (docs.z.ai/devpack/quick-start, проверено первоисточником 09.09.2026):
+//   • /api/coding/paas/v4 — GLM Coding Plan (подписка), OpenAI-совместимый. Ключ из раздела
+//     «Model & Personal Coding Plan» работает ТОЛЬКО здесь. Это дефолт ниже.
+//   • /api/paas/v4        — оплата за токены (pay-as-you-go): замените baseURL.
+//   • /api/anthropic      — нативный протокол Anthropic, блок в конце файла.
+//
+// GLM-5.3 У ПОДПИСЧИКОВ CODING PLAN — ТОЛЬКО OpenAI-МАРШРУТ /api/coding/paas/v4. Вендор: «If you have
+// previously subscribed to a GLM Coding Plan, including an expired subscription, you can currently
+// access the model API only through the OpenAI Chat Completion-compatible protocol». Значит, Anthropic
+// и Responses для такого ключа закрыты, даже если подписка кончилась (docs.z.ai/guides/llm/glm-5.3,
+// сверено 14.09.2026).
+//
+// РАССУЖДЕНИЕ GLM-5.3 НЕ ВЫКЛЮЧАЕТСЯ: уровни low / high / max, дефолт вендора — max, самый дорогой.
+// Старый фрагмент {"thinking": {"type": "disabled"}} теперь ломает запрос. IDE шлёт уровень всегда,
+// выключить рассуждение из IDE нельзя. Клиент вне IDE без reasoning_effort получит max.
+//
+// Симптом перепутанного эндпоинта — не «неверный ключ», а HTTP 429 с кодом 1113
+// «Insufficient balance or no resource package. Please recharge»: подписочный ключ ушёл
+// на пер-токенный счёт, где денег нет (проверено живьём 06.08.2026; вендор подтверждает
+// это же поведение в docs.z.ai/devpack/faq).
+//
+// ЧТО ДОСТУПНО В ПЛАНЕ: только glm-5.3 и glm-5.3-flash. Запросы к GLM-5.2 и GLM-5.1
+// вендор автоматически переводит на GLM-5.3 — писать их именами смысла нет
+// (docs.z.ai/devpack/overview).
+//
+// КАК РАСХОДУЕТСЯ КВОТА (окно 5 часов; кредиты Lite 2 000 / Pro 12 000 / Max 28 000).
+// Множители на 10K токенов: glm-5.3 — вход 6.9, чтение кэша 1.7, выход 24;
+// glm-5.3-flash — 2.3 / 0.56 / 8. Вне пиков (всё, кроме Пн–Пт 14:00–18:00 SGT) — половина.
+// То есть выход дороже входа втрое с лишним: длинные ответы жгут план быстрее длинного
+// контекста, и это единственное число, по которому стоит принимать решения.
+//
+// ВТОРОЙ ПОТОЛОК — НЕДЕЛЬНЫЙ: Lite 10 000 / Pro 60 000 / Max 140 000 кредитов. Пятичасовое окно
+// обновляется, недельное — нет: запас «на пять часов» может быть, а недели уже не быть
+// (docs.z.ai/devpack/overview, сверено 13.09.2026).
+//
+// ПЛАН ОГРАНИЧЕН ОФИЦИАЛЬНЫМИ ИНСТРУМЕНТАМИ: вендор пишет, что Coding Plan «strictly limited to use
+// within officially supported tools» (Claude Code, Cursor, Cline и т.п.; docs.z.ai/devpack/quick-start,
+// сверено 13.09.2026). Подключение из стороннего клиента — ваш риск блокировки ключа, а не гарантия.
+// Цена: Lite от 18 USD в месяц (docs.z.ai/devpack/overview); цен Pro и Max в документации нет, агрегаторы
+// расходятся — поэтому здесь их нет.
+{
+  "version": 1,
+  "providers": [
+    {
+      "id": "zai",
+      "name": "Z.AI (GLM)",
+      "active": true, // тумблер: false — провайдер скрыт из списков (в слиянии и extends участвует)
+      "protocol": "openai",
+      "baseURL": "https://api.z.ai/api/coding/paas/v4",
+      "auth": "bearer",
+      "apiKeyEnv": "ZAI_API_KEY",
+      "order": 40,
+      // Остаток плана. ЭТОТ ЗАПРОС ВЕНДОР НЕ ДОКУМЕНТИРУЕТ: адрес и ответ взяты у сторонних клиентов (CodexBar,
+      // openclaw, onWatch), и формат уже менялся без предупреждения — в сентябре 2026 окна тарифа Lite пришли типом
+      // CREDIT_LIMIT вместо TOKENS_LIMIT (github.com/onllm-dev/onWatch/issues/122). IDE задаёт запрос только когда вы
+      // просите отчёт о расходе (/spend, «Расходы»); незнакомый ответ показывается как «не удалось прочитать», а не 0.
+      // Про ограничение плана официальными инструментами — шапка файла: это такой же запрос с вашим ключом.
+      // Не хотите — уберите поле. Ключ оплаты за токены остатка не имеет.
+      "quota": { "url": "https://api.z.ai/api/monitor/usage/quota/limit", "format": "zai-monitor" },
+      "models": {
+        // Каталог на <baseURL>/models вендор НЕ ДОКУМЕНТИРУЕТ (сверено с quick-start и
+        // HTTP-introduction 09.09.2026). Оставлено включённым: если каталог есть, список
+        // приедет сам и будет свежее нашего. Если его нет — работать всё равно есть с чем,
+        // потому что обе модели плана перечислены ниже статически.
+        "fetch": true,
+        // Статические записи МЕРЖАТСЯ с авто-списком по id: здесь только то, чего в каталоге нет.
+        "static": [
+          {
+            "id": "glm-5.3",
+            "name": "GLM-5.3",
+            // Без tool_stream аргументы вызова инструмента копятся молча и приходят одним куском в конце:
+            // длинный аргумент — минуты тишины (docs.z.ai/guides/capabilities/stream-tool, сверено 15.09.2026).
+            "extraBody": { "tool_stream": true },
+            "default": true,
+            // 1M контекста, выход до 128K, вход только текстовый; рассуждение всегда включено
+            // и имеет три уровня (docs.z.ai/guides/llm/glm-5.3, проверено 09.09.2026).
+            "contextWindow": 1000000,
+            "maxOutputTokens": 131072,
+            "vision": false,
+            "reasoning": { "canTurnOff": false, "effort": ["low", "high", "max"] }
+          },
+          {
+            // Стартовая акция −50% заканчивается 09.09.2026 в 24:00 UTC+8 = 16:00 UTC.
+            // Дальше цена ровно вдвое выше, кэш — тоже (docs.z.ai/guides/overview/pricing).
+            "id": "glm-5.3-flash",
+            "extraBody": { "tool_stream": true },
+            "cost": { "input": 0.075, "output": 0.25, "cacheRead": 0.015 },
+            "costValidUntil": "2026-09-09T16:00:00Z",
+            "costAfter": { "input": 0.15, "output": 0.50, "cacheRead": 0.03 },
+            "costNote": "стартовая акция −50%, docs.z.ai/guides/overview/pricing"
+          }
+        ]
+      }
+    }
+
+    // ── Z.AI (GLM) по нативному протоколу Anthropic ────────────────────────────────
+    // Маршрут ПОДТВЕРЖДЁН ДОКОЙ ВЕНДОРА (docs.z.ai/devpack/quick-start, 09.09.2026):
+    // Anthropic Messages живёт на https://api.z.ai/api/anthropic.
+    // НО ДЛЯ GLM-5.3 ключу Coding Plan (и истёкшему) этот маршрут закрыт — только OpenAI-маршрут выше
+    // (docs.z.ai/guides/llm/glm-5.3, сверено 14.09.2026).
+    //
+    // Почему ниже написано «/anthropic/v1», а в доке — «/anthropic»: это одно и то же место.
+    // SDK Anthropic дописывает к базе «/v1/messages», а наш клиент — РОВНО «/messages»,
+    // поэтому версионный сегмент у нас входит в baseURL. Полный URL совпадает.
+    // (Урок MiniMax 06.08.2026: без /v1 запрос уходил на /anthropic/messages и вендор отвечал 404.)
+    //
+    // Каталога моделей на этом эндпоинте нет — список задаётся вручную.
+    // Раскомментируйте блок целиком — вместе с ведущей запятой и скобками.
+    // ,{
+    //   "id": "zai-anthropic", "extends": "zai", "name": "Z.AI (Anthropic-протокол)",
+    //   "protocol": "anthropic", "baseURL": "https://api.z.ai/api/anthropic/v1",
+    //   "auth": { "type": "header", "name": "x-api-key" }, "order": 41,
+    //   "models": { "fetch": false, "static": [
+    //     { "id": "glm-5.3", "name": "GLM-5.3 (Anthropic)", "contextWindow": 1000000 },
+    //     { "id": "glm-5.3-flash", "name": "GLM-5.3 Flash (Anthropic)" }
+    //   ] }
+    // }
+    // ПИКОВЫЙ МНОЖИТЕЛЬ ЗАВИСИТ ОТ ТАРИФА, А НЕ ОТ МАРШРУТА (docs.z.ai/devpack/notice/usage-revision, 30.07.2026):
+    //   • Legacy Plan V2 — GLM-5.3 1× вне пика и 3× в пик, GLM-5.3-Flash 0.4× и 1.2×;
+    //   • тариф на кредитах — в пик полная ставка, вне пика и в выходные весь день половина (множители в шапке).
+    // Пик — Пн–Пт 14:00–18:00 SGT. «2× вне пика» из сводок сообщества вендором не подтверждено.
+    // Официальный остаток плана — на странице подписки в кабинете z.ai (docs.z.ai/devpack/faq)
+    // и в отчёте о расходе IDE по полю "quota" выше.
+  ]
+}

@@ -1,0 +1,109 @@
+// DeepSeek — OpenAI-совместимый API. Ключ: DEEPSEEK_API_KEY=<ключ> в .vibe/.env
+// (взять: platform.deepseek.com/api_keys).
+//
+// МОДЕЛИ (api-docs.deepseek.com, сверено 13.09.2026):
+//   • deepseek-flash — V4.1-Flash, вышла 10.09.2026: окно 1M, ответ до 384K, ПРИНИМАЕТ КАРТИНКИ;
+//   • deepseek-v4-pro — только текст. Работает и после 14.09.2026 по прежней цене: вендор отменил
+//     перевод на Flash (api-docs.deepseek.com/updates, запись 10.09.2026, сверено 14.09.2026);
+//   • deepseek-v4-flash и deepseek-v4-flash-vision-exp сняты и временно отвечают V4.1-Flash;
+//   • deepseek-chat / deepseek-reasoner отключены 2026-07-24.
+// Модель без картинок (v4-pro) фиксируйте записью с "vision": false — тогда композер откажет во
+// вложении заранее, а не после ошибки провайдера.
+//
+// РАССУЖДЕНИЕ ВКЛЮЧЕНО ПО УМОЛЧАНИЮ, уровень high; уровни — low / high / max («medium» вендор
+// приводит к high). Выключается фрагментом {"thinking": {"type": "disabled"}}: в записях ниже он
+// объявлен как "reasoning.off", и ползунок в положении «выключено» отправляет именно его. Сборка,
+// которая "off" не знает, в этом положении не шлёт ничего — и модель думает на уровне вендора.
+// temperature и штрафы в режиме рассуждения не действуют, top_p ниже 0.95 поднимается до 0.95.
+//
+// ИНСТРУМЕНТЫ И РАССУЖДЕНИЕ: если запрос несёт "tools", все прошлые reasoning_content обязаны уехать
+// обратно в историю, иначе вендор отвечает 400. Без "tools" поле игнорируется. Прямой чат VibeIDEA шлёт
+// инструменты сам (IDE и сервер памяти), так что с ними это нужно всегда. В VibeIDEA включается причудой
+// ECHO_REASONING в .vibe/modelQuirks.json для этой модели;
+// VibeIDE проектный modelQuirks.json не читает — там та же механика зовётся mirrorReasoningContent и живёт
+// во вшитом каталоге. Вшивать причуду всем ходам нельзя: без инструментов она только раздувает запрос
+// (api-docs.deepseek.com/guides/thinking_mode, сверено 12.09.2026).
+//
+// ЦЕНА ЗАВИСИТ ОТ ЧАСА: пик — 01:00–04:00 и 06:00–10:00 UTC с понедельника по пятницу, в остальное
+// время — половина пиковой ставки. В записях ниже ставки пиковые, а "timeOfDay" описывает
+// расписание. Кэширование контекста включено по умолчанию; кэш-хит у Flash в 50 раз дешевле промаха.
+//
+// КЭШ БЕЗ ГАРАНТИЙ: вендор называет его best-effort и очищает «within a few hours to a few days»
+// (api-docs.deepseek.com/guides/kv_cache, сверено 13.09.2026). Встречающиеся в прессе «не меньше
+// 72 часов» первоисточником не подтверждены — на долгую паузу между ходами дешёвый кэш не рассчитывайте.
+// Лимит параллельных запросов: 2500 у Flash, 500 у v4-pro (страница pricing, 13.09.2026).
+{
+  "version": 1,
+  "providers": [
+    {
+      "id": "deepseek",
+      "name": "DeepSeek",
+      "active": true, // тумблер: false — провайдер скрыт из списков (в слиянии и extends участвует)
+      "protocol": "openai",
+      // База без /v1 — как в доке вендора: клиент дописывает «/chat/completions» и «/models».
+      "baseURL": "https://api.deepseek.com",
+      "auth": "bearer",
+      "apiKeyEnv": "DEEPSEEK_API_KEY",
+      "order": 32, // сразу после MiniMax (30–31)
+      "models": {
+        "fetch": true
+
+        // ── Кастомные записи (api-docs.deepseek.com/quick_start/pricing, сверено 13.09.2026) ──
+        // Раскомментируйте, чтобы зафиксировать картинки, рассуждение и цену.
+        // "static": [
+        //   { "id": "deepseek-flash", "name": "DeepSeek V4.1 Flash (1M)", "default": true, "pinned": true,
+        //     "contextWindow": 1000000, "vision": true,
+        //     "reasoning": { "canTurnOff": true, "effort": ["low", "high", "max"],
+        //                    "off": { "thinking": { "type": "disabled" } } },
+        //     "cost": { "input": 0.30, "output": 1.20, "cacheRead": 0.006, "currency": "USD",
+        //       "timeOfDay": { "peakUtc": ["01:00-04:00", "06:00-10:00"],
+        //                      "peakDays": ["mon", "tue", "wed", "thu", "fri"], "offPeakFactor": 0.5 } },
+        //     "costNote": "api-docs.deepseek.com/quick_start/pricing" },
+        //   // Цена Pro своя и после 14.09.2026: вендор оставил модель с прежним тарифом (api-docs.deepseek.com/updates).
+        //   { "id": "deepseek-v4-pro", "name": "DeepSeek V4-Pro (1M, только текст)",
+        //     "contextWindow": 1000000, "vision": false,
+        //     "reasoning": { "canTurnOff": true, "effort": ["low", "high", "max"],
+        //                    "off": { "thinking": { "type": "disabled" } } },
+        //     "cost": { "input": 1.32, "output": 3.96, "cacheRead": 0.044, "currency": "USD",
+        //       "timeOfDay": { "peakUtc": ["01:00-04:00", "06:00-10:00"],
+        //                      "peakDays": ["mon", "tue", "wed", "thu", "fri"], "offPeakFactor": 0.5 } },
+        //     "costNote": "api-docs.deepseek.com/quick_start/pricing" }
+        // ]
+      }
+    }
+
+    // ── DeepSeek по протоколу Anthropic ──────────────────────────────────────────
+    // Маршрут вендора — https://api.deepseek.com/anthropic (api-docs.deepseek.com/guides/anthropic_api,
+    // сверено 11.09.2026). У нас baseURL обязан заканчиваться на /v1: клиент дописывает РОВНО
+    // «/messages». thinking на этом маршруте принимается, но budget_tokens игнорируется; top_k,
+    // cache_control, mcp_servers и container игнорируются тоже; top_p вне режима мышления закреплён на 1.0.
+    // Рассуждение включено по умолчанию и тратит тот же лимит ответа, поэтому maxOutputTokens задан явно.
+    // (Прежняя приписка «без него уйдёт 8192» снята 18.09.2026: на странице вендора max_tokens помечен
+    // полностью поддержанным, умолчания 8192 там нет.)
+    // Каталога моделей на этом маршруте нет — модель задаётся вручную.
+    // НЕЗНАКОМЫЙ ID ЭТОТ МАРШРУТ НЕ ОТВЕРГАЕТ, А ТИХО ОТДАЁТ deepseek-flash (id Opus — deepseek-v4-pro):
+    // опечатка в имени модели даёт работающую, но другую модель. IDE скажет об этом строкой о подмене.
+    // ТУМБЛЕР И УРОВЕНЬ ЗДЕСЬ — РАЗНЫЕ ПОЛЯ, и это главное отличие от OpenAI-маршрута
+    // (api-docs.deepseek.com/guides/thinking_mode, таблица сверена 18.09.2026):
+    //   тумблер — {"reasoning": {"effort": "none|low|high|max"}}, где "none" выключает рассуждение;
+    //   уровень — {"output_config": {"effort": "low|high|max"}}, и только effort из output_config поддержан.
+    // Поэтому у записи ниже свой "reasoning.off" — он про выключение, а не про силу.
+    // Уровень, который вы выбрали, вендор ещё и складывает по своей таблице: minimal и low → low,
+    // medium, high и xhigh → high, max и ultra → max. То есть xhigh стоит как high, а не как max.
+    // Раскомментируйте блок целиком — вместе с ведущей запятой и скобками.
+    // ,{
+    //   "id": "deepseek-anthropic", "extends": "deepseek", "name": "DeepSeek (Anthropic-протокол)",
+    //   "protocol": "anthropic", "baseURL": "https://api.deepseek.com/anthropic/v1",
+    //   "auth": { "type": "header", "name": "x-api-key" }, "order": 33,
+    //   "models": { "fetch": false, "static": [ { "id": "deepseek-flash", "name": "DeepSeek V4.1 Flash (Anthropic)",
+    //     "contextWindow": 1000000, "maxOutputTokens": 65536, "vision": true,
+    //     "reasoning": { "canTurnOff": true, "effort": ["low", "high", "max"],
+    //                    "off": { "reasoning": { "effort": "none" } } },
+    //     // Цена та же, что на OpenAI-маршруте: тариф у модели, а не у протокола.
+    //     "cost": { "input": 0.30, "output": 1.20, "cacheRead": 0.006, "currency": "USD",
+    //       "timeOfDay": { "peakUtc": ["01:00-04:00", "06:00-10:00"],
+    //                      "peakDays": ["mon", "tue", "wed", "thu", "fri"], "offPeakFactor": 0.5 } },
+    //     "costNote": "api-docs.deepseek.com/quick_start/pricing" } ] }
+    // }
+  ]
+}
