@@ -52,8 +52,12 @@ check_app() {
     log "Verifying slices, deployment target, the embedded core and the signature"
     check_binary "$binary"
     check_binary "$embedded"
-    otool -L "$binary" | grep -qF "@rpath/VibeRDPCore.framework/" || die "$binary does not link the core framework"
-    otool -l "$binary" | grep -qF "@executable_path/../Frameworks" || die "$binary cannot find the embedded frameworks"
+    # The output is read whole first: grep -q stops at the first match, and under pipefail the writer's SIGPIPE fails
+    local libraries commands
+    libraries=$(otool -L "$binary")
+    commands=$(otool -l "$binary")
+    grep -qF "@rpath/VibeRDPCore.framework/" <<<"$libraries" || die "$binary does not link the core framework"
+    grep -qF "@executable_path/../Frameworks" <<<"$commands" || die "$binary cannot find the embedded frameworks"
     # --deep checks the nested framework too: an embedded copy left unsigned fails here
     codesign --verify --deep --strict "$APP" || die "$APP fails signature verification"
 }

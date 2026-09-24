@@ -10,7 +10,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.mainMenu = menu.bar
         NSApp.windowsMenu = menu.windowMenu
 
-        let window = MainWindow.make(title: Self.appName)
+        let window = MainWindow.make(
+            title: Self.appName, content: ConnectionViewController(trusted: TrustedCertificates()))
         window.makeKeyAndOrderFront(nil)
         mainWindow = window
         NSApp.activate()

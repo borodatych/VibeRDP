@@ -12,7 +12,7 @@ final class CoreFrameworkTests: XCTestCase {
     }
 
     func testSessionLifecycleThroughTheFramework() {
-        var callbacks = VRCCallbacks(stateChanged: nil, error: nil)
+        var callbacks = VRCCallbacks(stateChanged: nil, error: nil, verifyCertificate: nil)
         let session = VRCSessionCreate(&callbacks, nil)
         XCTAssertNotNil(session)
         VRCSessionDestroy(session)
