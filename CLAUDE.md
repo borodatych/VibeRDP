@@ -62,7 +62,7 @@ git log --all --format='%B' | grep -niE "co-authored-by|generated with|anthropic
 - CMake 4.4.3 лежит в `/Volumes/Storage/Caches/VibeRDP/tools/` и не стоит в `PATH` — скрипту его передаёт переменная `CMAKE`
 - XcodeGen 2.46.0 и actionlint 1.7.12 лежат в `/Volumes/Storage/Caches/VibeRDP/tools/` и не стоят в `PATH`: XcodeGen скрипту клиента передаёт переменная `XCODEGEN`
 - Не скачан компонент Metal Toolchain (нужен на 1.2) — установка по согласованию с владельцем
-- Репозитория на GitHub пока нет: создание публичного `borodatych/VibeRDP` и push — только с явного разрешения владельца
+- Репозиторий — публичный https://github.com/borodatych/VibeRDP, CI — GitHub Actions на каждый push в `main` и `next`
 - Rust 1.97.1 через rustup; у тулчейна `1.97.1` уже есть `x86_64-pc-windows-msvc`, у `stable` — только `aarch64-apple-darwin`; хелпер закрепляет `1.97.1`
 - Сборочные кэши и скачанные зависимости — в `/Volumes/Storage/Caches/VibeRDP/` (`VIBERDP_CACHE_DIR`), не в репозиторий и не в `~`
 - start0 не используется — [docs/decisions.md](docs/decisions.md), раздел 2
