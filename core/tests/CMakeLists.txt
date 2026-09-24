@@ -9,8 +9,11 @@ if(VRC_SANITIZE)
   list(APPEND VRC_TEST_ENVIRONMENT "ASAN_OPTIONS=symbolize=0")
 endif()
 
-add_executable(sessionTests sessionTests.c support.c)
-target_link_libraries(sessionTests PRIVATE VibeRDPCore)
+# The TLS test server links its own OpenSSL from the prefix; the framework keeps its copy private
+find_package(OpenSSL CONFIG REQUIRED)
+
+add_executable(sessionTests sessionTests.c support.c tlsServer.c)
+target_link_libraries(sessionTests PRIVATE VibeRDPCore OpenSSL::SSL OpenSSL::Crypto)
 target_compile_options(sessionTests PRIVATE -Wall -Wextra -Werror)
 
 set(VRC_SESSION_TESTS
@@ -19,7 +22,14 @@ set(VRC_SESSION_TESTS
     connectRefused
     serverClosesConnection
     disconnectWhileConnecting
-    destroyWhileConnecting)
+    destroyWhileConnecting
+    hostNotFound
+    resolveWithoutRequest
+    certificateRejected
+    certificateAccepted
+    certificateWithoutCallback
+    disconnectWhileCertificatePending
+    destroyWhileCertificatePending)
 foreach(test IN LISTS VRC_SESSION_TESTS)
   add_test(NAME ${test} COMMAND sessionTests ${test})
   set_tests_properties(${test} PROPERTIES TIMEOUT 60 ENVIRONMENT "${VRC_TEST_ENVIRONMENT}")

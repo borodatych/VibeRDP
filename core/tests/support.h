@@ -13,6 +13,7 @@
 
 #define RECORDED_STATES_MAX 16
 #define RECORDED_TEXT_MAX 256
+#define RECORDED_PEM_MAX 16384
 
 typedef struct Recorder Recorder;
 
@@ -21,18 +22,25 @@ typedef struct RecorderSnapshot {
     VRCSessionState states[RECORDED_STATES_MAX];
     int stateCount;
     int errorCount;
+    VRCErrorKind errorKind;
     uint32_t errorCode;
     char errorName[RECORDED_TEXT_MAX];
     char errorMessage[RECORDED_TEXT_MAX];
+    int certificateCount;
+    char certificateHost[RECORDED_TEXT_MAX];
+    uint16_t certificatePort;
+    /* NUL-terminated copy of the last chain, cut to the buffer */
+    char certificatePem[RECORDED_PEM_MAX];
 } RecorderSnapshot;
 
 Recorder* recorderNew(void);
 void recorderFree(Recorder* recorder);
 
-/* Callbacks that feed the recorder passed as userData */
+/* Callbacks that feed the recorder passed as userData; certificate requests are recorded and left pending */
 VRCCallbacks recorderCallbacks(void);
 
 bool recorderWaitForState(Recorder* recorder, VRCSessionState state, int timeoutMs);
+bool recorderWaitForCertificate(Recorder* recorder, int timeoutMs);
 RecorderSnapshot recorderSnapshot(Recorder* recorder);
 
 typedef enum FakeServerMode {

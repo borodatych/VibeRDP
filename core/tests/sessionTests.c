@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "support.h"
+#include "tlsServer.h"
 #include "VibeRDPCore/VibeRDPCore.h"
 
 /* Generous for a loopback connection, still short enough to catch a hang */
@@ -34,7 +35,8 @@ static VRCConnectionParams loopbackParams(uint16_t port)
 
 static void printError(const RecorderSnapshot* data)
 {
-    printf("engine error 0x%08x %s: %s\n", data->errorCode, data->errorName, data->errorMessage);
+    printf("error kind %d, engine error 0x%08x %s: %s\n", (int)data->errorKind, data->errorCode, data->errorName,
+           data->errorMessage);
 }
 
 /* Connecting, then Disconnected, and nothing in between: the session never reached a real RDP server */
@@ -111,6 +113,7 @@ static bool testConnectRefused(void)
     printError(&data);
     CHECK(endedWithoutConnecting(&data));
     CHECK(data.errorCount == 1);
+    CHECK(data.errorKind == VRCErrorKindUnreachable);
     CHECK(data.errorCode != 0);
     CHECK(strlen(data.errorName) > 0);
 
@@ -137,6 +140,7 @@ static bool testServerClosesConnection(void)
     CHECK(fakeServerAcceptedCount(server) >= 1);
     CHECK(endedWithoutConnecting(&data));
     CHECK(data.errorCount == 1);
+    CHECK(data.errorKind == VRCErrorKindConnectionLost);
     CHECK(data.errorCode != 0);
 
     VRCSessionDestroy(session);
@@ -204,6 +208,190 @@ static bool testDestroyWhileConnecting(void)
     return true;
 }
 
+/* Starts a session against the TLS server; it runs until it asks about the certificate */
+static VRCSession* connectToTlsServer(const TlsServer* server, const VRCCallbacks* callbacks, Recorder* recorder)
+{
+    VRCSession* session = VRCSessionCreate(callbacks, recorder);
+    const VRCConnectionParams params = loopbackParams(tlsServerPort(server));
+    if (!session || VRCSessionConnect(session, &params) != VRCResultOK)
+        return NULL;
+    return session;
+}
+
+static bool testResolveWithoutRequest(void)
+{
+    VRCSession* session = VRCSessionCreate(NULL, NULL);
+    CHECK(session != NULL);
+    CHECK(VRCSessionResolveCertificate(NULL, true) == VRCResultInvalidArgument);
+    CHECK(VRCSessionResolveCertificate(session, true) == VRCResultInvalidState);
+    CHECK(VRCSessionResolveCertificate(session, false) == VRCResultInvalidState);
+    VRCSessionDestroy(session);
+    return true;
+}
+
+/* The chain reaches the callback with the host and port the client dialed; a rejection ends the connection */
+static bool testCertificateRejected(void)
+{
+    TlsServer* server = tlsServerStart();
+    Recorder* recorder = recorderNew();
+    const VRCCallbacks callbacks = recorderCallbacks();
+    VRCSession* session = connectToTlsServer(server, &callbacks, recorder);
+    CHECK(session != NULL);
+    CHECK(recorderWaitForCertificate(recorder, STATE_TIMEOUT_MS));
+
+    RecorderSnapshot data = recorderSnapshot(recorder);
+    const char* serverPem = tlsServerCertificatePem(server);
+    CHECK(strcmp(data.certificateHost, "127.0.0.1") == 0);
+    CHECK(data.certificatePort == tlsServerPort(server));
+    /* The server certificate comes first; the chain may follow it */
+    CHECK(strncmp(data.certificatePem, serverPem, strlen(serverPem)) == 0);
+
+    CHECK(VRCSessionResolveCertificate(session, false) == VRCResultOK);
+    CHECK(VRCSessionResolveCertificate(session, true) == VRCResultInvalidState);
+    CHECK(recorderWaitForState(recorder, VRCSessionStateDisconnected, STATE_TIMEOUT_MS));
+
+    data = recorderSnapshot(recorder);
+    printError(&data);
+    CHECK(endedWithoutConnecting(&data));
+    CHECK(data.certificateCount == 1);
+    CHECK(data.errorCount == 1);
+    CHECK(data.errorKind == VRCErrorKindCertificateRejected);
+    CHECK(tlsServerContinuedCount(server) == 0);
+
+    VRCSessionDestroy(session);
+    recorderFree(recorder);
+    tlsServerStop(server);
+    return true;
+}
+
+/* An accepted certificate lets the client go on over TLS; the fake server then hangs up */
+static bool testCertificateAccepted(void)
+{
+    TlsServer* server = tlsServerStart();
+    Recorder* recorder = recorderNew();
+    const VRCCallbacks callbacks = recorderCallbacks();
+    VRCSession* session = connectToTlsServer(server, &callbacks, recorder);
+    CHECK(session != NULL);
+    CHECK(recorderWaitForCertificate(recorder, STATE_TIMEOUT_MS));
+    CHECK(VRCSessionResolveCertificate(session, true) == VRCResultOK);
+    CHECK(recorderWaitForState(recorder, VRCSessionStateDisconnected, STATE_TIMEOUT_MS));
+
+    /*
+     * The hang-up is a transport failure, and freerdp_connect retries once after one;
+     * the retry reuses the certificate accepted in this session, so the question is asked only once
+     */
+    const RecorderSnapshot data = recorderSnapshot(recorder);
+    printError(&data);
+    printf("the client went on over TLS %d times\n", tlsServerContinuedCount(server));
+    CHECK(tlsServerContinuedCount(server) >= 1);
+    CHECK(data.certificateCount == 1);
+    CHECK(data.errorCount == 1);
+    CHECK(data.errorKind == VRCErrorKindConnectionLost);
+
+    VRCSessionDestroy(session);
+    recorderFree(recorder);
+    tlsServerStop(server);
+    return true;
+}
+
+/* No callback, no trust: the certificate is rejected without asking anyone */
+static bool testCertificateWithoutCallback(void)
+{
+    TlsServer* server = tlsServerStart();
+    Recorder* recorder = recorderNew();
+    VRCCallbacks callbacks = recorderCallbacks();
+    callbacks.verifyCertificate = NULL;
+    VRCSession* session = connectToTlsServer(server, &callbacks, recorder);
+    CHECK(session != NULL);
+    CHECK(recorderWaitForState(recorder, VRCSessionStateDisconnected, STATE_TIMEOUT_MS));
+
+    const RecorderSnapshot data = recorderSnapshot(recorder);
+    printError(&data);
+    CHECK(data.errorCount == 1);
+    CHECK(data.errorKind == VRCErrorKindCertificateRejected);
+    CHECK(tlsServerContinuedCount(server) == 0);
+
+    VRCSessionDestroy(session);
+    recorderFree(recorder);
+    tlsServerStop(server);
+    return true;
+}
+
+/* A dialog left open must not hold the session: the cancel ends the wait and is not an error */
+static bool testDisconnectWhileCertificatePending(void)
+{
+    TlsServer* server = tlsServerStart();
+    Recorder* recorder = recorderNew();
+    const VRCCallbacks callbacks = recorderCallbacks();
+    VRCSession* session = connectToTlsServer(server, &callbacks, recorder);
+    CHECK(session != NULL);
+    CHECK(recorderWaitForCertificate(recorder, STATE_TIMEOUT_MS));
+
+    const int64_t started = monotonicMs();
+    VRCSessionDisconnect(session);
+    CHECK(recorderWaitForState(recorder, VRCSessionStateDisconnected, STOP_BUDGET_MS));
+    printf("disconnected in %lld ms\n", (long long)(monotonicMs() - started));
+
+    const RecorderSnapshot data = recorderSnapshot(recorder);
+    printError(&data);
+    CHECK(data.errorCount == 0);
+    CHECK(tlsServerContinuedCount(server) == 0);
+    /* The late answer of a dialog closed after the cancel finds nothing to answer */
+    CHECK(VRCSessionResolveCertificate(session, true) == VRCResultInvalidState);
+
+    VRCSessionDestroy(session);
+    recorderFree(recorder);
+    tlsServerStop(server);
+    return true;
+}
+
+static bool testDestroyWhileCertificatePending(void)
+{
+    TlsServer* server = tlsServerStart();
+    Recorder* recorder = recorderNew();
+    const VRCCallbacks callbacks = recorderCallbacks();
+    VRCSession* session = connectToTlsServer(server, &callbacks, recorder);
+    CHECK(session != NULL);
+    CHECK(recorderWaitForCertificate(recorder, STATE_TIMEOUT_MS));
+
+    const int64_t started = monotonicMs();
+    VRCSessionDestroy(session);
+    const int64_t elapsed = monotonicMs() - started;
+    printf("destroyed in %lld ms\n", (long long)elapsed);
+    CHECK(elapsed < STOP_BUDGET_MS);
+
+    const RecorderSnapshot data = recorderSnapshot(recorder);
+    CHECK(data.errorCount == 0);
+    CHECK(tlsServerContinuedCount(server) == 0);
+
+    recorderFree(recorder);
+    tlsServerStop(server);
+    return true;
+}
+
+/* The reserved .invalid domain never resolves (RFC 6761) */
+static bool testHostNotFound(void)
+{
+    Recorder* recorder = recorderNew();
+    const VRCCallbacks callbacks = recorderCallbacks();
+    VRCSession* session = VRCSessionCreate(&callbacks, recorder);
+    CHECK(session != NULL);
+
+    const VRCConnectionParams params = { .host = "viberdp-test.invalid" };
+    CHECK(VRCSessionConnect(session, &params) == VRCResultOK);
+    CHECK(recorderWaitForState(recorder, VRCSessionStateDisconnected, STATE_TIMEOUT_MS));
+
+    const RecorderSnapshot data = recorderSnapshot(recorder);
+    printError(&data);
+    CHECK(endedWithoutConnecting(&data));
+    CHECK(data.errorCount == 1);
+    CHECK(data.errorKind == VRCErrorKindHostNotFound);
+
+    VRCSessionDestroy(session);
+    recorderFree(recorder);
+    return true;
+}
+
 typedef struct TestCase {
     const char* name;
     bool (*run)(void);
@@ -216,6 +404,13 @@ static const TestCase tests[] = {
     { "serverClosesConnection", testServerClosesConnection },
     { "disconnectWhileConnecting", testDisconnectWhileConnecting },
     { "destroyWhileConnecting", testDestroyWhileConnecting },
+    { "hostNotFound", testHostNotFound },
+    { "resolveWithoutRequest", testResolveWithoutRequest },
+    { "certificateRejected", testCertificateRejected },
+    { "certificateAccepted", testCertificateAccepted },
+    { "certificateWithoutCallback", testCertificateWithoutCallback },
+    { "disconnectWhileCertificatePending", testDisconnectWhileCertificatePending },
+    { "destroyWhileCertificatePending", testDestroyWhileCertificatePending },
 };
 
 int main(int argc, char* argv[])

@@ -11,10 +11,24 @@
 #include <stdlib.h>
 
 #include <freerdp/client.h>
+#include <freerdp/client/cmdline.h>
+#include <freerdp/error.h>
 #include <freerdp/freerdp.h>
 #include <freerdp/gdi/gdi.h>
 #include <winpr/synch.h>
 #include <winpr/thread.h>
+
+/* Where the certificate question stands: only a pending request can be answered, and only once */
+enum {
+    CertificateIdle,
+    CertificatePending,
+    CertificateAccepted,
+    CertificateRejected,
+};
+
+/* VerifyX509Certificate: above zero accepts; 2 accepts for this connection only, since the store is the app's */
+#define CERTIFICATE_ACCEPTED 2
+#define CERTIFICATE_REJECTED 0
 
 struct VRCSession {
     /* Must stay first: FreeRDP allocates the session as its client context and casts between the two */
@@ -22,6 +36,11 @@ struct VRCSession {
     VRCCallbacks callbacks;
     void* userData;
     atomic_bool started;
+    atomic_int certificateState;
+    /* The core turned the certificate down: the TLS failure that follows is that decision, not a broken handshake */
+    atomic_bool certificateRejected;
+    /* Set by VRCSessionResolveCertificate; the session thread waits for it together with the abort event */
+    HANDLE certificateAnswered;
 };
 
 /* The session served by the current thread: VRCSessionDestroy must not wait for its own thread */
@@ -33,10 +52,50 @@ static void notifyState(const VRCSession* session, VRCSessionState state)
         session->callbacks.stateChanged(session->userData, state);
 }
 
+static VRCErrorKind errorKind(const VRCSession* session, UINT32 code)
+{
+    switch (code)
+    {
+        case FREERDP_ERROR_DNS_ERROR:
+        case FREERDP_ERROR_DNS_NAME_NOT_FOUND:
+            return VRCErrorKindHostNotFound;
+        case FREERDP_ERROR_CONNECT_FAILED:
+            return VRCErrorKindUnreachable;
+        case FREERDP_ERROR_CONNECT_TRANSPORT_FAILED:
+        case FREERDP_ERROR_MCS_CONNECT_INITIAL_ERROR:
+            return VRCErrorKindConnectionLost;
+        case FREERDP_ERROR_TLS_CONNECT_FAILED:
+            return atomic_load(&session->certificateRejected) ? VRCErrorKindCertificateRejected
+                                                              : VRCErrorKindSecurityFailed;
+        case FREERDP_ERROR_SECURITY_NEGO_CONNECT_FAILED:
+        case FREERDP_ERROR_CONNECT_HYBRID_REQUIRED_BY_SERVER:
+            return VRCErrorKindSecurityFailed;
+        case FREERDP_ERROR_AUTHENTICATION_FAILED:
+        case FREERDP_ERROR_CONNECT_LOGON_FAILURE:
+        case FREERDP_ERROR_CONNECT_WRONG_PASSWORD:
+        case FREERDP_ERROR_CONNECT_NO_OR_MISSING_CREDENTIALS:
+            return VRCErrorKindAuthentication;
+        case FREERDP_ERROR_INSUFFICIENT_PRIVILEGES:
+        case FREERDP_ERROR_CONNECT_ACCESS_DENIED:
+        case FREERDP_ERROR_CONNECT_ACCOUNT_DISABLED:
+        case FREERDP_ERROR_CONNECT_ACCOUNT_RESTRICTION:
+        case FREERDP_ERROR_CONNECT_ACCOUNT_LOCKED_OUT:
+        case FREERDP_ERROR_CONNECT_ACCOUNT_EXPIRED:
+        case FREERDP_ERROR_CONNECT_LOGON_TYPE_NOT_GRANTED:
+            return VRCErrorKindAccountRestricted;
+        case FREERDP_ERROR_CONNECT_PASSWORD_EXPIRED:
+        case FREERDP_ERROR_CONNECT_PASSWORD_CERTAINLY_EXPIRED:
+        case FREERDP_ERROR_CONNECT_PASSWORD_MUST_CHANGE:
+            return VRCErrorKindPasswordExpired;
+        default:
+            return VRCErrorKindOther;
+    }
+}
+
 static void notifyError(const VRCSession* session, UINT32 code)
 {
     if (session->callbacks.error)
-        session->callbacks.error(session->userData, code, freerdp_get_last_error_name(code),
+        session->callbacks.error(session->userData, errorKind(session, code), code, freerdp_get_last_error_name(code),
                                  freerdp_get_last_error_string(code));
 }
 
@@ -107,13 +166,66 @@ static DWORD WINAPI sessionThread(LPVOID arg)
     return 0;
 }
 
+/* Runs on the session thread during the TLS handshake: the app decides, the engine keeps no certificate store */
+static int verifyX509Certificate(freerdp* instance, const BYTE* data, size_t length, const char* hostname,
+                                 UINT16 port, DWORD flags)
+{
+    (void)flags;
+    VRCSession* session = (VRCSession*)instance->context;
+    if (!session->callbacks.verifyCertificate)
+    {
+        atomic_store(&session->certificateRejected, true);
+        return CERTIFICATE_REJECTED;
+    }
+
+    (void)ResetEvent(session->certificateAnswered);
+    atomic_store(&session->certificateState, CertificatePending);
+    const VRCCertificateRequest request = { .host = hostname, .port = port, .pem = data, .pemLength = length };
+    session->callbacks.verifyCertificate(session->userData, &request);
+
+    HANDLE handles[] = { session->certificateAnswered, freerdp_abort_event(instance->context) };
+    const DWORD status = WaitForMultipleObjects(ARRAYSIZE(handles), handles, FALSE, INFINITE);
+    /* Back to idle before anything else: an answer racing with the abort now gets InvalidState */
+    const int answer = atomic_exchange(&session->certificateState, CertificateIdle);
+    if (status == WAIT_OBJECT_0 && answer == CertificateAccepted)
+        return CERTIFICATE_ACCEPTED;
+    atomic_store(&session->certificateRejected, true);
+    return CERTIFICATE_REJECTED;
+}
+
 static BOOL clientNew(freerdp* instance, rdpContext* context)
 {
-    (void)context;
+    VRCSession* session = (VRCSession*)context;
+
+    atomic_init(&session->certificateState, CertificateIdle);
+    atomic_init(&session->certificateRejected, false);
+    session->certificateAnswered = CreateEventA(NULL, TRUE, FALSE, NULL);
     instance->PreConnect = preConnect;
     instance->PostConnect = postConnect;
     instance->PostDisconnect = postDisconnect;
-    return TRUE;
+    instance->VerifyX509Certificate = verifyX509Certificate;
+
+    /*
+     * The client library installs console prompts that read stdin and print to it; an app has neither
+     * Without them the engine goes on without asking: missing credentials fail NLA with a reported error
+     */
+    instance->AuthenticateEx = NULL;
+    instance->ChooseSmartcard = NULL;
+    instance->VerifyCertificateEx = NULL;
+    instance->VerifyChangedCertificateEx = NULL;
+    instance->PresentGatewayMessage = NULL;
+    instance->LogonErrorInfo = NULL;
+    instance->GetAccessToken = NULL;
+    return session->certificateAnswered != NULL;
+}
+
+static void clientFree(freerdp* instance, rdpContext* context)
+{
+    (void)instance;
+    VRCSession* session = (VRCSession*)context;
+
+    if (session->certificateAnswered)
+        (void)CloseHandle(session->certificateAnswered);
 }
 
 static int clientStart(rdpContext* context)
@@ -124,13 +236,40 @@ static int clientStart(rdpContext* context)
     return common->thread ? 0 : -1;
 }
 
+/*
+ * Without a separate domain the user name follows the engine rule: DOMAIN\user is split,
+ * user@domain goes whole with an empty domain, which CredSSP and the Client Info PDU expect
+ */
+static BOOL applyCredentials(rdpSettings* settings, const VRCConnectionParams* params)
+{
+    if (params->domain || !params->username)
+        return freerdp_settings_set_string(settings, FreeRDP_Username, params->username) &&
+               freerdp_settings_set_string(settings, FreeRDP_Domain, params->domain) &&
+               freerdp_settings_set_string(settings, FreeRDP_Password, params->password);
+
+    char* user = NULL;
+    char* domain = NULL;
+    const BOOL applied = freerdp_parse_username(params->username, &user, &domain) &&
+                         freerdp_settings_set_string(settings, FreeRDP_Username, user) &&
+                         freerdp_settings_set_string(settings, FreeRDP_Domain, domain ? domain : "") &&
+                         freerdp_settings_set_string(settings, FreeRDP_Password, params->password);
+    free(user);
+    free(domain);
+    return applied;
+}
+
 static BOOL applyParams(rdpSettings* settings, const VRCConnectionParams* params)
 {
     return freerdp_settings_set_string(settings, FreeRDP_ServerHostname, params->host) &&
            (params->port == 0 || freerdp_settings_set_uint32(settings, FreeRDP_ServerPort, params->port)) &&
-           freerdp_settings_set_string(settings, FreeRDP_Username, params->username) &&
-           freerdp_settings_set_string(settings, FreeRDP_Domain, params->domain) &&
-           freerdp_settings_set_string(settings, FreeRDP_Password, params->password);
+           applyCredentials(settings, params);
+}
+
+/* NLA and TLS stay negotiable; the legacy RDP Security layer has weak encryption and no server authentication */
+static BOOL applySecurity(rdpSettings* settings)
+{
+    return freerdp_settings_set_bool(settings, FreeRDP_RdpSecurity, FALSE) &&
+           freerdp_settings_set_bool(settings, FreeRDP_ExternalCertificateManagement, TRUE);
 }
 
 /* FreeRDP loads the rdpdr and rdpsnd channels for these features, and the build leaves both channels out */
@@ -149,6 +288,7 @@ VRCSession* VRCSessionCreate(const VRCCallbacks* callbacks, void* userData)
     entryPoints.Version = RDP_CLIENT_INTERFACE_VERSION;
     entryPoints.ContextSize = sizeof(VRCSession);
     entryPoints.ClientNew = clientNew;
+    entryPoints.ClientFree = clientFree;
     entryPoints.ClientStart = clientStart;
     entryPoints.ClientStop = freerdp_client_common_stop;
 
@@ -183,7 +323,7 @@ VRCResult VRCSessionConnect(VRCSession* session, const VRCConnectionParams* para
         return VRCResultInvalidState;
 
     rdpSettings* settings = session->common.context.settings;
-    if (!applyParams(settings, params) || !disableFeaturesNeedingDeviceChannels(settings) ||
+    if (!applyParams(settings, params) || !applySecurity(settings) || !disableFeaturesNeedingDeviceChannels(settings) ||
         freerdp_client_start(&session->common.context) != 0)
         return VRCResultFailure;
     return VRCResultOK;
@@ -193,4 +333,17 @@ void VRCSessionDisconnect(VRCSession* session)
 {
     if (session && atomic_load(&session->started))
         (void)freerdp_abort_connect_context(&session->common.context);
+}
+
+VRCResult VRCSessionResolveCertificate(VRCSession* session, bool accept)
+{
+    if (!session)
+        return VRCResultInvalidArgument;
+
+    int pending = CertificatePending;
+    if (!atomic_compare_exchange_strong(&session->certificateState, &pending,
+                                        accept ? CertificateAccepted : CertificateRejected))
+        return VRCResultInvalidState;
+    (void)SetEvent(session->certificateAnswered);
+    return VRCResultOK;
 }

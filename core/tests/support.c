@@ -50,12 +50,13 @@ static void onStateChanged(void* userData, VRCSessionState state)
     pthread_mutex_unlock(&recorder->mutex);
 }
 
-static void onError(void* userData, uint32_t code, const char* name, const char* message)
+static void onError(void* userData, VRCErrorKind kind, uint32_t code, const char* name, const char* message)
 {
     Recorder* recorder = userData;
 
     pthread_mutex_lock(&recorder->mutex);
     recorder->data.errorCount++;
+    recorder->data.errorKind = kind;
     recorder->data.errorCode = code;
     snprintf(recorder->data.errorName, sizeof(recorder->data.errorName), "%s", name ? name : "");
     snprintf(recorder->data.errorMessage, sizeof(recorder->data.errorMessage), "%s", message ? message : "");
@@ -63,21 +64,50 @@ static void onError(void* userData, uint32_t code, const char* name, const char*
     pthread_mutex_unlock(&recorder->mutex);
 }
 
+static void onVerifyCertificate(void* userData, const VRCCertificateRequest* request)
+{
+    Recorder* recorder = userData;
+    const size_t length =
+        request->pemLength < RECORDED_PEM_MAX - 1 ? request->pemLength : (size_t)(RECORDED_PEM_MAX - 1);
+
+    pthread_mutex_lock(&recorder->mutex);
+    recorder->data.certificateCount++;
+    snprintf(recorder->data.certificateHost, sizeof(recorder->data.certificateHost), "%s",
+             request->host ? request->host : "");
+    recorder->data.certificatePort = request->port;
+    memcpy(recorder->data.certificatePem, request->pem, length);
+    recorder->data.certificatePem[length] = '\0';
+    pthread_cond_broadcast(&recorder->changed);
+    pthread_mutex_unlock(&recorder->mutex);
+}
+
 VRCCallbacks recorderCallbacks(void)
 {
-    VRCCallbacks callbacks = { .stateChanged = onStateChanged, .error = onError };
+    VRCCallbacks callbacks = {
+        .stateChanged = onStateChanged,
+        .error = onError,
+        .verifyCertificate = onVerifyCertificate,
+    };
     return callbacks;
 }
 
-static bool hasState(const RecorderSnapshot* data, VRCSessionState state)
+static bool hasState(const RecorderSnapshot* data, const void* state)
 {
     for (int i = 0; i < data->stateCount; i++)
-        if (data->states[i] == state)
+        if (data->states[i] == *(const VRCSessionState*)state)
             return true;
     return false;
 }
 
-bool recorderWaitForState(Recorder* recorder, VRCSessionState state, int timeoutMs)
+static bool hasCertificate(const RecorderSnapshot* data, const void* unused)
+{
+    (void)unused;
+    return data->certificateCount > 0;
+}
+
+/* Waits until the recorded data satisfy the condition or the time runs out */
+static bool waitFor(Recorder* recorder, bool (*reached)(const RecorderSnapshot*, const void*), const void* arg,
+                    int timeoutMs)
 {
     struct timespec deadline;
     clock_gettime(CLOCK_REALTIME, &deadline);
@@ -91,11 +121,21 @@ bool recorderWaitForState(Recorder* recorder, VRCSessionState state, int timeout
 
     pthread_mutex_lock(&recorder->mutex);
     int status = 0;
-    while (!hasState(&recorder->data, state) && status != ETIMEDOUT)
+    while (!reached(&recorder->data, arg) && status != ETIMEDOUT)
         status = pthread_cond_timedwait(&recorder->changed, &recorder->mutex, &deadline);
-    const bool reached = hasState(&recorder->data, state);
+    const bool done = reached(&recorder->data, arg);
     pthread_mutex_unlock(&recorder->mutex);
-    return reached;
+    return done;
+}
+
+bool recorderWaitForState(Recorder* recorder, VRCSessionState state, int timeoutMs)
+{
+    return waitFor(recorder, hasState, &state, timeoutMs);
+}
+
+bool recorderWaitForCertificate(Recorder* recorder, int timeoutMs)
+{
+    return waitFor(recorder, hasCertificate, NULL, timeoutMs);
 }
 
 RecorderSnapshot recorderSnapshot(Recorder* recorder)

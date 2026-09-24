@@ -43,9 +43,10 @@ var callbacks = VRCCallbacks(
             target.finished.signal()
         }
     },
-    error: { userData, code, _, _ in
+    error: { userData, _, code, _, _ in
         observer(from: userData).errorCode = code
-    })
+    },
+    verifyCertificate: nil)
 
 guard let session = VRCSessionCreate(&callbacks, Unmanaged.passUnretained(watched).toOpaque()) else {
     fatalError("VRCSessionCreate returned nil")

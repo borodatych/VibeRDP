@@ -5,11 +5,17 @@
  * Threading:
  * Every callback runs on the session thread that the core owns, never on the caller's thread
  * Callbacks must return quickly and must not call VRCSessionDestroy: it waits for the session thread
+ *
+ * Server certificates:
+ * The core trusts no certificate by itself: every chain goes to the verifyCertificate callback,
+ * and the session waits until VRCSessionResolveCertificate answers or the session is asked to end
  */
 
 #ifndef VIBERDPCORE_H
 #define VIBERDPCORE_H
 
+#include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -38,7 +44,28 @@ typedef VRC_ENUM(VRCSessionState) {
     VRCSessionStateDisconnected = 3,
 } VRCSessionState;
 
+/* Why a session ended: the app words the message itself, the engine code stays for diagnostics */
+typedef VRC_ENUM(VRCErrorKind) {
+    VRCErrorKindOther = 0,
+    VRCErrorKindHostNotFound = 1,        /* The name does not resolve */
+    VRCErrorKindUnreachable = 2,         /* Nothing accepts connections at the address and port */
+    VRCErrorKindConnectionLost = 3,      /* The connection broke or the server hung up */
+    VRCErrorKindSecurityFailed = 4,      /* No common security protocol, or the TLS handshake failed */
+    VRCErrorKindCertificateRejected = 5, /* The server certificate was not trusted */
+    VRCErrorKindAuthentication = 6,      /* Wrong or missing user name or password */
+    VRCErrorKindAccountRestricted = 7,   /* The account is disabled, locked, expired or may not log on here */
+    VRCErrorKindPasswordExpired = 8,     /* The password has to be changed first */
+} VRCErrorKind;
+
 typedef struct VRCSession VRCSession;
+
+/* A certificate the server presented during the TLS handshake */
+typedef struct VRCCertificateRequest {
+    const char* host;   /* Name the client connects to: the certificate has to be issued for it */
+    uint16_t port;
+    const uint8_t* pem; /* Server certificate first, then the chain the server sent; PEM, not NUL-terminated */
+    size_t pemLength;
+} VRCCertificateRequest;
 
 typedef struct VRCCallbacks {
     /* The session entered a new state */
@@ -46,18 +73,29 @@ typedef struct VRCCallbacks {
 
     /*
      * The session ended for a reason other than VRCSessionDisconnect: a failure or a disconnect by the server
-     * It comes right before Disconnected; code is the FreeRDP error code
+     * It comes right before Disconnected; code is the FreeRDP error code, name and message are its English text
      * name and message stay valid only during the call
      */
-    void (*error)(void* userData, uint32_t code, const char* name, const char* message);
+    void (*error)(void* userData, VRCErrorKind kind, uint32_t code, const char* name, const char* message);
+
+    /*
+     * The server presented a certificate: the connection waits for VRCSessionResolveCertificate
+     * The request and its data stay valid only during the call: copy what the answer needs
+     * Without this callback every certificate is rejected
+     */
+    void (*verifyCertificate)(void* userData, const VRCCertificateRequest* request);
 } VRCCallbacks;
 
+/*
+ * Security is negotiated between NLA and TLS; the legacy RDP Security layer is refused:
+ * its encryption is weak and it never authenticates the server
+ */
 typedef struct VRCConnectionParams {
     const char* host;     /* Required: host name or address */
     uint16_t port;        /* 0 keeps the default RDP port */
-    const char* username; /* Optional */
+    const char* username; /* Optional; without a domain, DOMAIN\user is split and user@domain is kept whole */
     const char* domain;   /* Optional */
-    const char* password; /* Optional */
+    const char* password; /* Optional; the engine settings keep it until VRCSessionDestroy */
 } VRCConnectionParams;
 
 /*
@@ -81,6 +119,12 @@ VRCResult VRCSessionConnect(VRCSession* session, const VRCConnectionParams* para
 
 /* Asks the session to end and returns at once: Disconnected follows on the session thread */
 void VRCSessionDisconnect(VRCSession* session);
+
+/*
+ * Answers the pending certificate request from any thread: accept continues the connection, reject ends it
+ * Returns InvalidState when no request is pending: already answered, or the session ended meanwhile
+ */
+VRCResult VRCSessionResolveCertificate(VRCSession* session, bool accept);
 
 #ifdef __cplusplus
 }
