@@ -26,6 +26,11 @@ final class ClipboardBridge: NSObject {
     static let pollInterval: TimeInterval = 0.25
     /// How long a paste on the Mac waits for the remote computer
     static let copyTimeout: Duration = .seconds(10)
+    /// The formats the bridge carries, in the order they are offered
+    static let formats: [VRCClipboardFormat] = [.text, .html, .rtf]
+    /// HTML of the remote clipboard is UTF-8, and HTML without a declared charset the Mac reads as Latin-1:
+    /// the declaration goes first, where the parser finds it before any other
+    static let htmlCharset = Data(#"<meta charset="utf-8">"#.utf8)
 
     private let pasteboard: NSPasteboard
     private weak var channel: ClipboardChannel?
@@ -94,25 +99,36 @@ final class ClipboardBridge: NSObject {
 
     /// What the remote side can take from the clipboard
     static func formats(of pasteboard: NSPasteboard) -> [VRCClipboardFormat] {
-        pasteboard.availableType(from: [.string]) != nil ? [.text] : []
+        formats.filter { pasteboard.availableType(from: types(for: $0)) != nil }
     }
 
     /// The pasteboard types that stand for a format of the core
     static func types(for format: VRCClipboardFormat) -> [NSPasteboard.PasteboardType] {
         switch format {
         case .text: [.string]
+        case .html: [.html]
+        case .rtf: [.rtf]
         }
     }
 
-    /// The data of the clipboard in the form the core takes: text as UTF-8
+    /// The data of the clipboard in the form the core takes: text and HTML as UTF-8, RTF as it is
     static func data(of pasteboard: NSPasteboard, in format: VRCClipboardFormat) -> Data? {
         switch format {
         case .text: pasteboard.string(forType: .string).map { Data($0.utf8) }
+        case .html: pasteboard.data(forType: .html).flatMap(utf8)
+        case .rtf: pasteboard.data(forType: .rtf)
         }
     }
 
+    /// HTML of the Mac is UTF-8 as a rule; one written as UTF-16 starts with a byte order mark and is converted
+    private static func utf8(_ html: Data) -> Data? {
+        let mark = html.prefix(2)
+        guard mark == Data([0xFF, 0xFE]) || mark == Data([0xFE, 0xFF]) else { return html }
+        return String(data: html, encoding: .utf16).map { Data($0.utf8) }
+    }
+
     private static func format(of type: NSPasteboard.PasteboardType) -> VRCClipboardFormat? {
-        type == .string ? .text : nil
+        formats.first { types(for: $0).contains(type) }
     }
 
     /// The Mac pastes the remote clipboard: its data comes over now, while the paste waits
@@ -120,7 +136,7 @@ final class ClipboardBridge: NSObject {
         guard let format = Self.format(of: type),
             let data = channel?.copyRemoteClipboard(format, timeout: Self.copyTimeout)
         else { return }
-        item.setData(data, forType: type)
+        item.setData(format == .html ? Self.htmlCharset + data : data, forType: type)
     }
 }
 

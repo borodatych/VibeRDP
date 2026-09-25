@@ -32,8 +32,12 @@
 #define SHORT_TIMEOUT_MS 50
 #define MAX_FORMATS 8
 
-/* A format id the server gave a registered format, as Windows numbers them */
+/* Format ids the server gave registered formats, as Windows numbers them */
 #define REGISTERED_FORMAT_ID 0xC0FFu
+#define SERVER_HTML_ID 0xC123u
+#define SERVER_RTF_ID 0xC124u
+#define SERVER_OTHER_ID 0xC125u
+#define FORMAT_NAME_SIZE 32
 
 /* What the core sent on the channel, and what it told the app */
 typedef struct Channel {
@@ -42,6 +46,7 @@ typedef struct Channel {
     int formatLists;
     UINT32 lastFormatCount;
     UINT32 lastFormatIds[MAX_FORMATS];
+    char lastFormatNames[MAX_FORMATS][FORMAT_NAME_SIZE];
     int listResponses;
     int dataRequests;
     UINT32 lastRequestedFormatId;
@@ -74,7 +79,11 @@ static UINT sentFormatList(CliprdrClientContext* context, const CLIPRDR_FORMAT_L
     channel.formatLists++;
     channel.lastFormatCount = list->numFormats;
     for (UINT32 i = 0; i < list->numFormats && i < MAX_FORMATS; i++)
+    {
         channel.lastFormatIds[i] = list->formats[i].formatId;
+        snprintf(channel.lastFormatNames[i], FORMAT_NAME_SIZE, "%s",
+                 list->formats[i].formatName ? list->formats[i].formatName : "");
+    }
     return CHANNEL_RC_OK;
 }
 
@@ -262,7 +271,7 @@ static bool testServerAsksForWhatIsNotOffered(void)
     return true;
 }
 
-/* The list of the server is acknowledged, and the app hears only of the formats it takes */
+/* The list of the server is acknowledged, and the app hears only of the formats it takes, by their names */
 static bool testServerOffersFormats(void)
 {
     VRCClipboard clipboard;
@@ -271,13 +280,113 @@ static bool testServerOffersFormats(void)
     CHECK(offerText());
     CHECK(channel.listResponses == 1);
     CHECK(channel.remoteChanges == 1);
-    CHECK(channel.lastRemoteCount == 1);
+    CHECK(channel.lastRemoteCount == 2);
     CHECK(channel.lastRemote[0] == VRCClipboardFormatText);
+    CHECK(channel.lastRemote[1] == VRCClipboardFormatHtml);
 
-    static const CLIPRDR_FORMAT onlyHtml[] = { { REGISTERED_FORMAT_ID, (char*)"HTML Format" } };
-    CHECK(serverOffers(onlyHtml, 1) == CHANNEL_RC_OK);
-    CHECK(channel.remoteChanges == 2);
+    static const CLIPRDR_FORMAT rich[] = {
+        { SERVER_RTF_ID, (char*)"Rich Text Format" },
+        { SERVER_OTHER_ID, (char*)"Link Source" },
+    };
+    CHECK(serverOffers(rich, 2) == CHANNEL_RC_OK);
+    CHECK(channel.lastRemoteCount == 1);
+    CHECK(channel.lastRemote[0] == VRCClipboardFormatRtf);
+
+    static const CLIPRDR_FORMAT other[] = { { SERVER_OTHER_ID, (char*)"Link Source" } };
+    CHECK(serverOffers(other, 1) == CHANNEL_RC_OK);
+    CHECK(channel.remoteChanges == 3);
     CHECK(channel.lastRemoteCount == 0);
+
+    vrcClipboardDestroy(&clipboard);
+    return true;
+}
+
+/* HTML and RTF go out as the registered formats of Windows: the ids of this client and the names of Windows */
+static bool testOfferRegisteredFormats(void)
+{
+    VRCClipboard clipboard;
+    CHECK(setUp(&clipboard));
+    CHECK(serverMonitorReady() == CHANNEL_RC_OK);
+
+    const VRCClipboardFormat all[] = { VRCClipboardFormatText, VRCClipboardFormatHtml, VRCClipboardFormatRtf };
+    CHECK(vrcClipboardOffer(&clipboard, all, 3) == VRCResultOK);
+    CHECK(channel.lastFormatCount == 3);
+    CHECK(channel.lastFormatIds[0] == CF_UNICODETEXT);
+    CHECK(channel.lastFormatNames[0][0] == '\0');
+    CHECK(channel.lastFormatIds[1] >= 0xC000u);
+    CHECK(strcmp(channel.lastFormatNames[1], "HTML Format") == 0);
+    CHECK(channel.lastFormatIds[2] >= 0xC000u);
+    CHECK(channel.lastFormatIds[2] != channel.lastFormatIds[1]);
+    CHECK(strcmp(channel.lastFormatNames[2], "Rich Text Format") == 0);
+
+    /* The server asks by the id this client gave: HTML goes as "HTML Format", RTF with a zero at its end */
+    CHECK(serverAsks(channel.lastFormatIds[1]) == CHANNEL_RC_OK);
+    CHECK(channel.lastQuestion == VRCClipboardFormatHtml);
+    CHECK(vrcClipboardProvide(&clipboard, VRCClipboardFormatHtml, "<b>x</b>", 8) == VRCResultOK);
+    CHECK(channel.lastResponseFlags == CB_RESPONSE_OK);
+    CHECK(memcmp(channel.lastResponse, "Version:0.9\r\n", 13) == 0);
+    CHECK(channel.lastResponse[channel.lastResponseLength - 1] == 0);
+
+    CHECK(serverAsks(channel.lastFormatIds[2]) == CHANNEL_RC_OK);
+    CHECK(channel.lastQuestion == VRCClipboardFormatRtf);
+    CHECK(vrcClipboardProvide(&clipboard, VRCClipboardFormatRtf, "{\\rtf1 x}", 9) == VRCResultOK);
+    CHECK(channel.lastResponseLength == 10);
+    CHECK(memcmp(channel.lastResponse, "{\\rtf1 x}", 10) == 0);
+
+    vrcClipboardDestroy(&clipboard);
+    return true;
+}
+
+typedef struct FormatCopy {
+    VRCClipboard* clipboard;
+    VRCClipboardFormat format;
+    VRCResult result;
+    void* data;
+    size_t length;
+} FormatCopy;
+
+static void* runFormatCopy(void* argument)
+{
+    FormatCopy* copy = argument;
+    copy->result =
+        vrcClipboardCopyRemote(copy->clipboard, copy->format, ANSWER_TIMEOUT_MS, NULL, &copy->data, &copy->length);
+    return NULL;
+}
+
+/* A copy of a registered format asks by the id the server gave it and converts the answer */
+static bool copyAs(VRCClipboard* clipboard, VRCClipboardFormat format, const uint8_t* answer, UINT32 answerLength,
+                   UINT32 expectedId, const char* expected)
+{
+    FormatCopy copy = { .clipboard = clipboard, .format = format };
+    pthread_t thread;
+    CHECK(pthread_create(&thread, NULL, runFormatCopy, &copy) == 0);
+    usleep(SETTLE_US);
+    CHECK(channel.lastRequestedFormatId == expectedId);
+    CHECK(serverAnswers(answer, answerLength) == CHANNEL_RC_OK);
+    CHECK(pthread_join(thread, NULL) == 0);
+    CHECK(copy.result == VRCResultOK);
+    CHECK(copy.length == strlen(expected));
+    CHECK(strcmp(copy.data, expected) == 0);
+    free(copy.data);
+    return true;
+}
+
+static bool testCopyRegisteredFormats(void)
+{
+    VRCClipboard clipboard;
+    CHECK(setUp(&clipboard));
+    static const CLIPRDR_FORMAT formats[] = {
+        { SERVER_HTML_ID, (char*)"HTML Format" },
+        { SERVER_RTF_ID, (char*)"Rich Text Format" },
+    };
+    CHECK(serverOffers(formats, 2) == CHANNEL_RC_OK);
+
+    static const char html[] = "Version:0.9\r\nStartHTML:0000000105\r\nEndHTML:0000000113\r\n"
+                               "StartFragment:0000000105\r\nEndFragment:0000000113\r\n<b>x</b>";
+    CHECK(copyAs(&clipboard, VRCClipboardFormatHtml, (const uint8_t*)html, sizeof(html), SERVER_HTML_ID, "<b>x</b>"));
+
+    static const char rtf[] = "{\\rtf1 x}";
+    CHECK(copyAs(&clipboard, VRCClipboardFormatRtf, (const uint8_t*)rtf, sizeof(rtf), SERVER_RTF_ID, "{\\rtf1 x}"));
 
     vrcClipboardDestroy(&clipboard);
     return true;
@@ -418,6 +527,8 @@ static const TestCase tests[] = {
     { "serverPastesText", testServerPastesText },
     { "serverAsksForWhatIsNotOffered", testServerAsksForWhatIsNotOffered },
     { "serverOffersFormats", testServerOffersFormats },
+    { "offerRegisteredFormats", testOfferRegisteredFormats },
+    { "copyRegisteredFormats", testCopyRegisteredFormats },
     { "copyFromServer", testCopyFromServer },
     { "lateAnswerIsDropped", testLateAnswerIsDropped },
     { "copyFailures", testCopyFailures },

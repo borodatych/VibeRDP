@@ -92,6 +92,41 @@ final class ClipboardBridgeTests: XCTestCase {
         XCTAssertEqual(channel.answers, [Data("mac text".utf8), nil])
     }
 
+    /// HTML and RTF go over with the text; the remote side gets each in the form the core takes
+    func testRichFormatsAreOfferedAndAnswered() {
+        let item = NSPasteboardItem()
+        item.setString("plain", forType: .string)
+        item.setData(Data("<b>Жирный</b>".utf8), forType: .html)
+        item.setData(Data(#"{\rtf1 x}"#.utf8), forType: .rtf)
+        pasteboard.writeObjects([item])
+        bridge.start()
+        XCTAssertEqual(channel.offers, [[.text, .html, .rtf]])
+
+        bridge.dataRequested(.html)
+        bridge.dataRequested(.rtf)
+        XCTAssertEqual(channel.answers, [Data("<b>Жирный</b>".utf8), Data(#"{\rtf1 x}"#.utf8)])
+    }
+
+    /// HTML written as UTF-16 reaches the core as UTF-8
+    func testHtmlInUtf16IsConverted() throws {
+        let utf16 = try XCTUnwrap("<i>ю</i>".data(using: .utf16))
+        pasteboard.setData(utf16, forType: .html)
+        bridge.dataRequested(.html)
+        XCTAssertEqual(channel.answers, [Data("<i>ю</i>".utf8)])
+    }
+
+    /// Remote HTML declares its charset for the Mac, which reads undeclared HTML as Latin-1
+    func testRemoteHtmlDeclaresItsCharset() throws {
+        bridge.start()
+        channel.remoteText = "<p>Привет</p>"
+        bridge.remoteClipboardChanged([.text, .html])
+        let html = try XCTUnwrap(pasteboard.data(forType: .html))
+        XCTAssertEqual(String(data: html, encoding: .utf8), #"<meta charset="utf-8"><p>Привет</p>"#)
+        let text = try NSAttributedString(
+            data: html, options: [.documentType: NSAttributedString.DocumentType.html], documentAttributes: nil)
+        XCTAssertEqual(text.string.trimmingCharacters(in: .whitespacesAndNewlines), "Привет")
+    }
+
     /// When the session ends, the item that stood for the remote clipboard goes, a copy of the user stays
     func testStopRemovesOnlyTheRemoteItem() {
         bridge.start()

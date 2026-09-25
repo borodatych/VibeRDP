@@ -22,7 +22,7 @@
 #include <winpr/synch.h>
 
 /* One slot for every VRCClipboardFormat, indexed by its value */
-#define VRC_CLIPBOARD_FORMAT_SLOTS 2
+#define VRC_CLIPBOARD_FORMAT_SLOTS 4
 
 typedef struct VRCClipboard {
     /* Guards everything below except copyLock, and is held while a message goes out on the channel */

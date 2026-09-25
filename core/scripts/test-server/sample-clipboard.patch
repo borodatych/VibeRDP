@@ -11,11 +11,12 @@
  if(CHANNEL_AINPUT_SERVER)
 --- /dev/null
 +++ b/server/Sample/sf_cliprdr.c
-@@ -0,0 +1,125 @@
+@@ -0,0 +1,196 @@
 +/**
 + * Test tool of VibeRDP: an echo of the clipboard of the client
-+ * The server asks for every text the client offers and offers it back behind a prefix
-+ * A client test so sees its text make the round trip through both directions of the channel
++ * The server asks for the text, HTML and RTF the client offers and offers them back,
++ * the text behind a prefix and the rest as it came
++ * A client test so sees its data make the round trip through both directions of the channel
 + */
 +
 +#include <freerdp/config.h>
@@ -30,10 +31,60 @@
 +
 +#define ECHO_PREFIX "echo: "
 +
++/* The ids this server gives the formats in its own lists; registered formats go by their names */
++static const UINT32 echo_ids[SF_CLIPBOARD_KINDS] = { CF_UNICODETEXT, 0xC100, 0xC101 };
++static const char* const echo_names[SF_CLIPBOARD_KINDS] = { nullptr, "HTML Format",
++	                                                        "Rich Text Format" };
++
++static int sf_cliprdr_kind(const CLIPRDR_FORMAT* format)
++{
++	if (format->formatId == CF_UNICODETEXT)
++		return 0;
++	for (int kind = 1; kind < SF_CLIPBOARD_KINDS; kind++)
++		if (format->formatName && strcmp(format->formatName, echo_names[kind]) == 0)
++			return kind;
++	return -1;
++}
++
++WINPR_ATTR_NODISCARD
++static UINT sf_cliprdr_request_next(CliprdrServerContext* context, testPeerContext* peer)
++{
++	const CLIPRDR_FORMAT_DATA_REQUEST request = {
++		.common = { .msgType = CB_FORMAT_DATA_REQUEST },
++		.requestedFormatId = peer->clipboard_wanted_ids[peer->clipboard_wanted_next]
++	};
++	return context->ServerFormatDataRequest(context, &request);
++}
++
++/* All the client offered came over: the server offers it back */
++WINPR_ATTR_NODISCARD
++static UINT sf_cliprdr_offer_back(CliprdrServerContext* context, testPeerContext* peer)
++{
++	CLIPRDR_FORMAT formats[SF_CLIPBOARD_KINDS] = WINPR_C_ARRAY_INIT;
++	UINT32 count = 0;
++
++	for (int kind = 0; kind < SF_CLIPBOARD_KINDS; kind++)
++	{
++		if (peer->clipboard[kind])
++		{
++			formats[count].formatId = echo_ids[kind];
++			formats[count].formatName = (char*)echo_names[kind];
++			count++;
++		}
++	}
++	const CLIPRDR_FORMAT_LIST list = { .common = { .msgType = CB_FORMAT_LIST },
++		                               .numFormats = count,
++		                               .formats = formats };
++	return context->ServerFormatList(context, &list);
++}
++
 +WINPR_ATTR_NODISCARD
 +static UINT sf_cliprdr_client_format_list(CliprdrServerContext* context,
 +                                          const CLIPRDR_FORMAT_LIST* formatList)
 +{
++	testPeerContext* peer = context->custom;
++	WINPR_ASSERT(peer);
++
 +	const CLIPRDR_FORMAT_LIST_RESPONSE response = {
 +		.common = { .msgType = CB_FORMAT_LIST_RESPONSE, .msgFlags = CB_RESPONSE_OK }
 +	};
@@ -41,20 +92,31 @@
 +	if (rc != CHANNEL_RC_OK)
 +		return rc;
 +
++	for (int kind = 0; kind < SF_CLIPBOARD_KINDS; kind++)
++	{
++		free(peer->clipboard[kind]);
++		peer->clipboard[kind] = nullptr;
++		peer->clipboard_length[kind] = 0;
++	}
++	peer->clipboard_wanted_count = 0;
++	peer->clipboard_wanted_next = 0;
 +	for (UINT32 i = 0; i < formatList->numFormats; i++)
 +	{
-+		if (formatList->formats[i].formatId == CF_UNICODETEXT)
++		const int kind = sf_cliprdr_kind(&formatList->formats[i]);
++		if (kind >= 0 && peer->clipboard_wanted_count < SF_CLIPBOARD_KINDS)
 +		{
-+			const CLIPRDR_FORMAT_DATA_REQUEST request = {
-+				.common = { .msgType = CB_FORMAT_DATA_REQUEST }, .requestedFormatId = CF_UNICODETEXT
-+			};
-+			return context->ServerFormatDataRequest(context, &request);
++			peer->clipboard_wanted_ids[peer->clipboard_wanted_count] =
++			    formatList->formats[i].formatId;
++			peer->clipboard_wanted_kinds[peer->clipboard_wanted_count] = kind;
++			peer->clipboard_wanted_count++;
 +		}
 +	}
-+	return CHANNEL_RC_OK;
++	if (peer->clipboard_wanted_count == 0)
++		return CHANNEL_RC_OK;
++	return sf_cliprdr_request_next(context, peer);
 +}
 +
-+/* The text of the client comes back as the clipboard of the server, behind the prefix */
++/* One format came over; the next one is asked for, or everything goes back when none is left */
 +WINPR_ATTR_NODISCARD
 +static UINT sf_cliprdr_client_format_data_response(CliprdrServerContext* context,
 +                                                   const CLIPRDR_FORMAT_DATA_RESPONSE* response)
@@ -62,29 +124,31 @@
 +	testPeerContext* peer = context->custom;
 +	WINPR_ASSERT(peer);
 +
-+	if ((response->common.msgFlags & CB_RESPONSE_OK) == 0)
++	if (peer->clipboard_wanted_next >= peer->clipboard_wanted_count)
 +		return CHANNEL_RC_OK;
 +
-+	const size_t prefixLength = strlen(ECHO_PREFIX);
-+	const size_t length = 2 * prefixLength + response->common.dataLen;
-+	BYTE* clipboard = malloc(length);
-+	if (!clipboard)
-+		return CHANNEL_RC_NO_MEMORY;
-+	for (size_t i = 0; i < prefixLength; i++)
++	const int kind = peer->clipboard_wanted_kinds[peer->clipboard_wanted_next];
++	if (response->common.msgFlags & CB_RESPONSE_OK)
 +	{
-+		clipboard[2 * i] = (BYTE)ECHO_PREFIX[i];
-+		clipboard[2 * i + 1] = 0;
++		const size_t prefix = (kind == 0) ? strlen(ECHO_PREFIX) : 0;
++		const size_t length = 2 * prefix + response->common.dataLen;
++		BYTE* data = malloc(length);
++		if (!data)
++			return CHANNEL_RC_NO_MEMORY;
++		for (size_t i = 0; i < prefix; i++)
++		{
++			data[2 * i] = (BYTE)ECHO_PREFIX[i];
++			data[2 * i + 1] = 0;
++		}
++		memcpy(data + 2 * prefix, response->requestedFormatData, response->common.dataLen);
++		peer->clipboard[kind] = data;
++		peer->clipboard_length[kind] = (UINT32)length;
 +	}
-+	memcpy(clipboard + 2 * prefixLength, response->requestedFormatData, response->common.dataLen);
-+	free(peer->clipboard);
-+	peer->clipboard = clipboard;
-+	peer->clipboardLength = (UINT32)length;
 +
-+	CLIPRDR_FORMAT format = { .formatId = CF_UNICODETEXT };
-+	const CLIPRDR_FORMAT_LIST list = { .common = { .msgType = CB_FORMAT_LIST },
-+		                               .numFormats = 1,
-+		                               .formats = &format };
-+	return context->ServerFormatList(context, &list);
++	peer->clipboard_wanted_next++;
++	if (peer->clipboard_wanted_next < peer->clipboard_wanted_count)
++		return sf_cliprdr_request_next(context, peer);
++	return sf_cliprdr_offer_back(context, peer);
 +}
 +
 +WINPR_ATTR_NODISCARD
@@ -94,12 +158,16 @@
 +	testPeerContext* peer = context->custom;
 +	WINPR_ASSERT(peer);
 +
-+	const BOOL have = (request->requestedFormatId == CF_UNICODETEXT) && peer->clipboard;
++	int found = -1;
++	for (int kind = 0; kind < SF_CLIPBOARD_KINDS; kind++)
++		if (echo_ids[kind] == request->requestedFormatId && peer->clipboard[kind])
++			found = kind;
++
 +	const CLIPRDR_FORMAT_DATA_RESPONSE response = {
 +		.common = { .msgType = CB_FORMAT_DATA_RESPONSE,
-+		            .msgFlags = have ? CB_RESPONSE_OK : CB_RESPONSE_FAIL,
-+		            .dataLen = have ? peer->clipboardLength : 0 },
-+		.requestedFormatData = have ? peer->clipboard : nullptr
++		            .msgFlags = (found >= 0) ? CB_RESPONSE_OK : CB_RESPONSE_FAIL,
++		            .dataLen = (found >= 0) ? peer->clipboard_length[found] : 0 },
++		.requestedFormatData = (found >= 0) ? peer->clipboard[found] : nullptr
 +	};
 +	return context->ServerFormatDataResponse(context, &response);
 +}
@@ -134,8 +202,11 @@
 +		cliprdr_server_context_free(context->cliprdr);
 +		context->cliprdr = nullptr;
 +	}
-+	free(context->clipboard);
-+	context->clipboard = nullptr;
++	for (int kind = 0; kind < SF_CLIPBOARD_KINDS; kind++)
++	{
++		free(context->clipboard[kind]);
++		context->clipboard[kind] = nullptr;
++	}
 +}
 --- /dev/null
 +++ b/server/Sample/sf_cliprdr.h
@@ -241,14 +312,28 @@
  #include <freerdp/transport_io.h>
  
  #include <winpr/crt.h>
-@@ -67,6 +68,10 @@
+@@ -40,6 +41,9 @@
+ #include <winpr/thread.h>
+ #include <winpr/image.h>
+ 
++/* Test tool of VibeRDP: the formats of the clipboard echo, text, HTML and RTF */
++#define SF_CLIPBOARD_KINDS 3
++
+ struct test_peer_context
+ {
+ 	rdpContext _p;
+@@ -67,6 +71,14 @@
  	UINT32 frame_id;
  	RdpsndServerContext* rdpsnd;
  	EncomspServerContext* encomsp;
-+	/* Test tool of VibeRDP: the clipboard echo and the text it holds, CF_UNICODETEXT */
++	/* Test tool of VibeRDP: the clipboard echo, the text, HTML and RTF it holds and the ones it waits for */
 +	CliprdrServerContext* cliprdr;
-+	BYTE* clipboard;
-+	UINT32 clipboardLength;
++	BYTE* clipboard[SF_CLIPBOARD_KINDS];
++	UINT32 clipboard_length[SF_CLIPBOARD_KINDS];
++	UINT32 clipboard_wanted_ids[SF_CLIPBOARD_KINDS];
++	int clipboard_wanted_kinds[SF_CLIPBOARD_KINDS];
++	UINT32 clipboard_wanted_count;
++	UINT32 clipboard_wanted_next;
  
  	rdpTransportIo io;
  	wImage* image;

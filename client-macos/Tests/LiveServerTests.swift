@@ -11,7 +11,8 @@ import XCTest
 /// VIBERDP_TEST_SERVER_SOCKET replays a RemoteFX recording of Windows Server 2008 R2,
 /// VIBERDP_INTERACTIVE_SERVER_SOCKET draws its icon wherever a mouse event points, resizes its desktop on G
 /// and drops the connection on D,
-/// VIBERDP_CLIPBOARD_SERVER_SOCKET takes the text the client offers and offers it back behind "echo: "
+/// VIBERDP_CLIPBOARD_SERVER_SOCKET takes the text, HTML and RTF the client offers and offers them back,
+/// the text behind "echo: "
 /// The servers listen on Unix sockets: no network, so no Local Network alert either
 @MainActor
 final class LiveServerTests: XCTestCase {
@@ -145,8 +146,8 @@ final class LiveServerTests: XCTestCase {
         XCTAssertEqual(session.failures, [])
     }
 
-    /// The clipboard makes the round trip through the echo server: the text of a private pasteboard goes over,
-    /// comes back behind the prefix, and the paste on the Mac fetches it from the server while the paste waits
+    /// The clipboard makes the round trip through the echo server: text, HTML and RTF of a private pasteboard
+    /// go over and come back, and the paste on the Mac fetches each from the server while the paste waits
     /// The general pasteboard of this Mac is never touched
     func testClipboardRoundTrip() async throws {
         guard let socket = ProcessInfo.processInfo.environment["VIBERDP_CLIPBOARD_SERVER_SOCKET"] else {
@@ -155,7 +156,11 @@ final class LiveServerTests: XCTestCase {
         let pasteboard = NSPasteboard(name: NSPasteboard.Name("tech.vibebrains.viberdp.tests.\(UUID().uuidString)"))
         defer { pasteboard.releaseGlobally() }
         pasteboard.clearContents()
-        pasteboard.setString("Привет\nмир 👋", forType: .string)
+        let item = NSPasteboardItem()
+        item.setString("Привет\nмир 👋", forType: .string)
+        item.setData(Data("<p>Жирный <b>текст</b></p>".utf8), forType: .html)
+        item.setData(Data(#"{\rtf1\ansi \b bold\b0 }"#.utf8), forType: .rtf)
+        pasteboard.writeObjects([item])
 
         suiteName = "tech.vibebrains.viberdp.tests.\(UUID().uuidString)"
         let trusted = TrustedCertificates(defaults: try XCTUnwrap(UserDefaults(suiteName: suiteName)))
@@ -173,6 +178,12 @@ final class LiveServerTests: XCTestCase {
         }
         XCTAssertTrue(echoed)
         XCTAssertEqual(pasteboard.string(forType: .string), "echo: Привет\nмир 👋")
+        let html = try XCTUnwrap(pasteboard.data(forType: .html))
+        XCTAssertEqual(
+            String(data: html, encoding: .utf8),
+            #"<meta charset="utf-8"><html><body><!--StartFragment--><p>Жирный <b>текст</b></p>"#
+                + "<!--EndFragment--></body></html>")
+        XCTAssertEqual(pasteboard.data(forType: .rtf), Data(#"{\rtf1\ansi \b bold\b0 }"#.utf8))
         XCTAssertEqual(session.failures, [])
 
         bridge.stop()
