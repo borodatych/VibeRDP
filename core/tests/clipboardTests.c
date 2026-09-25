@@ -5,10 +5,12 @@
  */
 
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <freerdp/channels/cliprdr.h>
@@ -16,6 +18,7 @@
 
 #include "clipboard.h"
 #include "clipimage.h"
+#include "fileTrees.h"
 
 #define CHECK(condition)                                                                        \
     do                                                                                          \
@@ -39,6 +42,9 @@
 #define SERVER_RTF_ID 0xC124u
 #define SERVER_OTHER_ID 0xC125u
 #define SERVER_PNG_ID 0xC126u
+#define SERVER_FILES_ID 0xC127u
+/* Room for the list of files of the tests: a count and three descriptors of 592 bytes */
+#define RESPONSE_ROOM 4096
 #define FORMAT_NAME_SIZE 32
 
 /* What the core sent on the channel, and what it told the app */
@@ -50,17 +56,27 @@ typedef struct Channel {
     UINT32 lastFormatIds[MAX_FORMATS];
     char lastFormatNames[MAX_FORMATS][FORMAT_NAME_SIZE];
     int listResponses;
-    int dataRequests;
+    /* Read by the thread that plays the server while a copy runs */
+    atomic_int dataRequests;
     UINT32 lastRequestedFormatId;
     int dataResponses;
     UINT16 lastResponseFlags;
-    uint8_t lastResponse[256];
+    uint8_t lastResponse[RESPONSE_ROOM];
     UINT32 lastResponseLength;
     int remoteChanges;
     size_t lastRemoteCount;
     VRCClipboardFormat lastRemote[MAX_FORMATS];
     int dataQuestions;
     VRCClipboardFormat lastQuestion;
+    /* Questions of this client about the files of the server */
+    atomic_int fileRequests;
+    CLIPRDR_FILE_CONTENTS_REQUEST lastFileRequest;
+    /* Answers of this client about its own files */
+    int fileResponses;
+    UINT16 lastFileFlags;
+    UINT32 lastFileStream;
+    uint8_t lastFileData[RESPONSE_ROOM];
+    UINT32 lastFileLength;
 } Channel;
 
 static Channel channel;
@@ -116,6 +132,26 @@ static UINT sentDataResponse(CliprdrClientContext* context, const CLIPRDR_FORMAT
     return CHANNEL_RC_OK;
 }
 
+static UINT sentFileRequest(CliprdrClientContext* context, const CLIPRDR_FILE_CONTENTS_REQUEST* request)
+{
+    (void)context;
+    channel.lastFileRequest = *request;
+    channel.fileRequests++;
+    return CHANNEL_RC_OK;
+}
+
+static UINT sentFileResponse(CliprdrClientContext* context, const CLIPRDR_FILE_CONTENTS_RESPONSE* response)
+{
+    (void)context;
+    channel.fileResponses++;
+    channel.lastFileFlags = response->common.msgFlags;
+    channel.lastFileStream = response->streamId;
+    channel.lastFileLength = response->cbRequested;
+    if (response->requestedData && response->cbRequested <= sizeof(channel.lastFileData))
+        memcpy(channel.lastFileData, response->requestedData, response->cbRequested);
+    return CHANNEL_RC_OK;
+}
+
 static void remoteChanged(void* data, const VRCClipboardFormat* formats, size_t count)
 {
     Channel* target = data;
@@ -141,6 +177,8 @@ static bool setUp(VRCClipboard* clipboard)
     channel.context.ClientFormatListResponse = sentListResponse;
     channel.context.ClientFormatDataRequest = sentDataRequest;
     channel.context.ClientFormatDataResponse = sentDataResponse;
+    channel.context.ClientFileContentsRequest = sentFileRequest;
+    channel.context.ClientFileContentsResponse = sentFileResponse;
     memset(&callbacks, 0, sizeof(callbacks));
     callbacks.remoteClipboardChanged = remoteChanged;
     callbacks.clipboardDataRequested = dataRequested;
@@ -511,6 +549,278 @@ static bool testImageFromServer(void)
     return true;
 }
 
+/* The server asks this client about one of its files */
+static UINT serverAsksFile(UINT32 index, UINT32 flags, UINT64 position, UINT32 requested, UINT32 stream)
+{
+    const CLIPRDR_FILE_CONTENTS_REQUEST request = {
+        .common = { .msgType = CB_FILECONTENTS_REQUEST },
+        .streamId = stream,
+        .listIndex = index,
+        .dwFlags = flags,
+        .nPositionLow = (UINT32)position,
+        .nPositionHigh = (UINT32)(position >> 32),
+        .cbRequested = requested,
+    };
+    return channel.context.ServerFileContentsRequest(&channel.context, &request);
+}
+
+/* The index of a name in a list of files, or -1 */
+static int indexOf(const VRCRemoteFiles* files, const char* name)
+{
+    for (size_t i = 0; i < files->count; i++)
+        if (strcmp(files->items[i].name, name) == 0)
+            return (int)i;
+    return -1;
+}
+
+/* The paths of a folder and a file beside it, each ending with a zero byte */
+static size_t twoPaths(const char* root, const char* first, const char* second, char* paths, size_t size)
+{
+    const int one = snprintf(paths, size, "%s/%s", root, first) + 1;
+    const int two = snprintf(paths + one, size - (size_t)one, "%s/%s", root, second) + 1;
+    return (size_t)(one + two);
+}
+
+/* The server pastes files of the Mac: it gets their list, then reads their sizes and ranges without the app */
+static bool testServerReadsMacFiles(void)
+{
+    char root[FILE_TREE_PATH];
+    CHECK(fileTreeMake(root));
+    CHECK(fileTreeWrite(root, "d/a.txt", "hello world"));
+    CHECK(fileTreeWrite(root, "b.txt", "bee"));
+
+    VRCClipboard clipboard;
+    CHECK(setUp(&clipboard));
+    CHECK(serverMonitorReady() == CHANNEL_RC_OK);
+    const VRCClipboardFormat files = VRCClipboardFormatFiles;
+    CHECK(vrcClipboardOffer(&clipboard, &files, 1) == VRCResultOK);
+    CHECK(channel.lastFormatCount == 1);
+    CHECK(strcmp(channel.lastFormatNames[0], "FileGroupDescriptorW") == 0);
+
+    CHECK(serverAsks(channel.lastFormatIds[0]) == CHANNEL_RC_OK);
+    CHECK(channel.lastQuestion == VRCClipboardFormatFiles);
+    char paths[2 * FILE_TREE_PATH];
+    const size_t length = twoPaths(root, "d", "b.txt", paths, sizeof(paths));
+    CHECK(vrcClipboardProvide(&clipboard, VRCClipboardFormatFiles, paths, length) == VRCResultOK);
+    CHECK(channel.lastResponseFlags == CB_RESPONSE_OK);
+    VRCRemoteFiles* list = vrcRemoteFilesParse(channel.lastResponse, channel.lastResponseLength);
+    CHECK(list && list->count == 3);
+    const int file = indexOf(list, "d/a.txt");
+    const int folder = indexOf(list, "d");
+    CHECK(file >= 0 && folder >= 0 && indexOf(list, "b.txt") >= 0);
+    vrcRemoteFilesFree(list);
+
+    CHECK(serverAsksFile((UINT32)file, FILECONTENTS_SIZE, 0, 8, 7) == CHANNEL_RC_OK);
+    CHECK(channel.lastFileFlags == CB_RESPONSE_OK && channel.lastFileStream == 7 && channel.lastFileLength == 8);
+    CHECK(channel.lastFileData[0] == 11 && channel.lastFileData[1] == 0);
+    CHECK(serverAsksFile((UINT32)file, FILECONTENTS_RANGE, 6, 100, 8) == CHANNEL_RC_OK);
+    CHECK(channel.lastFileLength == 5 && memcmp(channel.lastFileData, "world", 5) == 0);
+
+    /* A folder has no contents, an index past the list is no file */
+    CHECK(serverAsksFile((UINT32)folder, FILECONTENTS_RANGE, 0, 100, 9) == CHANNEL_RC_OK);
+    CHECK(channel.lastFileFlags == CB_RESPONSE_FAIL && channel.lastFileStream == 9);
+    CHECK(serverAsksFile(99, FILECONTENTS_SIZE, 0, 8, 10) == CHANNEL_RC_OK);
+    CHECK(channel.lastFileFlags == CB_RESPONSE_FAIL);
+
+    /* A new copy on the Mac leaves the list the server got: a paste there may still be reading it */
+    const VRCClipboardFormat text = VRCClipboardFormatText;
+    CHECK(vrcClipboardOffer(&clipboard, &text, 1) == VRCResultOK);
+    CHECK(serverAsksFile((UINT32)file, FILECONTENTS_RANGE, 0, 5, 11) == CHANNEL_RC_OK);
+    CHECK(channel.lastFileFlags == CB_RESPONSE_OK && memcmp(channel.lastFileData, "hello", 5) == 0);
+
+    vrcClipboardDestroy(&clipboard);
+    CHECK(fileTreeRemove(root));
+    return true;
+}
+
+/* Plays the server for a copy of its files: the list on a request for data, sizes and ranges from the files */
+typedef struct FileServer {
+    const VRCLocalFiles* files;
+    atomic_bool done;
+} FileServer;
+
+static void playFileServer(FileServer* server)
+{
+    int data = channel.dataRequests;
+    int ranges = channel.fileRequests;
+    while (!atomic_load(&server->done))
+    {
+        if (channel.dataRequests > data)
+        {
+            data++;
+            (void)serverAnswers(server->files->descriptor, (UINT32)server->files->descriptorLength);
+        }
+        else if (channel.fileRequests > ranges)
+        {
+            ranges++;
+            const CLIPRDR_FILE_CONTENTS_REQUEST request = channel.lastFileRequest;
+            uint8_t answer[RESPONSE_ROOM];
+            uint32_t length = 0;
+            bool ok = request.listIndex < server->files->count;
+            if (ok && (request.dwFlags & FILECONTENTS_SIZE))
+            {
+                const uint64_t size = server->files->items[request.listIndex].size;
+                for (int i = 0; i < 8; i++)
+                    answer[i] = (uint8_t)(size >> (8 * i));
+                length = 8;
+            }
+            else if (ok)
+            {
+                const uint64_t position = ((uint64_t)request.nPositionHigh << 32) | request.nPositionLow;
+                const uint32_t wanted = request.cbRequested < sizeof(answer) ? request.cbRequested : sizeof(answer);
+                ok = vrcLocalFilesRead(server->files, request.listIndex, position, wanted, answer, &length);
+            }
+            const CLIPRDR_FILE_CONTENTS_RESPONSE response = {
+                .common = { .msgType = CB_FILECONTENTS_RESPONSE, .msgFlags = ok ? CB_RESPONSE_OK : CB_RESPONSE_FAIL },
+                .streamId = request.streamId,
+                .cbRequested = ok ? length : 0,
+                .requestedData = ok ? answer : NULL,
+            };
+            (void)channel.context.ServerFileContentsResponse(&channel.context, &response);
+        }
+        else
+            usleep(1000);
+    }
+}
+
+typedef struct FilesCopy {
+    VRCClipboard* clipboard;
+    const char* directory;
+    VRCResult result;
+    uint64_t lastDone;
+    uint64_t lastTotal;
+    int reports;
+    /* The report on which the progress cancels the copy, 0 for never */
+    int cancelOn;
+    FileServer* server;
+} FilesCopy;
+
+static bool recordProgress(void* context, uint64_t done, uint64_t total)
+{
+    FilesCopy* copy = context;
+    copy->lastDone = done;
+    copy->lastTotal = total;
+    copy->reports++;
+    return copy->reports != copy->cancelOn;
+}
+
+static void* runFilesCopy(void* argument)
+{
+    FilesCopy* copy = argument;
+    copy->result =
+        vrcClipboardCopyRemoteFiles(copy->clipboard, copy->directory, ANSWER_TIMEOUT_MS, NULL, recordProgress, copy);
+    atomic_store(&copy->server->done, true);
+    return NULL;
+}
+
+static bool copyFilesInto(FilesCopy* copy)
+{
+    atomic_store(&copy->server->done, false);
+    pthread_t thread;
+    CHECK(pthread_create(&thread, NULL, runFilesCopy, copy) == 0);
+    playFileServer(copy->server);
+    CHECK(pthread_join(thread, NULL) == 0);
+    return true;
+}
+
+/* The Mac pastes files of the server: the names at the top first, then the files into a folder, tree and all */
+static bool testCopyFilesFromServer(void)
+{
+    char source[FILE_TREE_PATH];
+    char target[FILE_TREE_PATH];
+    CHECK(fileTreeMake(source));
+    CHECK(fileTreeMake(target));
+    CHECK(fileTreeWrite(source, "Отчёт/q.txt", "quarter"));
+    CHECK(fileTreeWrite(source, "Отчёт/пусто", ""));
+    CHECK(fileTreeWrite(source, "top.txt", "top"));
+    CHECK(fileTreeSetTime(source, "top.txt", 1600000000));
+    char paths[2 * FILE_TREE_PATH];
+    VRCLocalFiles* served = vrcLocalFilesCreate(paths, twoPaths(source, "Отчёт", "top.txt", paths, sizeof(paths)));
+    CHECK(served != NULL);
+
+    VRCClipboard clipboard;
+    CHECK(setUp(&clipboard));
+    static const CLIPRDR_FORMAT offered[] = { { SERVER_FILES_ID, (char*)"FileGroupDescriptorW" } };
+    CHECK(serverOffers(offered, 1) == CHANNEL_RC_OK);
+    CHECK(channel.lastRemoteCount == 1 && channel.lastRemote[0] == VRCClipboardFormatFiles);
+
+    /* The names at the top, for the items that stand for the files on the Mac */
+    FormatCopy names = { .clipboard = &clipboard, .format = VRCClipboardFormatFiles };
+    pthread_t thread;
+    CHECK(pthread_create(&thread, NULL, runFormatCopy, &names) == 0);
+    usleep(SETTLE_US);
+    CHECK(channel.lastRequestedFormatId == SERVER_FILES_ID);
+    CHECK(serverAnswers(served->descriptor, (UINT32)served->descriptorLength) == CHANNEL_RC_OK);
+    CHECK(pthread_join(thread, NULL) == 0);
+    CHECK(names.result == VRCResultOK);
+    CHECK(names.length == strlen("Отчёт") + 1 + strlen("top.txt") + 1);
+    free(names.data);
+
+    /* The copy takes the list it already has, and reports its bytes as they come */
+    FileServer server = { .files = served };
+    FilesCopy copy = { .clipboard = &clipboard, .directory = target, .server = &server };
+    const int requests = channel.dataRequests;
+    CHECK(copyFilesInto(&copy));
+    CHECK(copy.result == VRCResultOK);
+    CHECK(channel.dataRequests == requests);
+    CHECK(copy.lastDone == 10 && copy.lastTotal == 10);
+    CHECK(fileTreeHolds(target, "Отчёт/q.txt", "quarter"));
+    CHECK(fileTreeHolds(target, "Отчёт/пусто", ""));
+    CHECK(fileTreeHolds(target, "top.txt", "top"));
+    char path[FILE_TREE_PATH];
+    snprintf(path, sizeof(path), "%s/top.txt", target);
+    struct stat status;
+    CHECK(stat(path, &status) == 0 && status.st_mtimespec.tv_sec == 1600000000);
+
+    /* A new list of the server: the copy fetches it, and a file already there is not overwritten */
+    CHECK(serverOffers(offered, 1) == CHANNEL_RC_OK);
+    CHECK(copyFilesInto(&copy));
+    CHECK(copy.result == VRCResultFailure);
+    CHECK(channel.dataRequests == requests + 1);
+
+    vrcLocalFilesFree(served);
+    vrcClipboardDestroy(&clipboard);
+    CHECK(fileTreeRemove(source));
+    CHECK(fileTreeRemove(target));
+    return true;
+}
+
+/* The progress cancels the copy: no range is asked for, and the result says why the copy stopped */
+static bool testCancelFileCopy(void)
+{
+    char source[FILE_TREE_PATH];
+    char target[FILE_TREE_PATH];
+    CHECK(fileTreeMake(source));
+    CHECK(fileTreeMake(target));
+    CHECK(fileTreeWrite(source, "a.txt", "a"));
+    CHECK(fileTreeWrite(source, "b.txt", "b"));
+    char paths[2 * FILE_TREE_PATH];
+    VRCLocalFiles* served = vrcLocalFilesCreate(paths, twoPaths(source, "a.txt", "b.txt", paths, sizeof(paths)));
+    CHECK(served != NULL);
+
+    VRCClipboard clipboard;
+    CHECK(setUp(&clipboard));
+    static const CLIPRDR_FORMAT offered[] = { { SERVER_FILES_ID, (char*)"FileGroupDescriptorW" } };
+    CHECK(serverOffers(offered, 1) == CHANNEL_RC_OK);
+
+    FileServer server = { .files = served };
+    FilesCopy copy = { .clipboard = &clipboard, .directory = target, .server = &server, .cancelOn = 1 };
+    CHECK(copyFilesInto(&copy));
+    CHECK(copy.result == VRCResultCancelled);
+    CHECK(channel.fileRequests == 0);
+
+    /* A folder that does not exist is refused before anything goes out */
+    copy.directory = "/nonexistent/viberdp";
+    CHECK(vrcClipboardCopyRemoteFiles(&clipboard, copy.directory, SHORT_TIMEOUT_MS, NULL, NULL, NULL) ==
+          VRCResultInvalidArgument);
+
+    vrcLocalFilesFree(served);
+    vrcClipboardDestroy(&clipboard);
+    CHECK(fileTreeRemove(source));
+    CHECK(fileTreeRemove(target));
+    return true;
+}
+
 typedef struct Copy {
     VRCClipboard* clipboard;
     uint32_t timeoutMs;
@@ -654,6 +964,9 @@ static const TestCase tests[] = {
     { "detachEndsCopy", testDetachEndsCopy },
     { "offerImage", testOfferImage },
     { "imageFromServer", testImageFromServer },
+    { "serverReadsMacFiles", testServerReadsMacFiles },
+    { "copyFilesFromServer", testCopyFilesFromServer },
+    { "cancelFileCopy", testCancelFileCopy },
 };
 
 int main(int argc, char* argv[])

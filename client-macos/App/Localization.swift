@@ -126,6 +126,10 @@ enum TextKey: String, CaseIterable {
     case settingsLanguageOpenFolder = "settings.language.openFolder"
     case settingsLanguageCreateBase = "settings.language.createBase"
     case settingsLanguageCreateBaseFailed = "settings.language.createBaseFailed"
+    case clipboardFilesCopying = "clipboard.files.copying"
+    case clipboardFilesProgress = "clipboard.files.progress"
+    case clipboardFilesCancel = "clipboard.files.cancel"
+    case clipboardFilesFailed = "clipboard.files.failed"
 }
 
 extension TextKey {
@@ -261,6 +265,11 @@ extension TextKey {
         case .settingsLanguageOpenFolder: "Открыть папку языков"
         case .settingsLanguageCreateBase: "Создать файл для правки"
         case .settingsLanguageCreateBaseFailed: "Файл не создан: {reason}"
+        case .clipboardFilesCopying: "Копирование файлов с удалённого компьютера"
+        case .clipboardFilesProgress: "{done} из {total}"
+        case .clipboardFilesCancel: "Отменить"
+        case .clipboardFilesFailed:
+            "Файлы не скопированы: удалённый компьютер их не отдал, или их не удалось записать на Мак"
         }
     }
 }

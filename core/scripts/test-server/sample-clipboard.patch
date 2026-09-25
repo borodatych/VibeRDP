@@ -11,12 +11,14 @@
  if(CHANNEL_AINPUT_SERVER)
 --- /dev/null
 +++ b/server/Sample/sf_cliprdr.c
-@@ -0,0 +1,197 @@
+@@ -0,0 +1,353 @@
 +/**
 + * Test tool of VibeRDP: an echo of the clipboard of the client
-+ * The server asks for the text, HTML, RTF and CF_DIB the client offers and offers them back,
++ * The server asks for the text, HTML, RTF, CF_DIB and files the client offers and offers them back,
 + * the text behind a prefix and the rest as it came
-+ * A client test so sees its data make the round trip through both directions of the channel
++ * Files come over by their list and then by contents, and go back the same way when the client
++ * reads them A client test so sees its data make the round trip through both directions of the
++ * channel
 + */
 +
 +#include <freerdp/config.h>
@@ -31,20 +33,62 @@
 +
 +#define ECHO_PREFIX "echo: "
 +
++/* The kind of the list of files, and the fields of its descriptors this echo reads */
++#define FILES_KIND 4
++#define DESCRIPTOR_SIZE 592
++#define DESCRIPTOR_ATTRIBUTES 36
++#define DESCRIPTOR_SIZE_HIGH 64
++#define DESCRIPTOR_SIZE_LOW 68
++#define DIRECTORY_ATTRIBUTE 0x10
++
 +/* The ids this server gives the formats in its own lists; registered formats go by their names */
-+static const UINT32 echo_ids[SF_CLIPBOARD_KINDS] = { CF_UNICODETEXT, 0xC100, 0xC101, CF_DIB };
++static const UINT32 echo_ids[SF_CLIPBOARD_KINDS] = { CF_UNICODETEXT, 0xC100, 0xC101, CF_DIB,
++	                                                 0xC102 };
 +static const char* const echo_names[SF_CLIPBOARD_KINDS] = { nullptr, "HTML Format",
-+	                                                        "Rich Text Format", nullptr };
++	                                                        "Rich Text Format", nullptr,
++	                                                        "FileGroupDescriptorW" };
 +
 +static int sf_cliprdr_kind(const CLIPRDR_FORMAT* format)
 +{
 +	for (int kind = 0; kind < SF_CLIPBOARD_KINDS; kind++)
 +	{
-+		if (echo_names[kind] ? (format->formatName && strcmp(format->formatName, echo_names[kind]) == 0)
-+		                     : format->formatId == echo_ids[kind])
++		if (echo_names[kind]
++		        ? (format->formatName && strcmp(format->formatName, echo_names[kind]) == 0)
++		        : format->formatId == echo_ids[kind])
 +			return kind;
 +	}
 +	return -1;
++}
++
++static UINT32 sf_cliprdr_read32(const BYTE* bytes)
++{
++	return (UINT32)bytes[0] | ((UINT32)bytes[1] << 8) | ((UINT32)bytes[2] << 16) |
++	       ((UINT32)bytes[3] << 24);
++}
++
++/* The descriptor of a file of the list the echo holds, nullptr past its end */
++static const BYTE* sf_cliprdr_descriptor(const testPeerContext* peer, UINT32 index)
++{
++	const BYTE* list = peer->clipboard[FILES_KIND];
++	if (!list || peer->clipboard_length[FILES_KIND] < 4)
++		return nullptr;
++	const UINT32 count = sf_cliprdr_read32(list);
++	if (index >= count ||
++	    4ull + (index + 1ull) * DESCRIPTOR_SIZE > peer->clipboard_length[FILES_KIND])
++		return nullptr;
++	return list + 4 + (size_t)index * DESCRIPTOR_SIZE;
++}
++
++static void sf_cliprdr_free_files(testPeerContext* peer)
++{
++	for (UINT32 i = 0; i < peer->clipboard_file_count; i++)
++		free(peer->clipboard_files[i]);
++	free(peer->clipboard_files);
++	free(peer->clipboard_file_lengths);
++	peer->clipboard_files = nullptr;
++	peer->clipboard_file_lengths = nullptr;
++	peer->clipboard_file_count = 0;
++	peer->clipboard_file_next = 0;
 +}
 +
 +WINPR_ATTR_NODISCARD
@@ -79,6 +123,48 @@
 +	return context->ServerFormatList(context, &list);
 +}
 +
++/* The next file of the list with contents to fetch; folders and empty files have none */
++WINPR_ATTR_NODISCARD
++static UINT sf_cliprdr_request_file(CliprdrServerContext* context, testPeerContext* peer)
++{
++	for (; peer->clipboard_file_next < peer->clipboard_file_count; peer->clipboard_file_next++)
++	{
++		const BYTE* descriptor = sf_cliprdr_descriptor(peer, peer->clipboard_file_next);
++		const UINT32 size = sf_cliprdr_read32(descriptor + DESCRIPTOR_SIZE_LOW);
++		if ((sf_cliprdr_read32(descriptor + DESCRIPTOR_ATTRIBUTES) & DIRECTORY_ATTRIBUTE) ||
++		    size == 0)
++			continue;
++		const CLIPRDR_FILE_CONTENTS_REQUEST request = { .common = { .msgType =
++			                                                            CB_FILECONTENTS_REQUEST },
++			                                            .streamId = peer->clipboard_file_next + 1,
++			                                            .listIndex = peer->clipboard_file_next,
++			                                            .dwFlags = FILECONTENTS_RANGE,
++			                                            .cbRequested = size };
++		return context->ServerFileContentsRequest(context, &request);
++	}
++	return sf_cliprdr_offer_back(context, peer);
++}
++
++/* The formats are in: the contents of the files come next, when there are files */
++WINPR_ATTR_NODISCARD
++static UINT sf_cliprdr_formats_done(CliprdrServerContext* context, testPeerContext* peer)
++{
++	sf_cliprdr_free_files(peer);
++	const BYTE* list = peer->clipboard[FILES_KIND];
++	if (!list || peer->clipboard_length[FILES_KIND] < 4)
++		return sf_cliprdr_offer_back(context, peer);
++
++	const UINT32 count = sf_cliprdr_read32(list);
++	if (4ull + (UINT64)count * DESCRIPTOR_SIZE > peer->clipboard_length[FILES_KIND])
++		return ERROR_INVALID_DATA;
++	peer->clipboard_files = calloc(count ? count : 1, sizeof(BYTE*));
++	peer->clipboard_file_lengths = calloc(count ? count : 1, sizeof(UINT32));
++	if (!peer->clipboard_files || !peer->clipboard_file_lengths)
++		return CHANNEL_RC_NO_MEMORY;
++	peer->clipboard_file_count = count;
++	return sf_cliprdr_request_file(context, peer);
++}
++
 +WINPR_ATTR_NODISCARD
 +static UINT sf_cliprdr_client_format_list(CliprdrServerContext* context,
 +                                          const CLIPRDR_FORMAT_LIST* formatList)
@@ -86,9 +172,8 @@
 +	testPeerContext* peer = context->custom;
 +	WINPR_ASSERT(peer);
 +
-+	const CLIPRDR_FORMAT_LIST_RESPONSE response = {
-+		.common = { .msgType = CB_FORMAT_LIST_RESPONSE, .msgFlags = CB_RESPONSE_OK }
-+	};
++	const CLIPRDR_FORMAT_LIST_RESPONSE response = { .common = { .msgType = CB_FORMAT_LIST_RESPONSE,
++		                                                        .msgFlags = CB_RESPONSE_OK } };
 +	const UINT rc = context->ServerFormatListResponse(context, &response);
 +	if (rc != CHANNEL_RC_OK)
 +		return rc;
@@ -99,6 +184,7 @@
 +		peer->clipboard[kind] = nullptr;
 +		peer->clipboard_length[kind] = 0;
 +	}
++	sf_cliprdr_free_files(peer);
 +	peer->clipboard_wanted_count = 0;
 +	peer->clipboard_wanted_next = 0;
 +	for (UINT32 i = 0; i < formatList->numFormats; i++)
@@ -117,7 +203,7 @@
 +	return sf_cliprdr_request_next(context, peer);
 +}
 +
-+/* One format came over; the next one is asked for, or everything goes back when none is left */
++/* One format came over; the next one is asked for, or the files and then everything go back */
 +WINPR_ATTR_NODISCARD
 +static UINT sf_cliprdr_client_format_data_response(CliprdrServerContext* context,
 +                                                   const CLIPRDR_FORMAT_DATA_RESPONSE* response)
@@ -149,7 +235,30 @@
 +	peer->clipboard_wanted_next++;
 +	if (peer->clipboard_wanted_next < peer->clipboard_wanted_count)
 +		return sf_cliprdr_request_next(context, peer);
-+	return sf_cliprdr_offer_back(context, peer);
++	return sf_cliprdr_formats_done(context, peer);
++}
++
++/* The contents of one file came over */
++WINPR_ATTR_NODISCARD
++static UINT sf_cliprdr_client_file_contents_response(CliprdrServerContext* context,
++                                                     const CLIPRDR_FILE_CONTENTS_RESPONSE* response)
++{
++	testPeerContext* peer = context->custom;
++	WINPR_ASSERT(peer);
++
++	const UINT32 index = peer->clipboard_file_next;
++	if (index >= peer->clipboard_file_count || response->streamId != index + 1)
++		return CHANNEL_RC_OK;
++	if (!(response->common.msgFlags & CB_RESPONSE_OK))
++		return ERROR_INVALID_DATA;
++
++	peer->clipboard_files[index] = malloc(response->cbRequested ? response->cbRequested : 1);
++	if (!peer->clipboard_files[index])
++		return CHANNEL_RC_NO_MEMORY;
++	memcpy(peer->clipboard_files[index], response->requestedData, response->cbRequested);
++	peer->clipboard_file_lengths[index] = response->cbRequested;
++	peer->clipboard_file_next++;
++	return sf_cliprdr_request_file(context, peer);
 +}
 +
 +WINPR_ATTR_NODISCARD
@@ -173,6 +282,47 @@
 +	return context->ServerFormatDataResponse(context, &response);
 +}
 +
++/* The client pastes the files of the echo: their sizes and ranges come from what the client sent */
++WINPR_ATTR_NODISCARD
++static UINT sf_cliprdr_client_file_contents_request(CliprdrServerContext* context,
++                                                    const CLIPRDR_FILE_CONTENTS_REQUEST* request)
++{
++	testPeerContext* peer = context->custom;
++	WINPR_ASSERT(peer);
++
++	BYTE size[8] = WINPR_C_ARRAY_INIT;
++	const BYTE* data = nullptr;
++	UINT32 length = 0;
++	const BYTE* descriptor = sf_cliprdr_descriptor(peer, request->listIndex);
++	const BOOL held = descriptor && request->listIndex < peer->clipboard_file_count;
++	if (held && (request->dwFlags & FILECONTENTS_SIZE))
++	{
++		memcpy(size, descriptor + DESCRIPTOR_SIZE_LOW, 4);
++		memcpy(size + 4, descriptor + DESCRIPTOR_SIZE_HIGH, 4);
++		data = size;
++		length = sizeof(size);
++	}
++	else if (held && (request->dwFlags & FILECONTENTS_RANGE))
++	{
++		const UINT32 total = peer->clipboard_file_lengths[request->listIndex];
++		const UINT32 position = request->nPositionHigh ? total : request->nPositionLow;
++		const UINT32 start = position < total ? position : total;
++		length = total - start < request->cbRequested ? total - start : request->cbRequested;
++		data = peer->clipboard_files[request->listIndex]
++		           ? peer->clipboard_files[request->listIndex] + start
++		           : size;
++	}
++
++	const CLIPRDR_FILE_CONTENTS_RESPONSE response = {
++		.common = { .msgType = CB_FILECONTENTS_RESPONSE,
++		            .msgFlags = data ? CB_RESPONSE_OK : CB_RESPONSE_FAIL },
++		.streamId = request->streamId,
++		.cbRequested = length,
++		.requestedData = data
++	};
++	return context->ServerFileContentsResponse(context, &response);
++}
++
 +BOOL sf_peer_cliprdr_init(testPeerContext* context)
 +{
 +	WINPR_ASSERT(context);
@@ -184,9 +334,14 @@
 +	context->cliprdr->rdpcontext = &context->_p;
 +	context->cliprdr->custom = context;
 +	context->cliprdr->useLongFormatNames = TRUE;
++	context->cliprdr->streamFileClipEnabled = TRUE;
++	context->cliprdr->fileClipNoFilePaths = TRUE;
++	context->cliprdr->hasHugeFileSupport = TRUE;
 +	context->cliprdr->ClientFormatList = sf_cliprdr_client_format_list;
 +	context->cliprdr->ClientFormatDataRequest = sf_cliprdr_client_format_data_request;
 +	context->cliprdr->ClientFormatDataResponse = sf_cliprdr_client_format_data_response;
++	context->cliprdr->ClientFileContentsRequest = sf_cliprdr_client_file_contents_request;
++	context->cliprdr->ClientFileContentsResponse = sf_cliprdr_client_file_contents_response;
 +
 +	WINPR_ASSERT(context->cliprdr->Start);
 +	return (context->cliprdr->Start(context->cliprdr) == CHANNEL_RC_OK);
@@ -208,6 +363,7 @@
 +		free(context->clipboard[kind]);
 +		context->clipboard[kind] = nullptr;
 +	}
++	sf_cliprdr_free_files(context);
 +}
 --- /dev/null
 +++ b/server/Sample/sf_cliprdr.h
@@ -317,13 +473,13 @@
  #include <winpr/thread.h>
  #include <winpr/image.h>
  
-+/* Test tool of VibeRDP: the formats of the clipboard echo, text, HTML, RTF and CF_DIB */
-+#define SF_CLIPBOARD_KINDS 4
++/* Test tool of VibeRDP: the formats of the clipboard echo, text, HTML, RTF, CF_DIB and files */
++#define SF_CLIPBOARD_KINDS 5
 +
  struct test_peer_context
  {
  	rdpContext _p;
-@@ -67,6 +71,14 @@
+@@ -67,6 +71,19 @@
  	UINT32 frame_id;
  	RdpsndServerContext* rdpsnd;
  	EncomspServerContext* encomsp;
@@ -335,6 +491,11 @@
 +	int clipboard_wanted_kinds[SF_CLIPBOARD_KINDS];
 +	UINT32 clipboard_wanted_count;
 +	UINT32 clipboard_wanted_next;
++	/* The contents of the files of the list it holds, and the file it waits for */
++	BYTE** clipboard_files;
++	UINT32* clipboard_file_lengths;
++	UINT32 clipboard_file_count;
++	UINT32 clipboard_file_next;
  
  	rdpTransportIo io;
  	wImage* image;

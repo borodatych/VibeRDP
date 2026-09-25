@@ -10,18 +10,25 @@ import XCTest
 final class ClipboardBridgeTests: XCTestCase {
     private var pasteboard: NSPasteboard!
     private var channel: RecordingChannel!
+    private var waiter: ImmediateWaiter!
+    private var folder: URL!
     private var bridge: ClipboardBridge!
 
     override func setUp() async throws {
         pasteboard = NSPasteboard(name: NSPasteboard.Name("tech.vibebrains.viberdp.tests.\(UUID().uuidString)"))
         pasteboard.clearContents()
         channel = RecordingChannel()
-        bridge = ClipboardBridge(pasteboard: pasteboard, channel: channel)
+        waiter = ImmediateWaiter()
+        folder = FileManager.default.temporaryDirectory.appending(path: "viberdp-bridge-\(UUID().uuidString)")
+        bridge = ClipboardBridge(
+            pasteboard: pasteboard, channel: channel, waiter: waiter,
+            staging: FileStaging(root: folder.appending(path: "staging")))
     }
 
     override func tearDown() async throws {
         bridge.stop()
         pasteboard.releaseGlobally()
+        try? FileManager.default.removeItem(at: folder)
     }
 
     /// The text the Mac holds when the session starts goes over as an offer at once
@@ -158,6 +165,74 @@ final class ClipboardBridgeTests: XCTestCase {
         XCTAssertEqual(channel.timeouts, [ClipboardBridge.imageCopyTimeout])
     }
 
+    /// Files of the Mac go over as their paths; the icon Finder puts beside them is not offered as an image
+    func testFilesGoOverAsPaths() throws {
+        let first = try makeFile("a.txt", "a")
+        let second = try makeFile("Папка/b.txt", "b").deletingLastPathComponent()
+        let item = NSPasteboardItem()
+        item.setString(first.absoluteString, forType: .fileURL)
+        item.setData(TestImage.tiff, forType: .tiff)
+        pasteboard.writeObjects([item, second as NSURL])
+        bridge.start()
+        let offer = try XCTUnwrap(channel.offers.last)
+        XCTAssertTrue(offer.contains(.files))
+        XCTAssertFalse(offer.contains(.image))
+
+        bridge.dataRequested(.files)
+        let paths = first.path(percentEncoded: false) + "\0" + second.path(percentEncoded: false) + "\0"
+        XCTAssertEqual(channel.answers, [Data(paths.utf8)])
+    }
+
+    /// Remote files stand on the Mac as one item each; the first paste brings them all, later ones take them
+    func testRemoteFilesComeOnPaste() throws {
+        bridge.start()
+        channel.remoteText = "names too"
+        channel.remoteNames = Data("Папка\0b.txt\0".utf8)
+        channel.remoteFiles = ["Папка/a.txt": "a", "b.txt": "b"]
+        bridge.remoteClipboardChanged([.text, .files])
+        XCTAssertEqual(pasteboard.pasteboardItems?.count, 2)
+        XCTAssertEqual(channel.fileCopies, 0)
+
+        let urls = try XCTUnwrap(
+            pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL])
+        XCTAssertEqual(urls.map(\.lastPathComponent), ["Папка", "b.txt"])
+        XCTAssertEqual(try String(contentsOf: urls[0].appending(path: "a.txt"), encoding: .utf8), "a")
+        XCTAssertEqual(try String(contentsOf: urls[1], encoding: .utf8), "b")
+        XCTAssertEqual(pasteboard.string(forType: .string), "names too")
+        XCTAssertEqual(channel.fileCopies, 1)
+        XCTAssertEqual(waiter.waits, 1)
+
+        // A new remote copy takes the old files away
+        bridge.remoteClipboardChanged([])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: urls[1].path(percentEncoded: false)))
+    }
+
+    /// A copy that fails leaves no files and tells the user; a cancelled one only leaves no files
+    func testFailedFileCopy() throws {
+        bridge.start()
+        channel.remoteNames = Data("b.txt\0".utf8)
+        channel.remoteFiles = ["b.txt": "b"]
+        channel.fileResult = .failure
+        bridge.remoteClipboardChanged([.files])
+        XCTAssertNil(pasteboard.string(forType: .fileURL))
+        XCTAssertEqual(waiter.failures, 1)
+
+        channel.fileResult = .cancelled
+        bridge.remoteClipboardChanged([.files])
+        XCTAssertNil(pasteboard.string(forType: .fileURL))
+        XCTAssertEqual(waiter.failures, 1)
+        let staged = try FileManager.default.contentsOfDirectory(atPath: folder.appending(path: "staging").path)
+        XCTAssertEqual(staged, [])
+    }
+
+    /// A file of the test folder with this text, and the folders on its way
+    private func makeFile(_ name: String, _ text: String) throws -> URL {
+        let url = folder.appending(path: "mac").appending(path: name)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(text.utf8).write(to: url)
+        return url
+    }
+
     /// When the session ends, the item that stood for the remote clipboard goes, a copy of the user stays
     func testStopRemovesOnlyTheRemoteItem() {
         bridge.start()
@@ -180,9 +255,14 @@ private final class RecordingChannel: ClipboardChannel {
     private(set) var answers: [Data?] = []
     private(set) var copies = 0
     private(set) var timeouts: [Duration] = []
+    private(set) var fileCopies = 0
     var remoteText = ""
     /// Bytes of the remote side that are not text; the text stands in when they are nil
     var remoteData: Data?
+    /// The names at the top of the remote files, and the files by their paths with their text
+    var remoteNames: Data?
+    var remoteFiles: [String: String] = [:]
+    var fileResult: VRCResult = .OK
 
     func offerClipboard(_ formats: [VRCClipboardFormat]) {
         offers.append(formats)
@@ -195,6 +275,37 @@ private final class RecordingChannel: ClipboardChannel {
     func copyRemoteClipboard(_ format: VRCClipboardFormat, timeout: Duration) -> Data? {
         copies += 1
         timeouts.append(timeout)
+        if format == .files {
+            return remoteNames
+        }
         return remoteData ?? Data(remoteText.utf8)
+    }
+
+    /// The files come at once, before the wait starts, as a fast copy does
+    func copyRemoteFiles(to folder: URL, timeout: Duration, progress: FileCopyProgress) {
+        fileCopies += 1
+        for (name, text) in remoteFiles {
+            let url = folder.appending(path: name)
+            try? FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? Data(text.utf8).write(to: url)
+        }
+        progress.finish(fileResult)
+    }
+}
+
+/// Waits for nothing: the recording channel ends its copies before the wait starts
+@MainActor
+private final class ImmediateWaiter: FileCopyWaiter {
+    private(set) var waits = 0
+    private(set) var failures = 0
+
+    func wait(for progress: FileCopyProgress) {
+        waits += 1
+        XCTAssertNotNil(progress.result, "the recording channel finishes before the wait")
+    }
+
+    func copyFailed() {
+        failures += 1
     }
 }

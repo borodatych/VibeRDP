@@ -361,7 +361,8 @@ extension SessionController: DesktopInput {
 }
 
 /// The clipboard goes to the core directly: an offer and an answer return at once,
-/// and a copy waits for the server on the calling thread, as a paste on the Mac waits for its data
+/// a copy waits for the server on the calling thread, as a paste on the Mac waits for its data,
+/// and a copy of files runs on a thread of its own, since it may take minutes
 extension SessionController: ClipboardChannel {
     func offerClipboard(_ formats: [VRCClipboardFormat]) {
         guard let handle else { return }
@@ -379,15 +380,48 @@ extension SessionController: ClipboardChannel {
 
     func copyRemoteClipboard(_ format: VRCClipboardFormat, timeout: Duration) -> Data? {
         guard let handle else { return nil }
-        let milliseconds = timeout.components.seconds * 1000 + timeout.components.attoseconds / 1_000_000_000_000_000
         var bytes: UnsafeMutableRawPointer?
         var length = 0
         let result = VRCSessionCopyRemoteClipboard(
-            handle.session, format, UInt32(clamping: milliseconds), &bytes, &length)
+            handle.session, format, Self.milliseconds(timeout), &bytes, &length)
         guard result == .OK, let bytes else { return nil }
         defer { free(bytes) }
         return Data(bytes: bytes, count: length)
     }
+
+    func copyRemoteFiles(to folder: URL, timeout: Duration, progress: FileCopyProgress) {
+        guard let handle else {
+            progress.finish(.invalidState)
+            return
+        }
+        // The thread keeps the session alive: it ends only after the copy does
+        let session = SendableHandle(handle: handle)
+        let milliseconds = Self.milliseconds(timeout)
+        let path = folder.path(percentEncoded: false)
+        Thread.detachNewThread {
+            let context = Unmanaged.passUnretained(progress).toOpaque()
+            let result = withExtendedLifetime(progress) {
+                VRCSessionCopyRemoteFiles(
+                    session.handle.session, path, milliseconds,
+                    { context, done, total in
+                        guard let context else { return true }
+                        return Unmanaged<FileCopyProgress>.fromOpaque(context).takeUnretainedValue()
+                            .report(done: done, total: total)
+                    }, context)
+            }
+            progress.finish(result)
+        }
+    }
+
+    private static func milliseconds(_ duration: Duration) -> UInt32 {
+        UInt32(
+            clamping: duration.components.seconds * 1000 + duration.components.attoseconds / 1_000_000_000_000_000)
+    }
+}
+
+/// The session handle for the thread of a copy of files: the core takes its calls from any thread
+private struct SendableHandle: @unchecked Sendable {
+    let handle: SessionHandle
 }
 
 /// C copies of the strings of one call, freed together once the call is over

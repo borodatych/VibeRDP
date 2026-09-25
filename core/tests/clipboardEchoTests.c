@@ -1,7 +1,7 @@
 /*
  * Clipboard echo tests: the clipboard channel against the sample server of FreeRDP that build-core.sh starts
- * The server asks for the text, HTML, RTF and CF_DIB the client offers and offers them back,
- * the text behind a prefix
+ * The server asks for the text, HTML, RTF, CF_DIB and files the client offers and offers them back,
+ * the text behind a prefix; files come over by their list and contents and go back the same way
  * The data so goes from the Mac to the server and back through both directions of CLIPRDR
  * Without the server every test skips itself
  * Usage: clipboardEchoTests <test name>; CTest registers every test separately
@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "fileTrees.h"
 #include "pictures.h"
 #include "support.h"
 #include "VibeRDPCore/VibeRDPCore.h"
@@ -49,8 +50,13 @@ static const Picture macImage = { 2, 2, { { 255, 0, 0, 255 }, { 0, 255, 0, 255 }
 static uint8_t* macPng;
 static size_t macPngLength;
 
+/* A folder with a file inside and a file beside it, the paths the Mac offers for them */
+static char macFiles[FILE_TREE_PATH];
+static char macPaths[2 * FILE_TREE_PATH];
+static size_t macPathsLength;
+
 /* The formats the Mac offers, all of them */
-#define OFFERED_COUNT 4
+#define OFFERED_COUNT 5
 
 /* What the clipboard callbacks saw; the recorder of support.c keeps the rest */
 static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -70,6 +76,11 @@ static void onDataRequested(void* userData, VRCClipboardFormat format)
     if (format == VRCClipboardFormatImage)
     {
         (void)VRCSessionProvideClipboardData(current, format, macPng, macPngLength);
+        return;
+    }
+    if (format == VRCClipboardFormatFiles)
+    {
+        (void)VRCSessionProvideClipboardData(current, format, macPaths, macPathsLength);
         return;
     }
     const char* data = format == VRCClipboardFormatHtml ? macHtml : format == VRCClipboardFormatRtf ? macRtf : macText;
@@ -114,7 +125,8 @@ static VRCSession* connectToEcho(Recorder* recorder, const char* socket)
     current = session;
 
     const VRCClipboardFormat offered[OFFERED_COUNT] = { VRCClipboardFormatText, VRCClipboardFormatHtml,
-                                                        VRCClipboardFormatRtf, VRCClipboardFormatImage };
+                                                        VRCClipboardFormatRtf, VRCClipboardFormatImage,
+                                                        VRCClipboardFormatFiles };
     /* The sample server has no logon of its own: a name and a password spare the question */
     const VRCConnectionParams params = { .host = socket, .username = "tester", .password = "unused" };
     if (VRCSessionOfferClipboard(session, offered, OFFERED_COUNT) != VRCResultOK ||
@@ -158,6 +170,28 @@ static bool imageCameBack(VRCSession* session)
     return true;
 }
 
+/* The files went to the server by their contents and come back into another folder, tree and all */
+static bool filesCameBack(VRCSession* session)
+{
+    void* names = NULL;
+    size_t length = 0;
+    CHECK(VRCSessionCopyRemoteClipboard(session, VRCClipboardFormatFiles, ECHO_TIMEOUT_MS, &names, &length) ==
+          VRCResultOK);
+    const bool listed = length == strlen("Папка") + 1 + strlen("note.txt") + 1 && strcmp(names, "Папка") == 0;
+    free(names);
+    CHECK(listed);
+
+    char target[FILE_TREE_PATH];
+    CHECK(fileTreeMake(target));
+    CHECK(VRCSessionCopyRemoteFiles(session, target, ECHO_TIMEOUT_MS, NULL, NULL) == VRCResultOK);
+    CHECK(fileTreeHolds(target, "Папка/отчёт.txt", "квартал"));
+    CHECK(fileTreeHolds(target, "Папка/пусто", ""));
+    CHECK(fileTreeHolds(target, "note.txt", "note"));
+    printf("files came back\n");
+    CHECK(fileTreeRemove(target));
+    return true;
+}
+
 /*
  * The offer goes out when the channel starts, the server takes each format and offers them back,
  * and the copies bring them home: both directions, the registered formats and the conversions on the way
@@ -165,6 +199,13 @@ static bool imageCameBack(VRCSession* session)
 static bool testRoundTrip(const char* socket)
 {
     CHECK(pictureEncodePng(&macImage, &macPng, &macPngLength));
+    CHECK(fileTreeMake(macFiles));
+    CHECK(fileTreeWrite(macFiles, "Папка/отчёт.txt", "квартал"));
+    CHECK(fileTreeWrite(macFiles, "Папка/пусто", ""));
+    CHECK(fileTreeWrite(macFiles, "note.txt", "note"));
+    const int folder = snprintf(macPaths, sizeof(macPaths), "%s/Папка", macFiles) + 1;
+    const int file = snprintf(macPaths + folder, sizeof(macPaths) - (size_t)folder, "%s/note.txt", macFiles) + 1;
+    macPathsLength = (size_t)(folder + file);
     Recorder* recorder = recorderNew();
     VRCSession* session = connectToEcho(recorder, socket);
     CHECK(session != NULL);
@@ -183,6 +224,7 @@ static bool testRoundTrip(const char* socket)
     CHECK(formats[1] == VRCClipboardFormatHtml);
     CHECK(formats[2] == VRCClipboardFormatRtf);
     CHECK(formats[3] == VRCClipboardFormatImage);
+    CHECK(formats[4] == VRCClipboardFormatFiles);
 
     char text[128];
     CHECK(snprintf(text, sizeof(text), "%s%s", echoPrefix, macText) < (int)sizeof(text));
@@ -190,6 +232,7 @@ static bool testRoundTrip(const char* socket)
     CHECK(copyIs(session, VRCClipboardFormatHtml, htmlBack));
     CHECK(copyIs(session, VRCClipboardFormatRtf, macRtf));
     CHECK(imageCameBack(session));
+    CHECK(filesCameBack(session));
 
     void* data = NULL;
     size_t length = 0;
@@ -205,6 +248,7 @@ static bool testRoundTrip(const char* socket)
     VRCSessionDestroy(session);
     recorderFree(recorder);
     free(macPng);
+    CHECK(fileTreeRemove(macFiles));
     return true;
 }
 

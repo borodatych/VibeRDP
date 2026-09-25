@@ -123,5 +123,9 @@
   "settings.language.folderHint": "Languages are files in the folder {folder}: put a translation there, and it joins the list after a restart.",
   "settings.language.openFolder": "Open Languages Folder",
   "settings.language.createBase": "Create File for Editing",
-  "settings.language.createBaseFailed": "The file was not created: {reason}"
+  "settings.language.createBaseFailed": "The file was not created: {reason}",
+  "clipboard.files.copying": "Copying files from the remote computer",
+  "clipboard.files.progress": "{done} of {total}",
+  "clipboard.files.cancel": "Cancel",
+  "clipboard.files.failed": "The files were not copied: the remote computer did not give them, or they could not be written to the Mac"
 }

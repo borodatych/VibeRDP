@@ -42,6 +42,12 @@
  * clipboardDataRequested asks for the data when Windows pastes, VRCSessionProvideClipboardData answers
  * remoteClipboardChanged announces what the clipboard of Windows offers,
  * and VRCSessionCopyRemoteClipboard fetches it when the Mac pastes, waiting for the server
+ *
+ * Files:
+ * To Windows the app gives absolute paths, each ending with a zero byte; a folder brings everything inside it,
+ * and the core reads the files itself whenever Windows asks for their contents
+ * From Windows VRCSessionCopyRemoteClipboard gives the names at the top of the copy, each ending with a zero byte,
+ * and VRCSessionCopyRemoteFiles brings the files themselves into a folder of the Mac
  */
 
 #ifndef VIBERDPCORE_H
@@ -71,6 +77,7 @@ typedef VRC_ENUM(VRCResult) {
     VRCResultInvalidState = 2,
     VRCResultFailure = 3,
     VRCResultTimeout = 4,
+    VRCResultCancelled = 5,
 } VRCResult;
 
 /*
@@ -113,6 +120,7 @@ typedef VRC_ENUM(VRCClipboardFormat) {
     VRCClipboardFormatHtml = 2,  /* UTF-8 HTML, a whole page or a part of one */
     VRCClipboardFormatRtf = 3,   /* RTF as it is written */
     VRCClipboardFormatImage = 4, /* A PNG file */
+    VRCClipboardFormatFiles = 5, /* Files and folders, see VRCSessionCopyRemoteFiles */
 } VRCClipboardFormat;
 
 /* The image of a server pointer: BGRA in memory with straight alpha, rows top to bottom */
@@ -373,6 +381,23 @@ VRCResult VRCSessionProvideClipboardData(VRCSession* session, VRCClipboardFormat
  */
 VRCResult VRCSessionCopyRemoteClipboard(VRCSession* session, VRCClipboardFormat format, uint32_t timeoutMs,
                                         void** data, size_t* length);
+
+/*
+ * The progress of VRCSessionCopyRemoteFiles, on the thread that copies: bytes written and the bytes of all the files
+ * Returning false cancels the copy
+ */
+typedef bool (*VRCFileProgress)(void* context, uint64_t done, uint64_t total);
+
+/*
+ * Copies the files and folders of the remote clipboard into an existing folder of the Mac, keeping their tree:
+ * the names at its top are the ones VRCSessionCopyRemoteClipboard gives for VRCClipboardFormatFiles
+ * Blocks until the copy ends, so it runs off the main thread; it waits up to timeoutMs for each answer of the server
+ * progress may be NULL; a copy that stops leaves what it made so far, for the caller to remove
+ * InvalidArgument when the folder cannot be opened, InvalidState when the remote side offers no files,
+ * Failure when the server gives broken data or a file cannot be written, Timeout, or Cancelled by progress
+ */
+VRCResult VRCSessionCopyRemoteFiles(VRCSession* session, const char* directory, uint32_t timeoutMs,
+                                    VRCFileProgress progress, void* context);
 
 /*
  * Asks the server to send the whole desktop again, as after the Mac wakes:

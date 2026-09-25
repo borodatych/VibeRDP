@@ -1184,6 +1184,15 @@ VRCResult VRCSessionCopyRemoteClipboard(VRCSession* session, VRCClipboardFormat 
                                   freerdp_abort_event(&session->common.context), data, length);
 }
 
+VRCResult VRCSessionCopyRemoteFiles(VRCSession* session, const char* directory, uint32_t timeoutMs,
+                                    VRCFileProgress progress, void* context)
+{
+    if (!session)
+        return VRCResultInvalidArgument;
+    return vrcClipboardCopyRemoteFiles(&session->clipboard, directory, timeoutMs,
+                                       freerdp_abort_event(&session->common.context), progress, context);
+}
+
 VRCResult VRCSessionRefresh(VRCSession* session)
 {
     if (!session)

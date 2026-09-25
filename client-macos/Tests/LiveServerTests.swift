@@ -11,7 +11,7 @@ import XCTest
 /// VIBERDP_TEST_SERVER_SOCKET replays a RemoteFX recording of Windows Server 2008 R2,
 /// VIBERDP_INTERACTIVE_SERVER_SOCKET draws its icon wherever a mouse event points, resizes its desktop on G
 /// and drops the connection on D,
-/// VIBERDP_CLIPBOARD_SERVER_SOCKET takes the text, HTML, RTF and image the client offers and offers them back,
+/// VIBERDP_CLIPBOARD_SERVER_SOCKET takes the text, HTML, RTF, image and files the client offers and offers them back,
 /// the text behind "echo: "
 /// The servers listen on Unix sockets: no network, so no Local Network alert either
 @MainActor
@@ -191,6 +191,54 @@ final class LiveServerTests: XCTestCase {
 
         bridge.stop()
         XCTAssertNil(pasteboard.string(forType: .string), "the item for the remote clipboard goes with the session")
+        await endsCleanly(session)
+    }
+
+    /// Files make the round trip through the echo server: a folder and a file of the Mac go over by their contents,
+    /// come back as the remote clipboard, and the paste on the Mac brings them into the staging folder
+    /// The copy waits over the panel of the app, as it does when Finder pastes
+    func testClipboardFilesRoundTrip() async throws {
+        guard let socket = ProcessInfo.processInfo.environment["VIBERDP_CLIPBOARD_SERVER_SOCKET"] else {
+            throw XCTSkip("no clipboard test server: build it with core/scripts/build-test-server.sh")
+        }
+        let folder = FileManager.default.temporaryDirectory.appending(path: "viberdp-live-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let mac = folder.appending(path: "mac")
+        try FileManager.default.createDirectory(at: mac.appending(path: "Папка"), withIntermediateDirectories: true)
+        try Data("квартал".utf8).write(to: mac.appending(path: "Папка/отчёт.txt"))
+        try Data("note".utf8).write(to: mac.appending(path: "note.txt"))
+
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("tech.vibebrains.viberdp.tests.\(UUID().uuidString)"))
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.clearContents()
+        pasteboard.writeObjects([mac.appending(path: "Папка") as NSURL, mac.appending(path: "note.txt") as NSURL])
+
+        suiteName = "tech.vibebrains.viberdp.tests.\(UUID().uuidString)"
+        let trusted = TrustedCertificates(defaults: try XCTUnwrap(UserDefaults(suiteName: suiteName)))
+        let session = LiveSession(trusted: trusted)
+        let address = try XCTUnwrap(ServerAddress(socket))
+        XCTAssertTrue(
+            session.controller.connect(to: address, username: "tester", password: "unused", desktop: Self.desktop))
+        let staging = FileStaging(root: folder.appending(path: "staging"))
+        let bridge = ClipboardBridge(pasteboard: pasteboard, channel: session.controller, staging: staging)
+        session.clipboard = bridge
+        bridge.start()
+
+        let echoed = await session.wait("the echo of the files", timeout: Self.timeout) {
+            session.remoteClipboards > 0
+        }
+        XCTAssertTrue(echoed)
+        let urls = try XCTUnwrap(
+            pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL])
+        XCTAssertEqual(urls.map(\.lastPathComponent), ["Папка", "note.txt"])
+        XCTAssertTrue(
+            urls.allSatisfy { $0.path(percentEncoded: false).hasPrefix(staging.root.path(percentEncoded: false)) })
+        XCTAssertEqual(try String(contentsOf: urls[0].appending(path: "отчёт.txt"), encoding: .utf8), "квартал")
+        XCTAssertEqual(try String(contentsOf: urls[1], encoding: .utf8), "note")
+        XCTAssertEqual(session.failures, [])
+
+        bridge.stop()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: urls[1].path(percentEncoded: false)))
         await endsCleanly(session)
     }
 
