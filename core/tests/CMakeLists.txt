@@ -85,9 +85,19 @@ endforeach()
 add_executable(kerberosLogonTests kerberosLogonTests.c support.c)
 target_link_libraries(kerberosLogonTests PRIVATE VibeRDPCore)
 target_compile_options(kerberosLogonTests PRIVATE -Wall -Wextra -Werror)
-foreach(test IN ITEMS logonWithPrincipalName logonWithDomainPrefix wrongPasswordFailsTheLogon ticketsLeaveWithTheSession)
+foreach(test IN ITEMS logonWithPrincipalName logonWithDomainPrefix wrongPasswordFailsTheLogon
+                      ticketsLeaveWithTheSession)
   add_test(NAME ${test} COMMAND kerberosLogonTests ${test})
   set_tests_properties(${test} PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77 ENVIRONMENT "${VRC_TEST_ENVIRONMENT}")
+endforeach()
+
+# H.264 through the VideoToolbox decoder of the engine; the streams come from the encoder of VideoToolbox
+add_executable(h264Tests h264Tests.c)
+target_link_libraries(h264Tests PRIVATE freerdp-client)
+target_compile_options(h264Tests PRIVATE -Wall -Wextra -Werror)
+foreach(test IN ITEMS avc420RoundTrip avc420CroppedFrame avc444RoundTrip avc444v2RoundTrip sizeChange badStreams)
+  add_test(NAME ${test} COMMAND h264Tests ${test})
+  set_tests_properties(${test} PROPERTIES TIMEOUT 60 ENVIRONMENT "${VRC_TEST_ENVIRONMENT}")
 endforeach()
 
 add_executable(pointerTests pointerTests.c ${PROJECT_SOURCE_DIR}/src/pointer.c)

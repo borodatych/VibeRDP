@@ -1,0 +1,79 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -452,7 +452,7 @@
+   add_compile_definitions("WITH_MBEDTLS")
+ endif()
+ 
+-if(WITH_OPENH264 OR WITH_MEDIA_FOUNDATION OR WITH_VIDEO_FFMPEG OR WITH_MEDIACODEC)
++if(WITH_OPENH264 OR WITH_MEDIA_FOUNDATION OR WITH_VIDEO_FFMPEG OR WITH_MEDIACODEC OR WITH_H264_VIDEOTOOLBOX)
+   set(WITH_GFX_H264 ON)
+ else()
+   set(WITH_GFX_H264 OFF)
+--- a/cmake/ConfigOptions.cmake
++++ b/cmake/ConfigOptions.cmake
+@@ -148,6 +148,7 @@
+ cmake_dependent_option(
+   WITH_FFMPEG_HWACCEL "[experimental] Use FFMPEG hardware acceleration" OFF "WITH_VIDEO_FFMPEG" OFF
+ )
++cmake_dependent_option(WITH_H264_VIDEOTOOLBOX "Use VideoToolbox for H264 decoding" OFF "APPLE" OFF)
+ 
+ if(WITH_VIDEOTOOLBOX OR WITH_VAAPI OR WITH_VAAPI_H264_ENCODING)
+   message(
+--- a/include/config/config.h.in
++++ b/include/config/config.h.in
+@@ -58,6 +58,7 @@
+ #cmakedefine WITH_OPENCL
+ #cmakedefine WITH_MEDIA_FOUNDATION
+ #cmakedefine WITH_MEDIACODEC
++#cmakedefine WITH_H264_VIDEOTOOLBOX
+ #cmakedefine WITH_GFX_AV1
+ 
+ #cmakedefine WITH_FFMPEG_HWACCEL
+--- a/libfreerdp/codec/CMakeLists.txt
++++ b/libfreerdp/codec/CMakeLists.txt
+@@ -193,6 +193,18 @@
+   list(APPEND CODEC_LIBS ${MEDIACODEC})
+ endif()
+ 
++if(APPLE AND WITH_H264_VIDEOTOOLBOX)
++  list(APPEND CODEC_SRCS h264_videotoolbox.c)
++
++  find_library(VIDEOTOOLBOX_FRAMEWORK VideoToolbox REQUIRED)
++  find_library(COREMEDIA_FRAMEWORK CoreMedia REQUIRED)
++  find_library(COREVIDEO_FRAMEWORK CoreVideo REQUIRED)
++  find_library(COREFOUNDATION_FRAMEWORK CoreFoundation REQUIRED)
++  list(APPEND CODEC_LIBS ${VIDEOTOOLBOX_FRAMEWORK} ${COREMEDIA_FRAMEWORK} ${COREVIDEO_FRAMEWORK}
++       ${COREFOUNDATION_FRAMEWORK}
++  )
++endif()
++
+ add_library(freerdp-codecs OBJECT ${CODEC_SRCS})
+ freerdp_library_add(${CODEC_LIBS})
+ freerdp_object_library_add(freerdp-codecs)
+--- a/libfreerdp/codec/h264.c
++++ b/libfreerdp/codec/h264.c
+@@ -732,6 +732,12 @@
+ {
+ 	int i = 0;
+ 
++#ifdef WITH_H264_VIDEOTOOLBOX
++	{
++		subSystems[i] = &g_Subsystem_VideoToolbox;
++		i++;
++	}
++#endif
+ #ifdef WITH_MEDIACODEC
+ 	{
+ 		subSystems[i] = &g_Subsystem_mediacodec;
+--- a/libfreerdp/codec/h264.h
++++ b/libfreerdp/codec/h264.h
+@@ -106,6 +106,9 @@
+ #ifdef WITH_VIDEO_FFMPEG
+ 	extern const H264_CONTEXT_SUBSYSTEM g_Subsystem_libavcodec;
+ #endif
++#ifdef WITH_H264_VIDEOTOOLBOX
++	extern const H264_CONTEXT_SUBSYSTEM g_Subsystem_VideoToolbox;
++#endif
+ 
+ #ifdef __cplusplus
+ }

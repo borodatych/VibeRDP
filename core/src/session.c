@@ -897,11 +897,15 @@ static BOOL applyParams(rdpSettings* settings, const VRCConnectionParams* params
 /*
  * The graphics pipeline carries the modern codecs, and RemoteFX serves the servers without it;
  * a client leaves both off by default, and a server may refuse a client with no codec at all
+ * H.264 in both forms, AVC420 and AVC444, decodes through VideoToolbox
+ * Without these settings the client tells the server that it takes no H.264
  */
 static BOOL applyGraphics(rdpSettings* settings)
 {
     return freerdp_settings_set_bool(settings, FreeRDP_SupportGraphicsPipeline, TRUE) &&
-           freerdp_settings_set_bool(settings, FreeRDP_RemoteFxCodec, TRUE);
+           freerdp_settings_set_bool(settings, FreeRDP_RemoteFxCodec, TRUE) &&
+           freerdp_settings_set_bool(settings, FreeRDP_GfxH264, TRUE) &&
+           freerdp_settings_set_bool(settings, FreeRDP_GfxAVC444, TRUE);
 }
 
 /* NLA and TLS stay negotiable; the legacy RDP Security layer has weak encryption and no server authentication */

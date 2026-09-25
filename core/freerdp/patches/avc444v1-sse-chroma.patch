@@ -1,0 +1,34 @@
+--- a/libfreerdp/primitives/sse/prim_YUV_sse4.1.c
++++ b/libfreerdp/primitives/sse/prim_YUV_sse4.1.c
+@@ -1504,8 +1504,9 @@
+ 		              pDstRaw[1] + 1ULL * roi->top * dstStep[1] + roi->left,
+ 		              pDstRaw[2] + 1ULL * roi->top * dstStep[2] + roi->left };
+ 	const __m128i zero = _mm_setzero_si128();
+-	const __m128i mask = _mm_set_epi8(0, (char)0x80, 0, (char)0x80, 0, (char)0x80, 0, (char)0x80, 0,
+-	                                  (char)0x80, 0, (char)0x80, 0, (char)0x80, 0, (char)0x80);
++	/* B6 and B7 hold the odd columns: the high byte of each pair takes the value */
++	const __m128i mask = _mm_set_epi8((char)0x80, 0, (char)0x80, 0, (char)0x80, 0, (char)0x80, 0,
++	                                  (char)0x80, 0, (char)0x80, 0, (char)0x80, 0, (char)0x80, 0);
+ 
+ 	/* The second half of U and V is a bit more tricky... */
+ 	/* B4 and B5 */
+@@ -1551,15 +1552,15 @@
+ 		{
+ 			{
+ 				const __m128i u = LOAD_SI128(&Ua[x]);
+-				const __m128i u2 = _mm_unpackhi_epi8(u, zero);
+-				const __m128i u1 = _mm_unpacklo_epi8(u, zero);
++				const __m128i u2 = _mm_unpackhi_epi8(zero, u);
++				const __m128i u1 = _mm_unpacklo_epi8(zero, u);
+ 				_mm_maskmoveu_si128(u1, mask, (char*)&pU[2 * x]);
+ 				_mm_maskmoveu_si128(u2, mask, (char*)&pU[2 * x + 16]);
+ 			}
+ 			{
+ 				const __m128i u = LOAD_SI128(&Va[x]);
+-				const __m128i u2 = _mm_unpackhi_epi8(u, zero);
+-				const __m128i u1 = _mm_unpacklo_epi8(u, zero);
++				const __m128i u2 = _mm_unpackhi_epi8(zero, u);
++				const __m128i u1 = _mm_unpacklo_epi8(zero, u);
+ 				_mm_maskmoveu_si128(u1, mask, (char*)&pV[2 * x]);
+ 				_mm_maskmoveu_si128(u2, mask, (char*)&pV[2 * x + 16]);
+ 			}

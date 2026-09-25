@@ -14,8 +14,11 @@ set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 FREERDP_SRC="$REPO_ROOT/core/third_party/FreeRDP"
+# What VibeRDP adds to FreeRDP: files laid over a copy of the submodule, then patches to that copy
+FREERDP_ADDITIONS="$REPO_ROOT/core/freerdp"
 DOWNLOADS="$CACHE_DIR/downloads"
 SOURCES="$CACHE_DIR/src"
+FREERDP_TREE="$SOURCES/freerdp"
 STAGE="$CACHE_DIR/stage"
 OPENSSL_SRC="$SOURCES/openssl-$OPENSSL_VERSION"
 KRB5_SRC="$SOURCES/krb5-$KRB5_VERSION"
@@ -42,7 +45,7 @@ object_list() {
 
 check_prerequisites() {
     local tool channel
-    for tool in "$CMAKE" perl make curl shasum tar lipo otool nm strings pkg-config; do
+    for tool in "$CMAKE" perl make curl shasum tar lipo otool nm strings pkg-config rsync patch; do
         command -v "$tool" >/dev/null || die "$tool not found, see docs/manuals/devSetup.md"
     done
     [ -f "$FREERDP_SRC/CMakeLists.txt" ] || die "FreeRDP submodule is missing: git submodule update --init"
@@ -164,6 +167,20 @@ build_openssl() {
     echo "$signature" >"$stamp"
 }
 
+# The engine builds from a copy of the submodule with the additions of VibeRDP; the submodule stays as released
+# rsync keeps the times of unchanged files, so the build stays incremental; patched files rebuild every time
+prepare_freerdp() {
+    local patch
+
+    log "Preparing the FreeRDP sources in $FREERDP_TREE"
+    mkdir -p "$FREERDP_TREE"
+    rsync -a --delete --exclude .git "$FREERDP_SRC/" "$FREERDP_TREE/"
+    rsync -a "$FREERDP_ADDITIONS/src/" "$FREERDP_TREE/"
+    for patch in "$FREERDP_ADDITIONS"/patches/*.patch; do
+        patch -s -p1 -d "$FREERDP_TREE" <"$patch" || die "$(basename "$patch") no longer applies to the submodule"
+    done
+}
+
 build_freerdp() {
     local arch=$1
     local build_dir="$BUILD/freerdp-$arch"
@@ -185,13 +202,14 @@ build_freerdp() {
     # pkg-config sees only the staged Kerberos, for the same reason as HOST_PREFIXES: Homebrew stays out
     # Its files name the runtime prefix, and the sysroot puts the staging folder in front of it
     # --static adds the private libraries, which the exported packages of FreeRDP then carry to every program
+    # H.264 of the graphics pipeline decodes through VideoToolbox, the decoder that VibeRDP adds, not FFmpeg
     # LTO stays off: the archives must hold machine code, not LLVM bitcode tied to one compiler version
     # The configure checks see the SDK, not the deployment target, and adopt APIs the oldest supported macOS lacks
     # Using such an API is a compile error here, since its weak reference would be NULL on that macOS
     # pipe2 arrived in macOS 27 and its check only takes the function address, which passes: the result is preset
     # --fresh drops cached check results, so they always follow the current flags
     PKG_CONFIG_LIBDIR="$krb5_root/lib/pkgconfig" PKG_CONFIG_SYSROOT_DIR="$STAGE/krb5-$arch" \
-        "$CMAKE" --fresh -G "$GENERATOR" -S "$FREERDP_SRC" -B "$build_dir" \
+        "$CMAKE" --fresh -G "$GENERATOR" -S "$FREERDP_TREE" -B "$build_dir" \
         -DCMAKE_C_FLAGS="-Werror=unguarded-availability-new" \
         -DWINPR_HAVE_PIPE2=OFF \
         -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
@@ -212,6 +230,7 @@ build_freerdp() {
         -DWITH_CLANG_FORMAT=OFF \
         -DWITH_FFMPEG=OFF \
         -DWITH_SWSCALE=OFF \
+        -DWITH_H264_VIDEOTOOLBOX=ON \
         -DWITH_OPUS=OFF \
         -DWITH_MACAUDIO=OFF \
         -DWITH_PCSC=OFF \
@@ -346,6 +365,7 @@ main() {
         "MIT Kerberos $KRB5_VERSION, macOS $MACOSX_DEPLOYMENT_TARGET+, $ARCHS -> $PREFIX"
     fetch_openssl
     fetch_krb5
+    prepare_freerdp
     for arch in $ARCHS; do
         build_openssl "$arch"
         build_krb5 "$arch"
