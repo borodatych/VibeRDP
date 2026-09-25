@@ -1,3 +1,4 @@
+import Carbon.HIToolbox
 import IOSurface
 import Metal
 import VibeRDPCore
@@ -8,13 +9,15 @@ import XCTest
 /// Real RDP exchanges on this Mac with the sample server of FreeRDP, built by core/scripts/build-test-server.sh
 /// build-client.sh starts two of them and hands their sockets over:
 /// VIBERDP_TEST_SERVER_SOCKET replays a RemoteFX recording of Windows Server 2008 R2,
-/// VIBERDP_INTERACTIVE_SERVER_SOCKET draws its icon wherever a mouse event points
+/// VIBERDP_INTERACTIVE_SERVER_SOCKET draws its icon wherever a mouse event points and resizes its desktop on G
 /// The servers listen on Unix sockets: no network, so no Local Network alert either
 @MainActor
 final class LiveServerTests: XCTestCase {
     private static let frameCount = 20
     private static let timeout: TimeInterval = 20
     private static let desktop = CGSize(width: 1024, height: 768)
+    /// The size the interactive server switches to on G, as server/Sample/sfreerdp.c has it
+    private static let resizedDesktop = CGSize(width: 800, height: 600)
     /// The recording goes from the Welcome screen through the desktop to the logoff screen
     /// From its seventh frame on, this pixel is blue: the teal of the logon screens or the sky of the wallpaper
     /// Swapped bytes turn either brown or orange; a corner would not do, desktop icons cover it
@@ -80,6 +83,30 @@ final class LiveServerTests: XCTestCase {
         await endsCleanly(session)
     }
 
+    /// A key reaches the server as its scan code: G switches the desktop of the interactive server to 800×600
+    /// and back, and the second press waits in the queue until the server has reactivated the connection
+    func testKeyReachesTheServer() async throws {
+        let session = try start(socketIn: "VIBERDP_INTERACTIVE_SERVER_SOCKET")
+        let first = await session.wait("the first frame", timeout: Self.timeout) { session.frames > 0 }
+        XCTAssertTrue(first)
+
+        let input: DesktopInput = session.controller
+        let g = try XCTUnwrap(KeyCodeMap.scanCode(of: UInt16(kVK_ANSI_G), iso: false))
+        input.keyboardFocused(capsLock: false)
+        for size in [Self.resizedDesktop, Self.desktop] {
+            input.key(g, pressed: true, repeat: false)
+            input.key(g, pressed: false, repeat: false)
+            let resized = await session.wait("a desktop of \(size)", timeout: Self.timeout) {
+                session.desktopSize == size
+            }
+            XCTAssertTrue(resized, "\(String(describing: session.desktopSize))")
+        }
+        input.keyboardLost()
+        XCTAssertEqual(session.failures, [])
+
+        await endsCleanly(session)
+    }
+
     /// Connects to the server whose socket the environment names, accepting its certificate
     private func start(socketIn variable: String) throws -> LiveSession {
         guard let socket = ProcessInfo.processInfo.environment[variable] else {
@@ -136,6 +163,8 @@ private final class LiveSession {
     private(set) var failures: [VRCErrorKind] = []
     private(set) var frames = 0
     private(set) var resized = false
+    /// The size of the last surface, in pixels
+    private(set) var desktopSize: CGSize?
     private(set) var controller: SessionController!
     private var check: (() -> Void)?
 
@@ -180,8 +209,9 @@ private final class LiveSession {
             states.append(VRCSessionStateName(state))
         case .certificateQuestion:
             controller.answerCertificate(accept: true, remember: false)
-        case .frameResized:
+        case .frameResized(let width, let height):
             resized = true
+            desktopSize = CGSize(width: Int(width), height: Int(height))
         case .frameUpdated:
             frames += 1
         case .failed(let kind, _):

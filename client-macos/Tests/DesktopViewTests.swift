@@ -1,4 +1,6 @@
 import AppKit
+import Carbon.HIToolbox
+import IOKit.hidsystem
 import IOSurface
 import VibeRDPCore
 import XCTest
@@ -90,6 +92,115 @@ final class DesktopViewTests: XCTestCase {
     }
 }
 
+/// Key events of AppKit through the view: its monitor sees them before the menus, and it has the keyboard
+/// only as the first responder of the key window
+/// The window of these tests counts as key whatever app is in front, so they check the first responder part
+@MainActor
+final class DesktopKeyboardTests: XCTestCase {
+    private static let extended = UInt16(VRC_KEY_EXTENDED)
+
+    private var window: NSWindow!
+    private var view: DesktopView!
+    private var input: RecordingInput!
+    private var suiteName = ""
+
+    override func setUp() async throws {
+        guard let renderer = FrameRenderer() else {
+            throw XCTSkip("no GPU that runs Metal Performance Shaders on this machine")
+        }
+        suiteName = "tech.vibebrains.viberdp.tests.\(UUID().uuidString)"
+        view = DesktopView(renderer: renderer)
+        input = RecordingInput()
+        view.input = input
+        view.keyboard = KeyboardSettingsStore(defaults: try XCTUnwrap(UserDefaults(suiteName: suiteName)))
+        window = KeyWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 320, height: 200), styleMask: [.titled], backing: .buffered,
+            defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = view
+        window.orderFront(nil)
+        window.makeFirstResponder(view)
+    }
+
+    override func tearDown() async throws {
+        window?.close()
+        UserDefaults().removePersistentDomain(forName: suiteName)
+    }
+
+    func testKeyboardFollowsTheFirstResponder() {
+        XCTAssertTrue(view.hasKeyboard)
+        XCTAssertEqual(input.events.first.map(\.isFocused), true)
+
+        window.makeFirstResponder(nil)
+        XCTAssertFalse(view.hasKeyboard)
+        XCTAssertEqual(input.events.last, .lost)
+
+        window.makeFirstResponder(view)
+        XCTAssertTrue(view.hasKeyboard)
+        XCTAssertEqual(input.events.last.map(\.isFocused), true)
+    }
+
+    /// ⌘C goes as Ctrl+C: the left ⌘ is known by its device bit
+    func testCommandCopyGoesAsControlC() {
+        input.clear()
+        XCTAssertTrue(view.takesKey(flags(kVK_Command, [.command], device: UInt(NX_DEVICELCMDKEYMASK))))
+        XCTAssertTrue(view.takesKey(key(.keyDown, kVK_ANSI_C, [.command])))
+        XCTAssertTrue(view.takesKey(key(.keyUp, kVK_ANSI_C, [.command])))
+        XCTAssertTrue(view.takesKey(flags(kVK_Command, [], device: 0)))
+        XCTAssertEqual(
+            input.events, [.key(0x1D, true), .key(0x2E, true), .key(0x2E, false), .key(0x1D, false)])
+    }
+
+    /// A combination the Mac keeps goes back to AppKit, and Windows gets nothing of it but the modifier
+    func testMacShortcutGoesBackToAppKit() {
+        input.clear()
+        XCTAssertFalse(view.takesKey(key(.keyDown, kVK_ANSI_H, [.command])))
+        XCTAssertEqual(input.events, [])
+    }
+
+    /// Without device bits the shared flag tells a press from a release
+    func testModifierWithoutDeviceBits() {
+        input.clear()
+        XCTAssertTrue(view.takesKey(flags(kVK_RightOption, [.option], device: 0)))
+        XCTAssertTrue(view.takesKey(flags(kVK_RightOption, [], device: 0)))
+        XCTAssertEqual(input.events, [.key(Self.extended | 0x38, true), .key(Self.extended | 0x38, false)])
+    }
+
+    /// Events of AppKit reach the view by its monitor: the Close item of the menu does not take ⌘W,
+    /// and the release arrives, though AppKit does not hand a key released under ⌘ to the view
+    func testMonitorSeesEventsBeforeTheMenus() async {
+        input.clear()
+        for event in [key(.keyDown, kVK_ANSI_W, [.command]), key(.keyUp, kVK_ANSI_W, [.command])] {
+            NSApp.postEvent(event, atStart: false)
+        }
+        let released = XCTestExpectation(description: "the release of W")
+        input.onEvent = { event in
+            if event == .key(0x11, false) {
+                released.fulfill()
+            }
+        }
+        await fulfillment(of: [released], timeout: 5)
+        XCTAssertEqual(input.events, [.key(0x11, true), .key(0x11, false)])
+        XCTAssertTrue(window.isVisible)
+    }
+
+    private func key(_ type: NSEvent.EventType, _ keyCode: Int, _ flags: NSEvent.ModifierFlags) -> NSEvent {
+        NSEvent.keyEvent(
+            with: type, location: .zero, modifierFlags: flags, timestamp: 0, windowNumber: window.windowNumber,
+            context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false,
+            keyCode: UInt16(keyCode))!
+    }
+
+    private func flags(_ keyCode: Int, _ flags: NSEvent.ModifierFlags, device: UInt) -> NSEvent {
+        key(.flagsChanged, keyCode, NSEvent.ModifierFlags(rawValue: flags.rawValue | device))
+    }
+}
+
+/// Key whatever app is in front: macOS 14 does not let a test bring its app forward while the user works in another
+private final class KeyWindow: NSWindow {
+    override var isKeyWindow: Bool { true }
+}
+
 /// Keeps what the view sent, in order
 @MainActor
 private final class RecordingInput: DesktopInput {
@@ -97,9 +208,23 @@ private final class RecordingInput: DesktopInput {
         case move(DesktopPoint)
         case button(VRCMouseButton, Bool, DesktopPoint)
         case wheel(VRCWheelAxis, Int32)
+        case key(UInt16, Bool)
+        case focused(capsLock: Bool)
+        case lost
+
+        var isFocused: Bool {
+            if case .focused = self { true } else { false }
+        }
     }
 
-    private(set) var events: [Event] = []
+    private(set) var events: [Event] = [] {
+        didSet { events.last.map { onEvent?($0) } }
+    }
+    var onEvent: ((Event) -> Void)?
+
+    func clear() {
+        events = []
+    }
 
     func mouseMoved(to point: DesktopPoint) {
         events.append(.move(point))
@@ -111,5 +236,17 @@ private final class RecordingInput: DesktopInput {
 
     func mouseWheel(_ axis: VRCWheelAxis, delta: Int32, at point: DesktopPoint) {
         events.append(.wheel(axis, delta))
+    }
+
+    func key(_ key: UInt16, pressed: Bool, repeat: Bool) {
+        events.append(.key(key, pressed))
+    }
+
+    func keyboardFocused(capsLock: Bool) {
+        events.append(.focused(capsLock: capsLock))
+    }
+
+    func keyboardLost() {
+        events.append(.lost)
     }
 }

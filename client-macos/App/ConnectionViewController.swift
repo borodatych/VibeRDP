@@ -15,6 +15,7 @@ final class ConnectionViewController: NSViewController {
     let statusLabel = NSTextField(wrappingLabelWithString: "")
 
     private let trusted: TrustedCertificates
+    private let keyboard: KeyboardSettingsStore
     private var session: SessionController?
     private let form = NSStackView()
     private var desktop: DesktopView?
@@ -22,8 +23,9 @@ final class ConnectionViewController: NSViewController {
     /// Why the session ended: the error comes right before Disconnected, and Disconnected shows it
     private var failure: String?
 
-    init(trusted: TrustedCertificates) {
+    init(trusted: TrustedCertificates, keyboard: KeyboardSettingsStore) {
         self.trusted = trusted
+        self.keyboard = keyboard
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -105,6 +107,7 @@ final class ConnectionViewController: NSViewController {
         session = controller
         let desktop = DesktopView(renderer: renderer)
         desktop.input = controller
+        desktop.keyboard = keyboard
         self.desktop = desktop
         setEditing(false)
         // The desktop is as large as the window in points; scaling it to the pixels of the display is task 3.2

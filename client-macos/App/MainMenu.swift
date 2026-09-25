@@ -6,6 +6,8 @@ struct MainMenu {
     let bar = NSMenu()
     /// AppKit lists open windows in this menu once it becomes NSApp.windowsMenu
     let windowMenu: NSMenu
+    /// Its shortcut is a keyboard setting
+    let disconnectItem: NSMenuItem
 
     init(appName: String) {
         let app = ["app": appName]
@@ -13,6 +15,8 @@ struct MainMenu {
         let application = NSMenu()
         application.addItem(
             Self.item(.menuAppAbout, app, #selector(NSApplication.orderFrontStandardAboutPanel(_:))))
+        application.addItem(.separator())
+        application.addItem(Self.item(.menuAppSettings, [:], #selector(AppDelegate.showSettings(_:)), key: ","))
         application.addItem(.separator())
         application.addItem(Self.item(.menuAppHide, app, #selector(NSApplication.hide(_:)), key: "h"))
         application.addItem(
@@ -24,8 +28,8 @@ struct MainMenu {
         application.addItem(Self.item(.menuAppQuit, app, #selector(NSApplication.terminate(_:)), key: "q"))
 
         let file = NSMenu(title: Localization.text(.menuFile))
-        // No shortcut: the Command combinations are to reach the remote desktop, and task 1.4 lays them out
-        file.addItem(Self.item(.menuFileDisconnect, [:], #selector(ConnectionViewController.disconnect(_:))))
+        disconnectItem = Self.item(.menuFileDisconnect, [:], #selector(ConnectionViewController.disconnect(_:)))
+        file.addItem(disconnectItem)
         file.addItem(.separator())
         file.addItem(Self.item(.menuFileClose, [:], #selector(NSWindow.performClose(_:)), key: "w"))
 
@@ -39,6 +43,13 @@ struct MainMenu {
             holder.submenu = submenu
             bar.addItem(holder)
         }
+    }
+
+    /// The shortcut of Disconnect follows the keyboard settings; the Mac keeps it while the desktop has the keyboard
+    func apply(_ keyboard: KeyboardSettings) {
+        let equivalent = keyboard.disconnect?.menuKeyEquivalent
+        disconnectItem.keyEquivalent = equivalent?.key ?? ""
+        disconnectItem.keyEquivalentModifierMask = equivalent?.mask ?? []
     }
 
     /// Items without a target go to the responder chain: the key window or the app answers them

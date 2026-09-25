@@ -1,4 +1,6 @@
 import AppKit
+import Carbon.HIToolbox
+import IOKit.hidsystem
 import IOSurface
 import QuartzCore
 import VibeRDPCore
@@ -6,15 +8,26 @@ import VibeRDPCore
 /// The remote desktop on screen: a CAMetalLayer redrawn from the engine surface whenever a frame changes
 /// AppKit coalesces the redraw requests, so a burst of changed regions costs one draw per display refresh
 /// The mouse over it goes to the input in desktop pixels, and the cursor is the pointer of the server
+/// While it is the first responder of the key window, the keyboard goes to the input as well
 @MainActor
 final class DesktopView: NSView {
     private let renderer: FrameRenderer
     private var texture: MTLTexture?
     private var wheel = WheelAccumulator()
     private var cursor = NSCursor.arrow
+    private var translator = KeyboardTranslator()
+    private var keyMonitor: Any?
+    private var windowObservers: [NSObjectProtocol] = []
+    private var isFirstResponder = false
+    private(set) var hasKeyboard = false
 
-    /// The session the mouse goes to
+    /// The session the mouse and the keyboard go to
     weak var input: DesktopInput?
+
+    /// How keys are translated; without settings the keyboard stays with the Mac
+    var keyboard: KeyboardSettingsStore? {
+        didSet { updateKeyboard() }
+    }
 
     /// The surface of the current desktop size; a resized desktop brings a new one
     var surface: IOSurfaceRef? {
@@ -87,7 +100,7 @@ final class DesktopView: NSView {
 
     // MARK: Mouse
 
-    /// The first responder while connected: the keyboard of task 1.4 comes here, not to the form underneath
+    /// The first responder while connected: the keyboard comes here, not to the form underneath
     override var acceptsFirstResponder: Bool { true }
 
     /// The click that brings the window forward is a click on the remote desktop as well
@@ -166,6 +179,112 @@ final class DesktopView: NSView {
                 into: layer.drawableSize)
         else { return nil }
         return DesktopPoint(x: UInt32(pixel.x), y: UInt32(pixel.y))
+    }
+
+    // MARK: Keyboard
+
+    override func becomeFirstResponder() -> Bool {
+        isFirstResponder = true
+        updateKeyboard()
+        return true
+    }
+
+    override func resignFirstResponder() -> Bool {
+        isFirstResponder = false
+        updateKeyboard()
+        return true
+    }
+
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        super.viewWillMove(toWindow: newWindow)
+        windowObservers.forEach(NotificationCenter.default.removeObserver)
+        windowObservers = []
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if let window {
+            windowObservers = [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification].map { name in
+                NotificationCenter.default.addObserver(forName: name, object: window, queue: nil) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.updateKeyboard() }
+                }
+            }
+        }
+        updateKeyboard()
+    }
+
+    /// A key event while the desktop has the keyboard: true when it went to the input, false when the Mac keeps it
+    /// The app monitors the events before it dispatches them, since otherwise the menus would take the ⌘ combinations
+    /// and a key released while ⌘ is held would never reach the view
+    func takesKey(_ event: NSEvent) -> Bool {
+        guard hasKeyboard, event.window === window, let settings = keyboard?.settings,
+            let translated = Self.translatorEvent(event)
+        else { return false }
+
+        var kept = false
+        for action in translator.translate(translated, settings: settings) {
+            switch action {
+            case .send(let key, let pressed, let isRepeat):
+                input?.key(key, pressed: pressed, repeat: isRepeat)
+            case .passToMac:
+                kept = true
+            }
+        }
+        return !kept
+    }
+
+    static func translatorEvent(_ event: NSEvent) -> KeyboardTranslator.Event? {
+        switch event.type {
+        case .keyDown:
+            .down(keyCode: event.keyCode, modifiers: Shortcut.Modifiers(event.modifierFlags), isRepeat: event.isARepeat)
+        case .keyUp:
+            .up(keyCode: event.keyCode)
+        case .flagsChanged:
+            .modifier(keyCode: event.keyCode, down: modifierDown(event))
+        default:
+            nil
+        }
+    }
+
+    /// Bits of IOLLEvent.h that tell the left and the right modifier apart, with the flag both of them set
+    private static let modifierBits: [UInt16: (device: UInt, flag: NSEvent.ModifierFlags)] = [
+        UInt16(kVK_Control): (UInt(NX_DEVICELCTLKEYMASK), .control),
+        UInt16(kVK_RightControl): (UInt(NX_DEVICERCTLKEYMASK), .control),
+        UInt16(kVK_Shift): (UInt(NX_DEVICELSHIFTKEYMASK), .shift),
+        UInt16(kVK_RightShift): (UInt(NX_DEVICERSHIFTKEYMASK), .shift),
+        UInt16(kVK_Option): (UInt(NX_DEVICELALTKEYMASK), .option),
+        UInt16(kVK_RightOption): (UInt(NX_DEVICERALTKEYMASK), .option),
+        UInt16(kVK_Command): (UInt(NX_DEVICELCMDKEYMASK), .command),
+        UInt16(kVK_RightCommand): (UInt(NX_DEVICERCMDKEYMASK), .command),
+    ]
+
+    /// Whether the modifier of a flags change went down: its own device bit says so
+    /// An event without any device bits, as some keyboards and synthetic events send, falls back to the shared flag
+    private static func modifierDown(_ event: NSEvent) -> Bool {
+        guard let bits = modifierBits[event.keyCode] else { return false }
+        let raw = event.modifierFlags.rawValue
+        let anyDevice = modifierBits.values.reduce(UInt(0)) { $0 | $1.device }
+        return raw & anyDevice == 0 ? event.modifierFlags.contains(bits.flag) : raw & bits.device != 0
+    }
+
+    /// The desktop has the keyboard while it is the first responder of the key window
+    private func updateKeyboard() {
+        let focused = isFirstResponder && window?.isKeyWindow == true && keyboard != nil
+        guard focused != hasKeyboard else { return }
+        hasKeyboard = focused
+        if focused {
+            keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) {
+                [weak self] event in
+                let taken = MainActor.assumeIsolated { self?.takesKey(event) ?? false }
+                return taken ? nil : event
+            }
+            input?.keyboardFocused(capsLock: NSEvent.modifierFlags.contains(.capsLock))
+        } else {
+            keyMonitor.map(NSEvent.removeMonitor)
+            keyMonitor = nil
+            translator.reset()
+            input?.keyboardLost()
+        }
     }
 
     // MARK: Cursor

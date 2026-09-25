@@ -18,6 +18,11 @@ final class ConnectionTests: XCTestCase {
         defaults.removePersistentDomain(forName: suiteName)
     }
 
+    private func makeForm() -> ConnectionViewController {
+        ConnectionViewController(
+            trusted: TrustedCertificates(defaults: defaults), keyboard: KeyboardSettingsStore(defaults: defaults))
+    }
+
     /// The whole path from the session thread to the main thread: a failed connection arrives in order
     /// The events reach the main actor through tasks, so the test suspends for them instead of blocking the thread
     /// A name in the reserved .invalid zone fails at resolution, before any socket: an app that opens one
@@ -46,7 +51,7 @@ final class ConnectionTests: XCTestCase {
     }
 
     func testFormRefusesAnEmptyHost() {
-        let form = ConnectionViewController(trusted: TrustedCertificates(defaults: defaults))
+        let form = makeForm()
         form.loadView()
         form.hostField.stringValue = "  "
         form.toggleConnection()
@@ -57,7 +62,7 @@ final class ConnectionTests: XCTestCase {
 
     /// Without a session there is nothing to end: the menu item stays grey
     func testDisconnectCommandNeedsASession() {
-        let form = ConnectionViewController(trusted: TrustedCertificates(defaults: defaults))
+        let form = makeForm()
         form.loadView()
         XCTAssertFalse(form.validateMenuItem(Self.disconnectCommand))
     }
@@ -67,7 +72,7 @@ final class ConnectionTests: XCTestCase {
         guard FrameRenderer() != nil else {
             throw XCTSkip("no GPU that runs Metal Performance Shaders on this machine")
         }
-        let form = ConnectionViewController(trusted: TrustedCertificates(defaults: defaults))
+        let form = makeForm()
         form.loadView()
         form.hostField.stringValue = "viberdp-test.invalid"
         form.toggleConnection()

@@ -208,7 +208,7 @@ private final class SessionHandle {
     }
 }
 
-/// The mouse goes to the core queue: the calls return at once, and input outside a connection is refused there
+/// Input goes to the core queue: the calls return at once, and input outside a connection is refused there
 extension SessionController: DesktopInput {
     func mouseMoved(to point: DesktopPoint) {
         if let handle {
@@ -225,6 +225,25 @@ extension SessionController: DesktopInput {
     func mouseWheel(_ axis: VRCWheelAxis, delta: Int32, at point: DesktopPoint) {
         if let handle {
             _ = VRCSessionSendMouseWheel(handle.session, axis, delta, point.x, point.y)
+        }
+    }
+
+    func key(_ key: UInt16, pressed: Bool, repeat: Bool) {
+        if let handle {
+            _ = VRCSessionSendKey(handle.session, key, pressed, `repeat`)
+        }
+    }
+
+    /// The keypad of a Mac always types digits, so Num Lock is on for Windows to do the same
+    func keyboardFocused(capsLock: Bool) {
+        if let handle {
+            _ = VRCSessionSendFocusIn(handle.session, capsLock, true)
+        }
+    }
+
+    func keyboardLost() {
+        if let handle {
+            _ = VRCSessionReleaseKeys(handle.session)
         }
     }
 }

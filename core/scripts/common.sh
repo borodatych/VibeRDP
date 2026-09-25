@@ -60,8 +60,11 @@ run_bounded() {
 # Weak references the toolchain emits by design, each with a fallback, rather than calls to a newer API:
 # the __swift_FORCE_LOAD_$_ markers of the Swift overlays are autolinking hooks,
 # and ___chkstk_darwin, the stack probe of x86_64 code, falls back to a private copy linked from compiler-rt
+# Swift symbols, mangled as _$s, are weak only inside an #available branch: Swift refuses an unguarded call
+# to a newer API, and SDK code inlined into the app, as SwiftUI's tag(_:), carries its own check and fallback
+# __availability_version_check is what those checks call, and compiler-rt reads the system version without it
 # shellcheck disable=SC2016 # the dollar sign belongs to the symbol names, nothing expands here
-TOOLCHAIN_WEAK_SYMBOLS=' __swift_FORCE_LOAD_\$_| ____chkstk_darwin '
+TOOLCHAIN_WEAK_SYMBOLS=' __swift_FORCE_LOAD_\$_| ____chkstk_darwin | _\$s| __availability_version_check '
 
 # Every slice is present, records the deployment target and uses no API newer than it
 # A weak reference to such an API resolves to NULL on an older macOS and crashes there

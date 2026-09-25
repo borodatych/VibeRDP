@@ -1,6 +1,7 @@
 /// Keys of the interface strings: flat and dotted, the same in every language
 enum TextKey: String, CaseIterable {
     case menuAppAbout = "menu.app.about"
+    case menuAppSettings = "menu.app.settings"
     case menuAppHide = "menu.app.hide"
     case menuAppHideOthers = "menu.app.hideOthers"
     case menuAppShowAll = "menu.app.showAll"
@@ -47,6 +48,31 @@ enum TextKey: String, CaseIterable {
     case certificateActionConnect = "certificate.action.connect"
     case certificateActionConnectAnyway = "certificate.action.connectAnyway"
     case certificateActionCancel = "certificate.action.cancel"
+    case settingsTitle = "settings.title"
+    case settingsKeyboardTab = "settings.keyboard.tab"
+    case settingsKeyboardModifiers = "settings.keyboard.modifiers"
+    case settingsKeyboardLeftControl = "settings.keyboard.leftControl"
+    case settingsKeyboardRightControl = "settings.keyboard.rightControl"
+    case settingsKeyboardLeftOption = "settings.keyboard.leftOption"
+    case settingsKeyboardRightOption = "settings.keyboard.rightOption"
+    case settingsKeyboardLeftCommand = "settings.keyboard.leftCommand"
+    case settingsKeyboardRightCommand = "settings.keyboard.rightCommand"
+    case settingsKeyboardControl = "settings.keyboard.control"
+    case settingsKeyboardAlt = "settings.keyboard.alt"
+    case settingsKeyboardWindows = "settings.keyboard.windows"
+    case settingsKeyboardPresetMac = "settings.keyboard.presetMac"
+    case settingsKeyboardPresetPC = "settings.keyboard.presetPC"
+    case settingsKeyboardIso = "settings.keyboard.iso"
+    case settingsKeyboardIsoHint = "settings.keyboard.isoHint"
+    case settingsKeyboardMacShortcuts = "settings.keyboard.macShortcuts"
+    case settingsKeyboardMacShortcutsHint = "settings.keyboard.macShortcutsHint"
+    case settingsKeyboardAdd = "settings.keyboard.add"
+    case settingsKeyboardRemove = "settings.keyboard.remove"
+    case settingsKeyboardDisconnect = "settings.keyboard.disconnect"
+    case settingsKeyboardReset = "settings.keyboard.reset"
+    case shortcutNone = "shortcut.none"
+    case shortcutRecording = "shortcut.recording"
+    case shortcutHint = "shortcut.hint"
 }
 
 extension TextKey {
@@ -55,6 +81,7 @@ extension TextKey {
     var baseText: String {
         switch self {
         case .menuAppAbout: "О программе {app}"
+        case .menuAppSettings: "Настройки…"
         case .menuAppHide: "Скрыть {app}"
         case .menuAppHideOthers: "Скрыть остальные"
         case .menuAppShowAll: "Показать все"
@@ -101,6 +128,33 @@ extension TextKey {
         case .certificateActionConnect: "Подключиться"
         case .certificateActionConnectAnyway: "Всё равно подключиться"
         case .certificateActionCancel: "Отмена"
+        case .settingsTitle: "Настройки"
+        case .settingsKeyboardTab: "Клавиатура"
+        case .settingsKeyboardModifiers: "Клавиши Мака в Windows"
+        case .settingsKeyboardLeftControl: "Левая ⌃ Control"
+        case .settingsKeyboardRightControl: "Правая ⌃ Control"
+        case .settingsKeyboardLeftOption: "Левая ⌥ Option"
+        case .settingsKeyboardRightOption: "Правая ⌥ Option"
+        case .settingsKeyboardLeftCommand: "Левая ⌘ Command"
+        case .settingsKeyboardRightCommand: "Правая ⌘ Command"
+        case .settingsKeyboardControl: "Ctrl"
+        case .settingsKeyboardAlt: "Alt"
+        case .settingsKeyboardWindows: "Windows"
+        case .settingsKeyboardPresetMac: "Как на Маке"
+        case .settingsKeyboardPresetPC: "Как на PC"
+        case .settingsKeyboardIso: "Между левым Shift и Z есть ещё одна клавиша"
+        case .settingsKeyboardIsoHint:
+            "Так устроены клавиатуры ISO: у них macOS путает эту клавишу с клавишей слева от 1."
+        case .settingsKeyboardMacShortcuts: "Сочетания, которые остаются Маку"
+        case .settingsKeyboardMacShortcutsHint:
+            "Пока рабочий стол принимает клавиатуру, все остальные сочетания получает Windows."
+        case .settingsKeyboardAdd: "Добавить…"
+        case .settingsKeyboardRemove: "Удалить"
+        case .settingsKeyboardDisconnect: "Отключиться"
+        case .settingsKeyboardReset: "Вернуть по умолчанию"
+        case .shortcutNone: "Нет"
+        case .shortcutRecording: "Нажмите сочетание"
+        case .shortcutHint: "Сочетание — с ⌘, ⌃, ⌥ или fn. ⎋ — отмена, ⌫ — без сочетания."
         }
     }
 }
