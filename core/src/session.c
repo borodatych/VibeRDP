@@ -43,6 +43,9 @@ enum {
     CredentialsCancelled,
 };
 
+/* Pause between two reconnection attempts; FreeRDP pauses as long in its own reconnection loop */
+#define RECONNECT_DELAY_MS 5000
+
 /* VerifyX509Certificate: above zero accepts; 2 accepts for this connection only, since the store is the app's */
 #define CERTIFICATE_ACCEPTED 2
 #define CERTIFICATE_REJECTED 0
@@ -53,6 +56,11 @@ struct VRCSession {
     VRCCallbacks callbacks;
     void* userData;
     atomic_bool started;
+    /*
+     * The user asked the session to end: the engine resets its own abort event before every reconnection attempt,
+     * so the request must outlive it
+     */
+    atomic_bool ending;
     /* Answered by VRCSessionResolveCertificate */
     VRCDecision certificate;
     /* The core turned the certificate down: the TLS failure that follows is that decision, not a broken handshake */
@@ -438,6 +446,17 @@ static void sendInput(VRCSession* session, const VRCInputEvent* event)
                 (void)freerdp_input_send_keyboard_event_ex(context->input, FALSE, FALSE, keys[i]);
             break;
         }
+        case VRCInputKindRefresh:
+        {
+            const RECTANGLE_16 desktop = {
+                .left = 0,
+                .top = 0,
+                .right = (UINT16)(freerdp_settings_get_uint32(settings, FreeRDP_DesktopWidth) - 1),
+                .bottom = (UINT16)(freerdp_settings_get_uint32(settings, FreeRDP_DesktopHeight) - 1),
+            };
+            (void)IFCALLRESULT(TRUE, context->update->RefreshRect, context, 1, &desktop);
+            break;
+        }
     }
 }
 
@@ -458,8 +477,12 @@ static void sendPendingInput(VRCSession* session)
         sendInput(session, &events[i]);
 }
 
-/* Runs until the session ends; a stop without a reason gets a generic one, so the caller always learns why */
-static void runEventLoop(VRCSession* session)
+/*
+ * Serves the connection until it drops or the session is asked to end
+ * A stop without a reason gets a generic one, so the caller always learns why
+ * True when the connection dropped by itself, so it may be restored
+ */
+static bool serveConnection(VRCSession* session)
 {
     rdpContext* context = &session->common.context;
     HANDLE handles[MAXIMUM_WAIT_OBJECTS] = { 0 };
@@ -475,10 +498,61 @@ static void runEventLoop(VRCSession* session)
             !freerdp_check_event_handles(context))
         {
             freerdp_set_last_error_if_not(context, FREERDP_ERROR_CONNECT_TRANSPORT_FAILED);
-            break;
+            return !atomic_load(&session->ending) && !freerdp_shall_disconnect_context(context);
         }
         sendPendingInput(session);
     }
+    return false;
+}
+
+/* The reconnection loop of FreeRDP asks before every attempt how long to pause after a failed one */
+static SSIZE_T reconnectAttempt(freerdp* instance, const char* what, size_t current, void* userarg)
+{
+    (void)what;
+    (void)userarg;
+    VRCSession* session = (VRCSession*)instance->context;
+    if (atomic_load(&session->ending))
+        return -1;
+    if (session->callbacks.reconnecting)
+        session->callbacks.reconnecting(
+            session->userData, (uint32_t)current + 1,
+            freerdp_settings_get_uint32(instance->context->settings, FreeRDP_AutoReconnectMaxRetries));
+    return RECONNECT_DELAY_MS;
+}
+
+/* Polled during the pause between attempts: the user's disconnect ends the loop there */
+static BOOL stillWanted(freerdp* instance)
+{
+    const VRCSession* session = (const VRCSession*)instance->context;
+    return !atomic_load(&session->ending) && !freerdp_shall_disconnect_context(instance->context);
+}
+
+/*
+ * Restores a dropped connection with the reconnection loop of FreeRDP, which leaves out the drops a new attempt
+ * cannot mend: an end the server chose and credentials that stopped working
+ * Queued input belonged to the lost connection and goes with it, and the new one starts with no key held
+ */
+static bool restoreConnection(VRCSession* session)
+{
+    rdpContext* context = &session->common.context;
+
+    vrcInputQueueClose(&session->input);
+    session->keys = (VRCKeyState){ 0 };
+    notifyState(session, VRCSessionStateReconnecting);
+    /* Every attempt starts by clearing the error the drop left, so a restored connection reports none */
+    if (!client_auto_reconnect_ex(context->instance, stillWanted))
+        return false;
+
+    vrcInputQueueOpen(&session->input);
+    notifyState(session, VRCSessionStateConnected);
+    return true;
+}
+
+/* Runs until the session ends, restoring the connection whenever it drops by itself */
+static void runEventLoop(VRCSession* session)
+{
+    while (serveConnection(session) && restoreConnection(session))
+        ;
 }
 
 static DWORD WINAPI sessionThread(LPVOID arg)
@@ -724,6 +798,7 @@ static BOOL clientNew(freerdp* instance, rdpContext* context)
     instance->VerifyX509Certificate = verifyX509Certificate;
     instance->AuthenticateEx = authenticate;
     instance->PresentGatewayMessage = presentGatewayMessage;
+    instance->RetryDialog = reconnectAttempt;
 
     /*
      * The client library installs console prompts that read stdin and print to it; an app has neither
@@ -833,6 +908,15 @@ static BOOL applySecurity(rdpSettings* settings)
            freerdp_settings_set_bool(settings, FreeRDP_ExternalCertificateManagement, TRUE);
 }
 
+/*
+ * A dropped connection is restored: the client tells the server it can reconnect, and the server hands it
+ * a cookie that brings it back to the same Windows session
+ */
+static BOOL applyReconnection(rdpSettings* settings)
+{
+    return freerdp_settings_set_bool(settings, FreeRDP_AutoReconnectionEnabled, TRUE);
+}
+
 /* FreeRDP loads the rdpdr and rdpsnd channels for these features, and the build leaves both channels out */
 static BOOL disableFeaturesNeedingDeviceChannels(rdpSettings* settings)
 {
@@ -860,6 +944,7 @@ VRCSession* VRCSessionCreate(const VRCCallbacks* callbacks, void* userData)
         session->callbacks = *callbacks;
     session->userData = userData;
     atomic_init(&session->started, false);
+    atomic_init(&session->ending, false);
     return session;
 }
 
@@ -884,7 +969,8 @@ VRCResult VRCSessionConnect(VRCSession* session, const VRCConnectionParams* para
         return VRCResultInvalidState;
 
     rdpSettings* settings = session->common.context.settings;
-    if (!applyParams(settings, params) || !applySecurity(settings) || !applyGraphics(settings) ||
+    if (!applyParams(settings, params) || !applySecurity(settings) || !applyReconnection(settings) ||
+        !applyGraphics(settings) ||
         !disableFeaturesNeedingDeviceChannels(settings) || freerdp_client_start(&session->common.context) != 0)
         return VRCResultFailure;
     return VRCResultOK;
@@ -893,7 +979,10 @@ VRCResult VRCSessionConnect(VRCSession* session, const VRCConnectionParams* para
 void VRCSessionDisconnect(VRCSession* session)
 {
     if (session && atomic_load(&session->started))
+    {
+        atomic_store(&session->ending, true);
         (void)freerdp_abort_connect_context(&session->common.context);
+    }
 }
 
 /* Stores the answer and wakes the session thread, only while a question is pending */
@@ -1024,5 +1113,14 @@ VRCResult VRCSessionReleaseKeys(VRCSession* session)
         return VRCResultInvalidArgument;
 
     const VRCInputEvent event = { .kind = VRCInputKindReleaseKeys };
+    return queueInput(session, &event);
+}
+
+VRCResult VRCSessionRefresh(VRCSession* session)
+{
+    if (!session)
+        return VRCResultInvalidArgument;
+
+    const VRCInputEvent event = { .kind = VRCInputKindRefresh };
     return queueInput(session, &event);
 }

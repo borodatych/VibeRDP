@@ -1,0 +1,16 @@
+--- a/server/Sample/sfreerdp.c
++++ b/server/Sample/sfreerdp.c
+@@ -924,6 +924,13 @@
+ 		if (!client->Close(client))
+ 			return FALSE;
+ 	}
++	/* Test tool of VibeRDP: the connection drops as a network does, with no error info, so the client reconnects */
++	else if (((flags & KBD_FLAGS_RELEASE) == 0) && code == RDP_SCANCODE_KEY_D) /* 'd' key */
++	{
++		WINPR_ASSERT(client->Disconnect);
++		client->Disconnect(client);
++		return FALSE;
++	}
+ 	else if (((flags & KBD_FLAGS_RELEASE) == 0) && code == RDP_SCANCODE_KEY_R) /* 'r' key */
+ 	{
+ 		tcontext->audin_open = !tcontext->audin_open;

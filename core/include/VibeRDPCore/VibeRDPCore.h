@@ -16,6 +16,11 @@
  * and the session waits until VRCSessionProvideCredentials or VRCSessionCancelCredentials answers
  * or the session is asked to end; a wrong password ends the session, and the app retries with a new one
  *
+ * Reconnection:
+ * A connection that drops by itself, not ended by the server or the user, is restored: Reconnecting,
+ * then Connected again with a new surface, or Disconnected once the attempts run out
+ * Input queued while the connection is down is dropped, and no key stays held on the server
+ *
  * RD Gateway:
  * With a gateway the engine reaches the computer through it: the gateway presents its own certificate
  * and may ask for its own credentials, and a message that needs consent waits for VRCSessionResolveGatewayMessage
@@ -60,12 +65,16 @@ typedef VRC_ENUM(VRCResult) {
     VRCResultFailure = 3,
 } VRCResult;
 
-/* Lifecycle of a session as the callbacks report it: Connecting, then Connected if it succeeds, then Disconnected */
+/*
+ * Lifecycle of a session as the callbacks report it: Connecting, then Connected if it succeeds, then Disconnected
+ * A connection that drops goes from Connected to Reconnecting, and back to Connected when it is restored
+ */
 typedef VRC_ENUM(VRCSessionState) {
     VRCSessionStateIdle = 0,
     VRCSessionStateConnecting = 1,
     VRCSessionStateConnected = 2,
     VRCSessionStateDisconnected = 3,
+    VRCSessionStateReconnecting = 4,
 } VRCSessionState;
 
 /* The buttons of a mouse; Back and Forward are the side buttons that Windows calls X1 and X2 */
@@ -197,6 +206,9 @@ typedef struct VRCCallbacks {
      * Without this callback a message that needs consent is declined, and the connection ends
      */
     void (*gatewayMessage)(void* userData, const VRCGatewayMessage* message);
+
+    /* While Reconnecting: attempt of maxAttempts is about to start, the first one at once, the next ones after a pause */
+    void (*reconnecting)(void* userData, uint32_t attempt, uint32_t maxAttempts);
 } VRCCallbacks;
 
 /*
@@ -307,6 +319,12 @@ VRCResult VRCSessionSendFocusIn(VRCSession* session, bool capsLock, bool numLock
 
 /* The desktop lost the keyboard: every key the server holds down is released, so none sticks there */
 VRCResult VRCSessionReleaseKeys(VRCSession* session);
+
+/*
+ * Asks the server to send the whole desktop again, as after the Mac wakes:
+ * a live connection repaints, and one that died during the sleep shows it at once rather than at its next timeout
+ */
+VRCResult VRCSessionRefresh(VRCSession* session);
 
 #ifdef __cplusplus
 }

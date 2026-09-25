@@ -131,6 +131,8 @@ static bool testInputNeedsAConnection(void)
     CHECK(VRCSessionSendKey(session, VRC_KEY_PAUSE, true, false) == VRCResultInvalidState);
     CHECK(VRCSessionSendFocusIn(session, true, true) == VRCResultInvalidState);
     CHECK(VRCSessionReleaseKeys(session) == VRCResultInvalidState);
+    CHECK(VRCSessionRefresh(session) == VRCResultInvalidState);
+    CHECK(VRCSessionRefresh(NULL) == VRCResultInvalidArgument);
 
     VRCSessionDestroy(session);
     recorderFree(recorder);

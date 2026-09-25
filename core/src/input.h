@@ -31,6 +31,8 @@ typedef enum VRCInputKind {
     VRCInputKindFocusIn,
     /* The desktop lost the keyboard: the keys the server holds down are released */
     VRCInputKindReleaseKeys,
+    /* The server sends the whole desktop again */
+    VRCInputKindRefresh,
 } VRCInputKind;
 
 typedef struct VRCInputEvent {
