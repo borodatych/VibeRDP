@@ -5,7 +5,7 @@ import SwiftUI
 /// The window and its tabs are AppKit, as the rest of the app, and each tab is a SwiftUI view
 @MainActor
 final class SettingsWindowController: NSWindowController {
-    init(keyboard: KeyboardSettingsStore) {
+    init(keyboard: KeyboardSettingsStore, languages: LanguageSettings) {
         let tabs = NSTabViewController()
         tabs.tabStyle = .toolbar
         let keyboardTab = NSTabViewItem(
@@ -13,6 +13,11 @@ final class SettingsWindowController: NSWindowController {
         keyboardTab.label = Localization.text(.settingsKeyboardTab)
         keyboardTab.image = NSImage(systemSymbolName: "keyboard", accessibilityDescription: nil)
         tabs.addTabViewItem(keyboardTab)
+        let languageTab = NSTabViewItem(
+            viewController: NSHostingController(rootView: LanguageSettingsView(settings: languages)))
+        languageTab.label = Localization.text(.settingsLanguageTab)
+        languageTab.image = NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
+        tabs.addTabViewItem(languageTab)
 
         let window = NSWindow(contentViewController: tabs)
         window.styleMask = [.titled, .closable]
@@ -130,6 +135,51 @@ struct KeyboardSettingsView: View {
         case .alt: .settingsKeyboardAlt
         case .windows: .settingsKeyboardWindows
         }
+    }
+}
+
+/// The language tab: the languages of the folder, the choice for the next launch, and the folder itself
+struct LanguageSettingsView: View {
+    @Bindable var settings: LanguageSettings
+    @State private var failure: String?
+
+    var body: some View {
+        Form {
+            Section {
+                Picker(Localization.text(.settingsLanguageLabel), selection: $settings.chosen) {
+                    Text(Localization.text(.settingsLanguageSystem)).tag(String?.none)
+                    ForEach(settings.languages) { language in
+                        Text(language.name).tag(String?.some(language.code))
+                    }
+                }
+            } footer: {
+                Text(Localization.text(.settingsLanguageRestart))
+            }
+            Section {
+                HStack {
+                    Button(Localization.text(.settingsLanguageOpenFolder)) {
+                        settings.revealFolder()
+                    }
+                    Button(Localization.text(.settingsLanguageCreateBase)) {
+                        do {
+                            try settings.createBaseFile()
+                            failure = nil
+                        } catch {
+                            failure = Localization.text(
+                                .settingsLanguageCreateBaseFailed, ["reason": error.localizedDescription])
+                        }
+                    }
+                }
+                if let failure {
+                    Text(failure)
+                        .foregroundStyle(.red)
+                }
+            } footer: {
+                Text(Localization.text(.settingsLanguageFolderHint, ["folder": settings.folder.url.path]))
+            }
+        }
+        .formStyle(.grouped)
+        .frame(width: KeyboardSettingsView.size.width, height: KeyboardSettingsView.size.height)
     }
 }
 

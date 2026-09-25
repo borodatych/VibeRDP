@@ -1,0 +1,7 @@
+/* Strings of Info.plist that macOS shows itself, before the app and its language files are read */
+
+/* The Local Network alert quotes it */
+"NSLocalNetworkUsageDescription" = "VibeRDP connects to Windows computers on your network over RDP.";
+
+/* The document type of .rdp files, keyed by the base name that Info.plist gives it */
+"Подключение к удалённому рабочему столу" = "Remote Desktop Connection";

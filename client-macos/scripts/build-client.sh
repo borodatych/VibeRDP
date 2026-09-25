@@ -41,7 +41,14 @@ check_prerequisites() {
     [ "$("$XCODEGEN" --version)" = "Version: $XCODEGEN_VERSION" ] ||
         die "xcodegen $XCODEGEN_VERSION is required, found: $("$XCODEGEN" --version)"
     command -v xcodebuild >/dev/null || die "xcodebuild not found, see docs/manuals/devSetup.md"
+    command -v python3 >/dev/null || die "python3 not found: the check of the interface strings needs it"
     [ -f "$FRAMEWORK/Modules/module.modulemap" ] || die "no core framework in $FRAMEWORK: run core/scripts/build-core.sh first"
+}
+
+# The interface strings: nothing in the base language outside the catalog, no dead key, seeded languages complete
+check_localization() {
+    log "Checking the interface strings"
+    python3 "$CLIENT_SRC/scripts/check-localization.py" "$CLIENT_SRC"
 }
 
 # project.yml takes the build parameters and the framework path from the environment
@@ -177,6 +184,7 @@ main() {
 
     trap stop_test_servers EXIT
     check_prerequisites
+    check_localization
     generate_project
     build_app
     check_app

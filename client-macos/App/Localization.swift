@@ -1,3 +1,5 @@
+import os
+
 /// Keys of the interface strings: flat and dotted, the same in every language
 enum TextKey: String, CaseIterable {
     case menuAppAbout = "menu.app.about"
@@ -115,6 +117,15 @@ enum TextKey: String, CaseIterable {
     case gatewayMessageDecline = "gateway.message.decline"
     case gatewayMessageClose = "gateway.message.close"
     case connectionGatewayPasswordLabelInKeychain = "connection.gatewayPassword.labelInKeychain"
+    case languageBaseName = "language.base.name"
+    case settingsLanguageTab = "settings.language.tab"
+    case settingsLanguageLabel = "settings.language.label"
+    case settingsLanguageSystem = "settings.language.system"
+    case settingsLanguageRestart = "settings.language.restart"
+    case settingsLanguageFolderHint = "settings.language.folderHint"
+    case settingsLanguageOpenFolder = "settings.language.openFolder"
+    case settingsLanguageCreateBase = "settings.language.createBase"
+    case settingsLanguageCreateBaseFailed = "settings.language.createBaseFailed"
 }
 
 extension TextKey {
@@ -233,21 +244,45 @@ extension TextKey {
         case .profileGatewayUserLabel: "Пользователь шлюза"
         case .profileGatewayBypassLocal: "Напрямую, если компьютер в локальной сети"
         case .connectionStatusInvalidGateway: "Укажите шлюз: имя или адрес, порт — через двоеточие"
-        case .connectionErrorGatewayDenied: "Шлюз {gateway} не пустил: неверное имя или пароль, либо нет права подключаться через него"
+        case .connectionErrorGatewayDenied:
+            "Шлюз {gateway} не пустил: неверное имя или пароль, либо нет права подключаться через него"
         case .gatewayMessageTitle: "Сообщение шлюза {gateway}"
         case .gatewayMessageAccept: "Принять"
         case .gatewayMessageDecline: "Отклонить"
         case .gatewayMessageClose: "Закрыть"
         case .connectionGatewayPasswordLabelInKeychain: "VibeRDP, шлюз: {connection}"
+        case .languageBaseName: "Русский"
+        case .settingsLanguageTab: "Язык"
+        case .settingsLanguageLabel: "Язык интерфейса"
+        case .settingsLanguageSystem: "Как в системе"
+        case .settingsLanguageRestart: "Другой язык заговорит после перезапуска VibeRDP."
+        case .settingsLanguageFolderHint:
+            "Языки — файлы в папке {folder}: положите туда перевод, и он появится в списке после перезапуска."
+        case .settingsLanguageOpenFolder: "Открыть папку языков"
+        case .settingsLanguageCreateBase: "Создать файл для правки"
+        case .settingsLanguageCreateBaseFailed: "Файл не создан: {reason}"
         }
     }
 }
 
 enum Localization {
+    /// The strings of the language this launch speaks, over the base ones; set once, before the first window
+    private static let strings = OSAllocatedUnfairLock(initialState: [String: String]())
+
+    /// The catalog of this launch, from Languages: the base keeps every key a language does not translate
+    static func use(_ catalog: [String: String]) {
+        strings.withLock { $0 = catalog }
+    }
+
     /// The string of a key with its named placeholders filled in
     /// A placeholder without a value stays visible as {name}: a missing value shows up instead of vanishing
     static func text(_ key: TextKey, _ values: [String: String] = [:]) -> String {
-        values.reduce(key.baseText) { text, value in
+        let template = strings.withLock { $0[key.rawValue] } ?? key.baseText
+        return fill(template, values)
+    }
+
+    static func fill(_ template: String, _ values: [String: String]) -> String {
+        values.reduce(template) { text, value in
             text.replacingOccurrences(of: "{\(value.key)}", with: value.value)
         }
     }

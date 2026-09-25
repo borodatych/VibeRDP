@@ -31,6 +31,12 @@ targets:
       - path: App
       - path: Connections
       - path: Session
+      # The languages the app seeds into the user's folder, and the Info.plist strings macOS itself shows
+      - path: Resources/lang
+        type: folder
+        buildPhase: resources
+      - path: Localized
+        buildPhase: resources
     dependencies:
       - framework: "${VIBERDP_CORE_FRAMEWORK}"
         embed: true

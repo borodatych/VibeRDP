@@ -276,11 +276,17 @@ final class KeyboardSettingsViewTests: XCTestCase {
     func testSettingsWindowShowsTheKeyboardTab() throws {
         suiteName = "tech.vibebrains.viberdp.tests.\(UUID().uuidString)"
         let store = KeyboardSettingsStore(defaults: try XCTUnwrap(UserDefaults(suiteName: suiteName)))
-        let controller = SettingsWindowController(keyboard: store)
+        let folder = LanguageFolder(
+            url: FileManager.default.temporaryDirectory.appendingPathComponent(suiteName, isDirectory: true))
+        defer { try? FileManager.default.removeItem(at: folder.url) }
+        let languages = LanguageSettings(folder: folder, defaults: try XCTUnwrap(UserDefaults(suiteName: suiteName)))
+        let controller = SettingsWindowController(keyboard: store, languages: languages)
         let window = try XCTUnwrap(controller.window)
         XCTAssertEqual(window.title, Localization.text(.settingsTitle))
         let tabs = try XCTUnwrap(window.contentViewController as? NSTabViewController)
-        XCTAssertEqual(tabs.tabViewItems.map(\.label), [Localization.text(.settingsKeyboardTab)])
+        XCTAssertEqual(
+            tabs.tabViewItems.map(\.label),
+            [Localization.text(.settingsKeyboardTab), Localization.text(.settingsLanguageTab)])
 
         let content = try XCTUnwrap(window.contentView)
         XCTAssertEqual(content.frame.size.width, KeyboardSettingsView.size.width, accuracy: 1)

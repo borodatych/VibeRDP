@@ -6,12 +6,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var mainWindow: NSWindow?
     private(set) var settingsWindow: SettingsWindowController?
     let keyboard = KeyboardSettingsStore()
+    /// Read at launch, before any text is shown: every window and menu speaks the language chosen for this launch
+    private(set) var languages: LanguageSettings?
     private var menu: MainMenu?
     private var keyboardObserver: NSObjectProtocol?
     /// Files the Finder asked to open before the window existed: a double click on a .rdp file launches the app
     private var pendingFiles: [URL] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        let languages = LanguageSettings(folder: LanguageFolder(url: LanguageFolder.standard))
+        Localization.use(languages.catalog)
+        self.languages = languages
         let menu = MainMenu(appName: Self.appName)
         menu.apply(keyboard.settings)
         NSApp.mainMenu = menu.bar
@@ -51,7 +56,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// The menu command: one settings window, made when first asked for
     @objc func showSettings(_ sender: Any?) {
-        let controller = settingsWindow ?? SettingsWindowController(keyboard: keyboard)
+        guard let languages else { return }
+        let controller = settingsWindow ?? SettingsWindowController(keyboard: keyboard, languages: languages)
         settingsWindow = controller
         controller.showWindow(sender)
     }
