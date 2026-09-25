@@ -5,7 +5,7 @@
 
 ## ci
 
-- [githubActions.md](ci/githubActions.md) — образы раннеров: `macos-26` с Xcode 26.6, Xcode 27 только в preview-образе `xcode-27`; мажорные версии actions, закреплённые shellcheck, actionlint и XcodeGen с sha256 из дайджестов релизов; Rosetta в `macos-26` есть; `"$Exe:"` ломает разбор PowerShell — нужно `${Exe}:`
+- [githubActions.md](ci/githubActions.md) — образы раннеров: `macos-26` с Xcode 26.6, Xcode 27 только в preview-образе `xcode-27`; мажорные версии actions, закреплённые shellcheck, actionlint и XcodeGen с sha256 из дайджестов релизов; Rosetta в `macos-26` есть, Metal и MPS на его виртуальной GPU работают; `"$Exe:"` ломает разбор PowerShell — нужно `${Exe}:`
 
 ## freerdp
 

@@ -34,7 +34,8 @@
 ## Поддержка устройства и перерисовка
 
 **Суть:**
-- `MPSSupportsMTLDevice` отвечает, работает ли Metal Performance Shaders с устройством (`MetalPerformanceShaders.framework/Headers/MetalPerformanceShaders.h:26-34`); у виртуальных GPU поддержки может не быть
+- `MPSSupportsMTLDevice` отвечает, работает ли Metal Performance Shaders с устройством (`MetalPerformanceShaders.framework/Headers/MetalPerformanceShaders.h:26-34`)
+- Виртуальная GPU раннера GitHub `macos-26` MPS поддерживает: там тесты рендера не пропускаются — [ci/githubActions.md](../ci/githubActions.md); про другие виртуальные машины _не проверено_
 - Слой, чей `layerContentsRedrawPolicy = .onSetNeedsDisplay` и `wantsUpdateLayer = true`, перерисовывается в `updateLayer`: сколько раз ни ставь `needsDisplay` между обновлениями экрана, AppKit рисует один раз
 
 **Применение:**

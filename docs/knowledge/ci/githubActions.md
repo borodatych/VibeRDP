@@ -11,6 +11,8 @@
 - `windows-2025` и `windows-latest` — Windows Server 2025 с Visual Studio 2026
 - В образе `macos-26` есть Rosetta, хотя README её не упоминает: первый прогон 2026-09-24 гонял тесты ядра и клиента под x86_64; шаг `Toolchain` печатает это в каждом прогоне, а без Rosetta скрипты собирают x86_64, но не запускают
 - Первый прогон задачи macOS со сборкой OpenSSL и FreeRDP с нуля — 7 минут
+- Виртуальная GPU раннера `macos-26` тянет Metal и Metal Performance Shaders: в прогоне 36101460663 (2026-09-25) тесты рендера и живой тест с sample-сервером прошли на arm64 и x86_64, пропущенных ноль; сборка тестового сервера — 38 с
+- Кэш сборки в CI — `$RUNNER_TEMP` на системном диске: вопроса macOS о доступе к съёмному тому там не бывает — [macos/removableVolumePrivacy.md](../macos/removableVolumePrivacy.md)
 
 ## PowerShell: двоеточие после переменной в строке
 
