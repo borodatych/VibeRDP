@@ -15,6 +15,7 @@
 #include <winpr/user.h>
 
 #include "clipboard.h"
+#include "clipimage.h"
 
 #define CHECK(condition)                                                                        \
     do                                                                                          \
@@ -37,6 +38,7 @@
 #define SERVER_HTML_ID 0xC123u
 #define SERVER_RTF_ID 0xC124u
 #define SERVER_OTHER_ID 0xC125u
+#define SERVER_PNG_ID 0xC126u
 #define FORMAT_NAME_SIZE 32
 
 /* What the core sent on the channel, and what it told the app */
@@ -392,6 +394,123 @@ static bool testCopyRegisteredFormats(void)
     return true;
 }
 
+/* A copy that takes the answer as bytes, for the formats that are not text */
+static bool copyBytes(VRCClipboard* clipboard, const uint8_t* answer, UINT32 answerLength, UINT32 expectedId,
+                      FormatCopy* copy)
+{
+    *copy = (FormatCopy){ .clipboard = clipboard, .format = VRCClipboardFormatImage };
+    pthread_t thread;
+    CHECK(pthread_create(&thread, NULL, runFormatCopy, copy) == 0);
+    usleep(SETTLE_US);
+    CHECK(channel.lastRequestedFormatId == expectedId);
+    CHECK(serverAnswers(answer, answerLength) == CHANNEL_RC_OK);
+    CHECK(pthread_join(thread, NULL) == 0);
+    CHECK(copy->result == VRCResultOK);
+    return true;
+}
+
+/* A one-pixel red bitmap as Windows keeps it: the header, then blue, green, red and a byte of padding */
+static const uint8_t onePixelDib[] = { 40, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 24, 0, 0, 0, 0, 0,
+                                       4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                                       0, 0, 255, 0 };
+
+/* The same image as PNG */
+static bool onePixelPng(uint8_t** png, size_t* length)
+{
+    CHECK(vrcDibToPng(onePixelDib, sizeof(onePixelDib), png, length));
+    CHECK(*length <= sizeof(channel.lastResponse));
+    return true;
+}
+
+/* An image goes out both as "PNG" and as CF_DIB; the server gets the one it asks for */
+static bool testOfferImage(void)
+{
+    VRCClipboard clipboard;
+    CHECK(setUp(&clipboard));
+    CHECK(serverMonitorReady() == CHANNEL_RC_OK);
+    const VRCClipboardFormat image = VRCClipboardFormatImage;
+    CHECK(vrcClipboardOffer(&clipboard, &image, 1) == VRCResultOK);
+    CHECK(channel.lastFormatCount == 2);
+    CHECK(channel.lastFormatIds[0] >= 0xC000u);
+    CHECK(strcmp(channel.lastFormatNames[0], "PNG") == 0);
+    CHECK(channel.lastFormatIds[1] == CF_DIB);
+    const UINT32 pngId = channel.lastFormatIds[0];
+
+    uint8_t* png = NULL;
+    size_t pngLength = 0;
+    CHECK(onePixelPng(&png, &pngLength));
+
+    /* PNG goes as it is */
+    CHECK(serverAsks(pngId) == CHANNEL_RC_OK);
+    CHECK(channel.lastQuestion == VRCClipboardFormatImage);
+    CHECK(vrcClipboardProvide(&clipboard, VRCClipboardFormatText, "x", 1) == VRCResultInvalidState);
+    CHECK(vrcClipboardProvide(&clipboard, VRCClipboardFormatImage, png, pngLength) == VRCResultOK);
+    CHECK(channel.lastResponseLength == pngLength);
+    CHECK(memcmp(channel.lastResponse, png, pngLength) == 0);
+
+    /* CF_DIB gets the bitmap Windows keeps */
+    CHECK(serverAsks(CF_DIB) == CHANNEL_RC_OK);
+    CHECK(channel.dataQuestions == 2);
+    CHECK(vrcClipboardProvide(&clipboard, VRCClipboardFormatImage, png, pngLength) == VRCResultOK);
+    CHECK(channel.lastResponseFlags == CB_RESPONSE_OK);
+    CHECK(channel.lastResponseLength == sizeof(onePixelDib));
+    CHECK(memcmp(channel.lastResponse + 40, onePixelDib + 40, 4) == 0);
+
+    /* Broken image data is a failure for the app, and the server still waits for its answer */
+    CHECK(serverAsks(CF_DIB) == CHANNEL_RC_OK);
+    CHECK(vrcClipboardProvide(&clipboard, VRCClipboardFormatImage, "junk", 4) == VRCResultFailure);
+    CHECK(vrcClipboardProvide(&clipboard, VRCClipboardFormatImage, NULL, 0) == VRCResultOK);
+    CHECK(channel.lastResponseFlags == CB_RESPONSE_FAIL);
+
+    /* CF_DIBV5 is made by Windows from CF_DIB: it is never asked of this client */
+    const int questions = channel.dataQuestions;
+    CHECK(serverAsks(CF_DIBV5) == CHANNEL_RC_OK);
+    CHECK(channel.dataQuestions == questions);
+    CHECK(channel.lastResponseFlags == CB_RESPONSE_FAIL);
+
+    free(png);
+    vrcClipboardDestroy(&clipboard);
+    return true;
+}
+
+/* The server offers an image in several formats: PNG is fetched first, then CF_DIBV5, then CF_DIB as PNG */
+static bool testImageFromServer(void)
+{
+    VRCClipboard clipboard;
+    CHECK(setUp(&clipboard));
+    uint8_t* png = NULL;
+    size_t pngLength = 0;
+    CHECK(onePixelPng(&png, &pngLength));
+
+    static const CLIPRDR_FORMAT all[] = {
+        { CF_DIB, NULL },
+        { CF_DIBV5, NULL },
+        { SERVER_PNG_ID, (char*)"PNG" },
+    };
+    CHECK(serverOffers(all, 3) == CHANNEL_RC_OK);
+    CHECK(channel.lastRemoteCount == 1);
+    CHECK(channel.lastRemote[0] == VRCClipboardFormatImage);
+    FormatCopy copy;
+    CHECK(copyBytes(&clipboard, png, (UINT32)pngLength, SERVER_PNG_ID, &copy));
+    CHECK(copy.length == pngLength && memcmp(copy.data, png, pngLength) == 0);
+    free(copy.data);
+
+    static const CLIPRDR_FORMAT bitmaps[] = { { CF_DIB, NULL }, { CF_DIBV5, NULL } };
+    CHECK(serverOffers(bitmaps, 2) == CHANNEL_RC_OK);
+    CHECK(copyBytes(&clipboard, onePixelDib, sizeof(onePixelDib), CF_DIBV5, &copy));
+    free(copy.data);
+
+    static const CLIPRDR_FORMAT dib[] = { { CF_DIB, NULL } };
+    CHECK(serverOffers(dib, 1) == CHANNEL_RC_OK);
+    CHECK(copyBytes(&clipboard, onePixelDib, sizeof(onePixelDib), CF_DIB, &copy));
+    CHECK(copy.length == pngLength && memcmp(copy.data, png, pngLength) == 0);
+    free(copy.data);
+
+    free(png);
+    vrcClipboardDestroy(&clipboard);
+    return true;
+}
+
 typedef struct Copy {
     VRCClipboard* clipboard;
     uint32_t timeoutMs;
@@ -533,6 +652,8 @@ static const TestCase tests[] = {
     { "lateAnswerIsDropped", testLateAnswerIsDropped },
     { "copyFailures", testCopyFailures },
     { "detachEndsCopy", testDetachEndsCopy },
+    { "offerImage", testOfferImage },
+    { "imageFromServer", testImageFromServer },
 };
 
 int main(int argc, char* argv[])

@@ -109,9 +109,10 @@ typedef VRC_ENUM(VRCPointerKind) {
 
 /* What a clipboard holds, in the form the app works with; the core converts to and from the formats of Windows */
 typedef VRC_ENUM(VRCClipboardFormat) {
-    VRCClipboardFormatText = 1, /* UTF-8, lines end in LF */
-    VRCClipboardFormatHtml = 2, /* UTF-8 HTML, a whole page or a part of one */
-    VRCClipboardFormatRtf = 3,  /* RTF as it is written */
+    VRCClipboardFormatText = 1,  /* UTF-8, lines end in LF */
+    VRCClipboardFormatHtml = 2,  /* UTF-8 HTML, a whole page or a part of one */
+    VRCClipboardFormatRtf = 3,   /* RTF as it is written */
+    VRCClipboardFormatImage = 4, /* A PNG file */
 } VRCClipboardFormat;
 
 /* The image of a server pointer: BGRA in memory with straight alpha, rows top to bottom */
@@ -364,7 +365,8 @@ VRCResult VRCSessionProvideClipboardData(VRCSession* session, VRCClipboardFormat
 
 /*
  * Fetches the data of the remote clipboard in a format it offers, waiting up to timeoutMs for the server
- * On OK *data holds a copy the caller frees with free: it is zero-terminated, *length does not count the zero
+ * On OK *data holds a copy the caller frees with free
+ * Text, HTML and RTF come zero-terminated, and *length does not count the zero
  * One fetch runs at a time, a second waits for the first; the end of the session ends the wait with Failure
  * InvalidState when the clipboard of the remote side does not offer the format or the channel is down,
  * Failure when the server could not give the data, Timeout when it did not answer in time

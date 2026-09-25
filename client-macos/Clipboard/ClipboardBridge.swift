@@ -26,8 +26,10 @@ final class ClipboardBridge: NSObject {
     static let pollInterval: TimeInterval = 0.25
     /// How long a paste on the Mac waits for the remote computer
     static let copyTimeout: Duration = .seconds(10)
+    /// An image may take megabytes, and a slow link needs longer for them than for text
+    static let imageCopyTimeout: Duration = .seconds(60)
     /// The formats the bridge carries, in the order they are offered
-    static let formats: [VRCClipboardFormat] = [.text, .html, .rtf]
+    static let formats: [VRCClipboardFormat] = [.text, .html, .rtf, .image]
     /// HTML of the remote clipboard is UTF-8, and HTML without a declared charset the Mac reads as Latin-1:
     /// the declaration goes first, where the parser finds it before any other
     static let htmlCharset = Data(#"<meta charset="utf-8">"#.utf8)
@@ -39,6 +41,8 @@ final class ClipboardBridge: NSObject {
     private var seenChangeCount: Int
     /// The change count of the item the bridge wrote for the remote clipboard, while it is the current one
     private var ownChangeCount: Int?
+    /// The image of the remote clipboard once fetched: a paste may read it as PNG and as TIFF, and it comes over once
+    private var remoteImage: Data?
 
     init(pasteboard: NSPasteboard = .general, channel: ClipboardChannel) {
         self.pasteboard = pasteboard
@@ -81,6 +85,7 @@ final class ClipboardBridge: NSObject {
     /// The remote clipboard changed: an item stands for it, and its data comes only when the Mac pastes
     /// A remote clipboard with nothing the Mac takes empties the Mac clipboard, so no stale copy gets pasted
     func remoteClipboardChanged(_ formats: [VRCClipboardFormat]) {
+        remoteImage = nil
         pasteboard.clearContents()
         let types = formats.flatMap(Self.types(for:))
         if !types.isEmpty {
@@ -108,16 +113,29 @@ final class ClipboardBridge: NSObject {
         case .text: [.string]
         case .html: [.html]
         case .rtf: [.rtf]
+        // Screenshots and browsers write PNG, most other apps of the Mac only TIFF
+        case .image: [.png, .tiff]
         }
     }
 
-    /// The data of the clipboard in the form the core takes: text and HTML as UTF-8, RTF as it is
+    /// The data of the clipboard in the form the core takes: text and HTML as UTF-8, RTF as it is, an image as PNG
     static func data(of pasteboard: NSPasteboard, in format: VRCClipboardFormat) -> Data? {
         switch format {
         case .text: pasteboard.string(forType: .string).map { Data($0.utf8) }
         case .html: pasteboard.data(forType: .html).flatMap(utf8)
         case .rtf: pasteboard.data(forType: .rtf)
+        case .image: pasteboard.data(forType: .png) ?? pasteboard.data(forType: .tiff).flatMap(png)
         }
+    }
+
+    /// The first image of a TIFF as PNG
+    private static func png(_ tiff: Data) -> Data? {
+        NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:])
+    }
+
+    /// A PNG as TIFF, for the apps of the Mac that read only TIFF
+    private static func tiff(_ png: Data) -> Data? {
+        NSBitmapImageRep(data: png)?.tiffRepresentation
     }
 
     /// HTML of the Mac is UTF-8 as a rule; one written as UTF-16 starts with a byte order mark and is converted
@@ -133,10 +151,23 @@ final class ClipboardBridge: NSObject {
 
     /// The Mac pastes the remote clipboard: its data comes over now, while the paste waits
     private func provide(_ item: NSPasteboardItem, type: NSPasteboard.PasteboardType) {
-        guard let format = Self.format(of: type),
-            let data = channel?.copyRemoteClipboard(format, timeout: Self.copyTimeout)
-        else { return }
+        guard let format = Self.format(of: type) else { return }
+        if format == .image {
+            provideImage(item, type: type)
+            return
+        }
+        guard let data = channel?.copyRemoteClipboard(format, timeout: Self.copyTimeout) else { return }
         item.setData(format == .html ? Self.htmlCharset + data : data, forType: type)
+    }
+
+    /// The image comes over as PNG, once for both types
+    private func provideImage(_ item: NSPasteboardItem, type: NSPasteboard.PasteboardType) {
+        if remoteImage == nil {
+            remoteImage = channel?.copyRemoteClipboard(.image, timeout: Self.imageCopyTimeout)
+        }
+        guard let png = remoteImage else { return }
+        guard let data = type == .tiff ? Self.tiff(png) : png else { return }
+        item.setData(data, forType: type)
     }
 }
 

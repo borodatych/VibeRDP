@@ -32,8 +32,8 @@ set(VRC_PUBLIC_HEADER ${CMAKE_CURRENT_SOURCE_DIR}/include/VibeRDPCore/VibeRDPCor
 set(VRC_MODULE_MAP ${CMAKE_CURRENT_SOURCE_DIR}/framework/module.modulemap)
 set(VRC_EXPORTS ${CMAKE_CURRENT_SOURCE_DIR}/framework/exports.txt)
 
-add_library(VibeRDPCore SHARED src/session.c src/clipboard.c src/cliphtml.c src/cliptext.c src/decision.c src/frame.c
-            src/input.c src/kerberos.c src/pointer.c ${VRC_PUBLIC_HEADER} ${VRC_MODULE_MAP})
+add_library(VibeRDPCore SHARED src/session.c src/clipboard.c src/cliphtml.c src/clipimage.c src/cliptext.c
+            src/decision.c src/frame.c src/input.c src/kerberos.c src/pointer.c ${VRC_PUBLIC_HEADER} ${VRC_MODULE_MAP})
 set_source_files_properties(${VRC_MODULE_MAP} PROPERTIES MACOSX_PACKAGE_LOCATION Modules)
 set_target_properties(VibeRDPCore PROPERTIES
   FRAMEWORK TRUE
@@ -47,7 +47,8 @@ set_target_properties(VibeRDPCore PROPERTIES
   LINK_DEPENDS ${VRC_EXPORTS})
 target_include_directories(VibeRDPCore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(VibeRDPCore SYSTEM PRIVATE ${VRC_KRB5_INCLUDE_DIR})
-target_link_libraries(VibeRDPCore PRIVATE freerdp-client "-framework IOSurface" "-framework CoreFoundation")
+target_link_libraries(VibeRDPCore PRIVATE freerdp-client "-framework IOSurface" "-framework CoreFoundation"
+                      "-framework CoreGraphics" "-framework ImageIO")
 target_link_options(VibeRDPCore PRIVATE "LINKER:-exported_symbols_list,${VRC_EXPORTS}" "LINKER:-dead_strip")
 # FreeRDP headers come from an imported target and count as system headers: the strict warnings hit only our code
 target_compile_options(VibeRDPCore PRIVATE -Wall -Wextra -Werror)

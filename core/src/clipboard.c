@@ -6,6 +6,7 @@
 
 #include "clipboard.h"
 #include "cliphtml.h"
+#include "clipimage.h"
 #include "cliptext.h"
 
 #include <stdlib.h>
@@ -20,62 +21,7 @@
  */
 #define HTML_FORMAT_ID 0xC0A0u
 #define RTF_FORMAT_ID 0xC0A1u
-
-/* The names Windows registers for them */
-static const char htmlFormatName[] = "HTML Format";
-static const char rtfFormatName[] = "Rich Text Format";
-
-static uint32_t formatBit(int32_t format)
-{
-    return 1u << (uint32_t)format;
-}
-
-static bool knownFormat(int32_t format)
-{
-    return format == VRCClipboardFormatText || format == VRCClipboardFormatHtml || format == VRCClipboardFormatRtf;
-}
-
-/* The format of Windows that carries a format of the app: Windows makes its other text formats itself */
-static uint32_t windowsFormatId(int32_t format)
-{
-    switch (format)
-    {
-        case VRCClipboardFormatText:
-            return CF_UNICODETEXT;
-        case VRCClipboardFormatHtml:
-            return HTML_FORMAT_ID;
-        case VRCClipboardFormatRtf:
-            return RTF_FORMAT_ID;
-        default:
-            return 0;
-    }
-}
-
-/* The name of a registered format in the lists of this client; NULL for a standard one */
-static const char* windowsFormatName(int32_t format)
-{
-    switch (format)
-    {
-        case VRCClipboardFormatHtml:
-            return htmlFormatName;
-        case VRCClipboardFormatRtf:
-            return rtfFormatName;
-        default:
-            return NULL;
-    }
-}
-
-/* The format of the app that a format of the server carries, 0 for one the app does not take */
-static int32_t appFormat(const CLIPRDR_FORMAT* format)
-{
-    if (format->formatId == CF_UNICODETEXT)
-        return VRCClipboardFormatText;
-    if (format->formatName && strcmp(format->formatName, htmlFormatName) == 0)
-        return VRCClipboardFormatHtml;
-    if (format->formatName && strcmp(format->formatName, rtfFormatName) == 0)
-        return VRCClipboardFormatRtf;
-    return 0;
-}
+#define PNG_FORMAT_ID 0xC0A2u
 
 /* RTF is ASCII: Windows keeps it zero-terminated, the Mac without the zero */
 static bool rtfToWindows(const void* rtf, size_t length, uint8_t** out, size_t* outLength)
@@ -105,52 +51,134 @@ static bool rtfFromWindows(const uint8_t* rtf, size_t length, void** out, size_t
     return true;
 }
 
-/* Data of the Mac in the format Windows keeps it in */
-static bool toWindows(int32_t format, const void* data, size_t length, uint8_t** out, size_t* outLength)
+static bool textToWindows(const void* data, size_t length, uint8_t** out, size_t* outLength)
 {
-    switch (format)
-    {
-        case VRCClipboardFormatText:
-            return vrcTextToUnicode(data, length, out, outLength);
-        case VRCClipboardFormatHtml:
-            return vrcHtmlToWindows(data, length, out, outLength);
-        case VRCClipboardFormatRtf:
-            return rtfToWindows(data, length, out, outLength);
-        default:
-            return false;
-    }
+    return vrcTextToUnicode(data, length, out, outLength);
 }
 
-/* Data of Windows in the form the app takes; text and HTML come zero-terminated */
-static bool fromWindows(int32_t format, const uint8_t* data, size_t length, void** out, size_t* outLength)
+static bool textFromWindows(const uint8_t* data, size_t length, void** out, size_t* outLength)
 {
-    switch (format)
+    return vrcTextFromUnicode(data, length, (char**)out, outLength);
+}
+
+static bool htmlToWindows(const void* data, size_t length, uint8_t** out, size_t* outLength)
+{
+    return vrcHtmlToWindows(data, length, out, outLength);
+}
+
+static bool htmlFromWindows(const uint8_t* data, size_t length, void** out, size_t* outLength)
+{
+    return vrcHtmlFromWindows(data, length, (char**)out, outLength);
+}
+
+/* PNG is the same file on both sides */
+static bool pngToWindows(const void* data, size_t length, uint8_t** out, size_t* outLength)
+{
+    *out = malloc(length > 0 ? length : 1);
+    if (!*out)
+        return false;
+    memcpy(*out, data, length);
+    *outLength = length;
+    return true;
+}
+
+static bool pngFromWindows(const uint8_t* data, size_t length, void** out, size_t* outLength)
+{
+    return pngToWindows(data, length, (uint8_t**)out, outLength);
+}
+
+static bool dibToWindows(const void* data, size_t length, uint8_t** out, size_t* outLength)
+{
+    return vrcPngToDib(data, length, out, outLength);
+}
+
+static bool dibFromWindows(const uint8_t* data, size_t length, void** out, size_t* outLength)
+{
+    return vrcDibToPng(data, length, (uint8_t**)out, outLength);
+}
+
+/* A format of Windows that carries a format of the app, and the conversions between the two */
+typedef struct WindowsFormat {
+    VRCClipboardFormat app;
+    /* The standard id, or the id this client gives a registered format in its lists */
+    uint32_t id;
+    /* The name of a registered format, NULL for a standard one */
+    const char* name;
+    /* NULL for a format this client only takes: only formats with it go into the lists of this client */
+    bool (*toWindows)(const void* data, size_t length, uint8_t** out, size_t* outLength);
+    bool (*fromWindows)(const uint8_t* data, size_t length, void** out, size_t* outLength);
+} WindowsFormat;
+
+/*
+ * The formats in the order this client prefers them when the server offers several for one format of the app
+ * Windows makes CF_TEXT from CF_UNICODETEXT, and CF_BITMAP and CF_DIBV5 from CF_DIB, so those are not offered
+ * An image goes out both as PNG, which keeps transparency for the programs that read it, and as CF_DIB for the rest;
+ * from the server PNG is taken first, then CF_DIBV5, which may hold alpha, then CF_DIB
+ */
+static const WindowsFormat windowsFormats[] = {
+    { VRCClipboardFormatText, CF_UNICODETEXT, NULL, textToWindows, textFromWindows },
+    { VRCClipboardFormatHtml, HTML_FORMAT_ID, "HTML Format", htmlToWindows, htmlFromWindows },
+    { VRCClipboardFormatRtf, RTF_FORMAT_ID, "Rich Text Format", rtfToWindows, rtfFromWindows },
+    { VRCClipboardFormatImage, PNG_FORMAT_ID, "PNG", pngToWindows, pngFromWindows },
+    { VRCClipboardFormatImage, CF_DIBV5, NULL, NULL, dibFromWindows },
+    { VRCClipboardFormatImage, CF_DIB, NULL, dibToWindows, dibFromWindows },
+};
+
+#define WINDOWS_FORMAT_COUNT (sizeof(windowsFormats) / sizeof(windowsFormats[0]))
+
+static uint32_t formatBit(int32_t format)
+{
+    return 1u << (uint32_t)format;
+}
+
+static bool knownFormat(int32_t format)
+{
+    return format > 0 && format < VRC_CLIPBOARD_FORMAT_SLOTS;
+}
+
+/* The entry of a format in a list of the server, -1 for one the app does not take */
+static int32_t entryOfServerFormat(const CLIPRDR_FORMAT* format)
+{
+    for (size_t i = 0; i < WINDOWS_FORMAT_COUNT; i++)
     {
-        case VRCClipboardFormatText:
-            return vrcTextFromUnicode(data, length, (char**)out, outLength);
-        case VRCClipboardFormatHtml:
-            return vrcHtmlFromWindows(data, length, (char**)out, outLength);
-        case VRCClipboardFormatRtf:
-            return rtfFromWindows(data, length, out, outLength);
-        default:
-            return false;
+        const WindowsFormat* entry = &windowsFormats[i];
+        const bool matches = entry->name ? format->formatName && strcmp(format->formatName, entry->name) == 0
+                                         : format->formatId == entry->id;
+        if (matches)
+            return (int32_t)i;
     }
+    return -1;
+}
+
+/* The entry of an id in the lists of this client, -1 for an id this client did not offer */
+static int32_t entryOfOwnId(uint32_t id, uint32_t offered)
+{
+    for (size_t i = 0; i < WINDOWS_FORMAT_COUNT; i++)
+    {
+        const WindowsFormat* entry = &windowsFormats[i];
+        if (entry->id == id && entry->toWindows && (offered & formatBit(entry->app)))
+            return (int32_t)i;
+    }
+    return -1;
 }
 
 /* The caller holds the mutex: the channel stays up while the list goes out */
 static UINT sendFormatList(CliprdrClientContext* channel, uint32_t offered)
 {
-    CLIPRDR_FORMAT formats[VRC_CLIPBOARD_FORMAT_SLOTS] = { 0 };
+    CLIPRDR_FORMAT formats[WINDOWS_FORMAT_COUNT] = { 0 };
     UINT32 count = 0;
 
-    for (int32_t format = 1; format < VRC_CLIPBOARD_FORMAT_SLOTS; format++)
-        if (offered & formatBit(format))
+    for (size_t i = 0; i < WINDOWS_FORMAT_COUNT; i++)
+    {
+        const WindowsFormat* entry = &windowsFormats[i];
+        if (entry->toWindows && (offered & formatBit(entry->app)))
         {
-            formats[count].formatId = windowsFormatId(format);
+            formats[count].formatId = entry->id;
             /* The engine only reads the name, whatever its type says */
-            formats[count].formatName = (char*)windowsFormatName(format);
+            formats[count].formatName = (char*)entry->name;
             count++;
         }
+    }
 
     const CLIPRDR_FORMAT_LIST list = { .common = { .msgType = CB_FORMAT_LIST }, .numFormats = count,
                                        .formats = formats };
@@ -211,14 +239,20 @@ static UINT onServerFormatList(CliprdrClientContext* channel, const CLIPRDR_FORM
 
     pthread_mutex_lock(&clipboard->mutex);
     memset(clipboard->remoteFormatIds, 0, sizeof(clipboard->remoteFormatIds));
+    memset(clipboard->remoteEntries, 0, sizeof(clipboard->remoteEntries));
     for (UINT32 i = 0; i < list->numFormats; i++)
     {
-        const int32_t format = appFormat(&list->formats[i]);
-        if (format != 0 && clipboard->remoteFormatIds[format] == 0)
-        {
-            clipboard->remoteFormatIds[format] = list->formats[i].formatId;
-            formats[count++] = (VRCClipboardFormat)format;
-        }
+        const int32_t entry = entryOfServerFormat(&list->formats[i]);
+        if (entry < 0)
+            continue;
+        const VRCClipboardFormat format = windowsFormats[entry].app;
+        if (clipboard->remoteFormatIds[format] == 0)
+            formats[count++] = format;
+        /* The table lists the formats of Windows best first */
+        else if (clipboard->remoteEntries[format] <= entry)
+            continue;
+        clipboard->remoteFormatIds[format] = list->formats[i].formatId;
+        clipboard->remoteEntries[format] = entry;
     }
     const CLIPRDR_FORMAT_LIST_RESPONSE response = {
         .common = { .msgType = CB_FORMAT_LIST_RESPONSE, .msgFlags = CB_RESPONSE_OK },
@@ -235,21 +269,16 @@ static UINT onServerFormatList(CliprdrClientContext* channel, const CLIPRDR_FORM
 static UINT onServerFormatDataRequest(CliprdrClientContext* channel, const CLIPRDR_FORMAT_DATA_REQUEST* request)
 {
     VRCClipboard* clipboard = channel->custom;
-    int32_t asked = 0;
-
-    for (int32_t format = 1; format < VRC_CLIPBOARD_FORMAT_SLOTS; format++)
-        if (windowsFormatId(format) == request->requestedFormatId)
-            asked = format;
 
     pthread_mutex_lock(&clipboard->mutex);
-    const bool answerable = asked != 0 && (clipboard->offered & formatBit(asked)) &&
-                            clipboard->callbacks->clipboardDataRequested;
-    clipboard->serverAsks = answerable ? asked : 0;
+    const int32_t entry = entryOfOwnId(request->requestedFormatId, clipboard->offered);
+    const bool answerable = entry >= 0 && clipboard->callbacks->clipboardDataRequested;
+    clipboard->serverAsks = answerable ? entry : NO_ENTRY;
     const UINT result = answerable ? CHANNEL_RC_OK : sendDataResponse(channel, NULL, 0);
     pthread_mutex_unlock(&clipboard->mutex);
 
     if (answerable)
-        clipboard->callbacks->clipboardDataRequested(*clipboard->userData, (VRCClipboardFormat)asked);
+        clipboard->callbacks->clipboardDataRequested(*clipboard->userData, windowsFormats[entry].app);
     return result;
 }
 
@@ -261,7 +290,7 @@ static UINT onServerFormatDataResponse(CliprdrClientContext* channel, const CLIP
     pthread_mutex_lock(&clipboard->mutex);
     if (clipboard->lateAnswers > 0)
         clipboard->lateAnswers--;
-    else if (clipboard->copyFormat != 0 && !clipboard->copySucceeded && !clipboard->copyData)
+    else if (clipboard->copyEntry != NO_ENTRY && !clipboard->copySucceeded && !clipboard->copyData)
     {
         const bool ok = (response->common.msgFlags & CB_RESPONSE_OK) != 0;
         const size_t length = response->common.dataLen;
@@ -287,6 +316,8 @@ bool vrcClipboardInit(VRCClipboard* clipboard, const VRCCallbacks* callbacks, vo
     /* Static initializers cannot fail, so Destroy always meets valid mutexes */
     clipboard->mutex = (pthread_mutex_t)PTHREAD_MUTEX_INITIALIZER;
     clipboard->copyLock = (pthread_mutex_t)PTHREAD_MUTEX_INITIALIZER;
+    clipboard->serverAsks = NO_ENTRY;
+    clipboard->copyEntry = NO_ENTRY;
     clipboard->callbacks = callbacks;
     clipboard->userData = userData;
     clipboard->copyAnswered = CreateEventA(NULL, TRUE, FALSE, NULL);
@@ -312,7 +343,7 @@ void vrcClipboardAttach(VRCClipboard* clipboard, CliprdrClientContext* channel)
     channel->ServerFormatDataResponse = onServerFormatDataResponse;
     clipboard->channel = channel;
     clipboard->ready = false;
-    clipboard->serverAsks = 0;
+    clipboard->serverAsks = NO_ENTRY;
     clipboard->lateAnswers = 0;
     memset(clipboard->remoteFormatIds, 0, sizeof(clipboard->remoteFormatIds));
     pthread_mutex_unlock(&clipboard->mutex);
@@ -326,9 +357,9 @@ void vrcClipboardDetach(VRCClipboard* clipboard, CliprdrClientContext* channel)
         channel->custom = NULL;
         clipboard->channel = NULL;
         clipboard->ready = false;
-        clipboard->serverAsks = 0;
+        clipboard->serverAsks = NO_ENTRY;
         memset(clipboard->remoteFormatIds, 0, sizeof(clipboard->remoteFormatIds));
-        if (clipboard->copyFormat != 0)
+        if (clipboard->copyEntry != NO_ENTRY)
             (void)SetEvent(clipboard->copyAnswered);
     }
     pthread_mutex_unlock(&clipboard->mutex);
@@ -363,15 +394,21 @@ VRCResult vrcClipboardProvide(VRCClipboard* clipboard, VRCClipboardFormat format
 
     if (!knownFormat(format) || (!data && length > 0))
         return VRCResultInvalidArgument;
-    /* Converted before the lock: a long text must not hold the channel */
-    if (data && !toWindows(format, data, length, &converted, &convertedLength))
+
+    pthread_mutex_lock(&clipboard->mutex);
+    const int32_t entry = clipboard->serverAsks;
+    pthread_mutex_unlock(&clipboard->mutex);
+    if (entry == NO_ENTRY || windowsFormats[entry].app != format)
+        return VRCResultInvalidState;
+    /* Converted outside the lock: a long text or a large image must not hold the channel */
+    if (data && !windowsFormats[entry].toWindows(data, length, &converted, &convertedLength))
         return VRCResultFailure;
 
     pthread_mutex_lock(&clipboard->mutex);
     VRCResult result = VRCResultInvalidState;
-    if (clipboard->channel && clipboard->serverAsks == (int32_t)format)
+    if (clipboard->channel && clipboard->serverAsks == entry)
     {
-        clipboard->serverAsks = 0;
+        clipboard->serverAsks = NO_ENTRY;
         result = sendDataResponse(clipboard->channel, converted, convertedLength) == CHANNEL_RC_OK ? VRCResultOK
                                                                                                   : VRCResultFailure;
     }
@@ -392,20 +429,21 @@ VRCResult vrcClipboardCopyRemote(VRCClipboard* clipboard, VRCClipboardFormat for
     pthread_mutex_lock(&clipboard->mutex);
     VRCResult result = VRCResultInvalidState;
     const uint32_t formatId = clipboard->remoteFormatIds[format];
+    const int32_t entry = clipboard->remoteEntries[format];
     if (clipboard->channel && formatId != 0)
     {
         const CLIPRDR_FORMAT_DATA_REQUEST request = {
             .common = { .msgType = CB_FORMAT_DATA_REQUEST },
             .requestedFormatId = formatId,
         };
-        clipboard->copyFormat = format;
+        clipboard->copyEntry = entry;
         clipboard->copySucceeded = false;
         (void)ResetEvent(clipboard->copyAnswered);
         result = clipboard->channel->ClientFormatDataRequest(clipboard->channel, &request) == CHANNEL_RC_OK
                      ? VRCResultOK
                      : VRCResultFailure;
         if (result != VRCResultOK)
-            clipboard->copyFormat = 0;
+            clipboard->copyEntry = NO_ENTRY;
     }
     pthread_mutex_unlock(&clipboard->mutex);
 
@@ -424,7 +462,7 @@ VRCResult vrcClipboardCopyRemote(VRCClipboard* clipboard, VRCClipboardFormat for
         clipboard->copyData = NULL;
         clipboard->copyLength = 0;
         clipboard->copySucceeded = false;
-        clipboard->copyFormat = 0;
+        clipboard->copyEntry = NO_ENTRY;
         if (timedOut && clipboard->channel)
             clipboard->lateAnswers++;
         pthread_mutex_unlock(&clipboard->mutex);
@@ -433,7 +471,7 @@ VRCResult vrcClipboardCopyRemote(VRCClipboard* clipboard, VRCClipboardFormat for
             result = VRCResultTimeout;
         else if (!succeeded)
             result = VRCResultFailure;
-        else if (!fromWindows(format, answer, answerLength, data, length))
+        else if (!windowsFormats[entry].fromWindows(answer, answerLength, data, length))
             result = VRCResultFailure;
         free(answer);
     }

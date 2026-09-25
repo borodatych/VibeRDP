@@ -43,7 +43,7 @@ final class ClipboardBridgeTests: XCTestCase {
         XCTAssertEqual(channel.offers, [[], [.text]])
 
         pasteboard.clearContents()
-        pasteboard.setData(Data([0x89, 0x50, 0x4E, 0x47]), forType: .png)
+        pasteboard.setData(Data("x".utf8), forType: .pdf)
         bridge.poll()
         XCTAssertEqual(channel.offers, [[], [.text], []])
     }
@@ -127,6 +127,37 @@ final class ClipboardBridgeTests: XCTestCase {
         XCTAssertEqual(text.string.trimmingCharacters(in: .whitespacesAndNewlines), "Привет")
     }
 
+    /// An image of the Mac goes over as PNG, whether the app that copied it wrote PNG or only TIFF
+    func testImagesGoOverAsPng() throws {
+        pasteboard.setData(TestImage.tiff, forType: .tiff)
+        bridge.start()
+        XCTAssertEqual(channel.offers, [[.image]])
+        bridge.dataRequested(.image)
+
+        pasteboard.clearContents()
+        pasteboard.setData(TestImage.png, forType: .png)
+        bridge.dataRequested(.image)
+
+        XCTAssertEqual(channel.answers.count, 2)
+        for answer in channel.answers {
+            let png = try XCTUnwrap(answer)
+            XCTAssertEqual(png.prefix(4), Data([0x89, 0x50, 0x4E, 0x47]))
+            XCTAssertTrue(TestImage.matches(png))
+        }
+    }
+
+    /// The remote image stands on the Mac as PNG and as TIFF, and comes over once whichever the paste reads
+    func testRemoteImageComesOnceForBothTypes() throws {
+        bridge.start()
+        channel.remoteData = TestImage.png
+        bridge.remoteClipboardChanged([.image])
+
+        XCTAssertTrue(TestImage.matches(try XCTUnwrap(pasteboard.data(forType: .tiff))))
+        XCTAssertEqual(pasteboard.data(forType: .png), TestImage.png)
+        XCTAssertEqual(channel.copies, 1)
+        XCTAssertEqual(channel.timeouts, [ClipboardBridge.imageCopyTimeout])
+    }
+
     /// When the session ends, the item that stood for the remote clipboard goes, a copy of the user stays
     func testStopRemovesOnlyTheRemoteItem() {
         bridge.start()
@@ -148,7 +179,10 @@ private final class RecordingChannel: ClipboardChannel {
     private(set) var offers: [[VRCClipboardFormat]] = []
     private(set) var answers: [Data?] = []
     private(set) var copies = 0
+    private(set) var timeouts: [Duration] = []
     var remoteText = ""
+    /// Bytes of the remote side that are not text; the text stands in when they are nil
+    var remoteData: Data?
 
     func offerClipboard(_ formats: [VRCClipboardFormat]) {
         offers.append(formats)
@@ -160,6 +194,7 @@ private final class RecordingChannel: ClipboardChannel {
 
     func copyRemoteClipboard(_ format: VRCClipboardFormat, timeout: Duration) -> Data? {
         copies += 1
-        return Data(remoteText.utf8)
+        timeouts.append(timeout)
+        return remoteData ?? Data(remoteText.utf8)
     }
 }

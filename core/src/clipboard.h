@@ -22,7 +22,10 @@
 #include <winpr/synch.h>
 
 /* One slot for every VRCClipboardFormat, indexed by its value */
-#define VRC_CLIPBOARD_FORMAT_SLOTS 4
+#define VRC_CLIPBOARD_FORMAT_SLOTS 5
+
+/* No entry of the table of Windows formats in clipboard.c */
+#define NO_ENTRY (-1)
 
 typedef struct VRCClipboard {
     /* Guards everything below except copyLock, and is held while a message goes out on the channel */
@@ -35,14 +38,16 @@ typedef struct VRCClipboard {
     uint32_t offered;
     /* The format id of the server for each format it offers, 0 for none */
     uint32_t remoteFormatIds[VRC_CLIPBOARD_FORMAT_SLOTS];
-    /* The format the server asked for and waits for, 0 when it waits for nothing */
+    /* The entry of the table of Windows formats each of those ids stands for */
+    int32_t remoteEntries[VRC_CLIPBOARD_FORMAT_SLOTS];
+    /* The entry of the format the server asked for and waits for, NO_ENTRY when it waits for nothing */
     int32_t serverAsks;
 
     /* One copy from the server at a time */
     pthread_mutex_t copyLock;
     HANDLE copyAnswered;
-    /* The format of the copy that waits, 0 when none does */
-    int32_t copyFormat;
+    /* The entry of the format of the copy that waits, NO_ENTRY when none does */
+    int32_t copyEntry;
     /* Answers still due to copies that timed out: each request gets one answer, and they come in order */
     uint32_t lateAnswers;
     bool copySucceeded;

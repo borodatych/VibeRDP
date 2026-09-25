@@ -1,4 +1,5 @@
-import Foundation
+import AppKit
+import ImageIO
 import Security
 
 @testable import VibeRDP
@@ -58,5 +59,49 @@ final class MemoryPasswordStore: PasswordStore {
         let account = KeychainPasswordStore.account(for: id, kind: kind)
         passwords[account] = nil
         labels[account] = nil
+    }
+}
+
+/// A two by two image for the clipboard tests, each pixel its own colour, so a flip or a swap of channels shows
+/// Tagged sRGB, the space the core draws in, so the colours come back as they went
+enum TestImage {
+    /// Rows from the top down: red and green, then blue and white, as red, green, blue and alpha
+    static let pixels: [[UInt8]] = [[255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255], [255, 255, 255, 255]]
+    static let side = 2
+    /// Colour matching and encoding round a channel either way
+    static let tolerance = 3
+
+    static func bitmap() -> NSBitmapImageRep {
+        let bitmap = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: side, pixelsHigh: side, bitsPerSample: 8, samplesPerPixel: 4,
+            hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 4 * side, bitsPerPixel: 32)!
+        let bytes = bitmap.bitmapData!
+        for (index, pixel) in pixels.flatMap({ $0 }).enumerated() {
+            bytes[index] = pixel
+        }
+        return bitmap.retagging(with: .sRGB)!
+    }
+
+    static var png: Data { bitmap().representation(using: .png, properties: [:])! }
+    static var tiff: Data { bitmap().tiffRepresentation! }
+
+    /// Whether encoded data holds this image, whatever its format
+    /// The pixels are drawn in sRGB: NSBitmapImageRep.colorAt answers in a calibrated space that shifts the colours
+    static func matches(_ data: Data) -> Bool {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+            let image = CGImageSourceCreateImageAtIndex(source, 0, nil), image.width == side, image.height == side,
+            let space = CGColorSpace(name: CGColorSpace.sRGB)
+        else { return false }
+        var bytes = [UInt8](repeating: 0, count: 4 * side * side)
+        let drawn = bytes.withUnsafeMutableBytes { buffer in
+            guard
+                let context = CGContext(
+                    data: buffer.baseAddress, width: side, height: side, bitsPerComponent: 8, bytesPerRow: 4 * side,
+                    space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+            else { return false }
+            context.draw(image, in: CGRect(x: 0, y: 0, width: side, height: side))
+            return true
+        }
+        return drawn && zip(bytes, pixels.flatMap { $0 }).allSatisfy { abs(Int($0) - Int($1)) <= tolerance }
     }
 }

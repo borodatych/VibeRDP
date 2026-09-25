@@ -1,6 +1,7 @@
 /*
  * Clipboard echo tests: the clipboard channel against the sample server of FreeRDP that build-core.sh starts
- * The server asks for the text, HTML and RTF the client offers and offers them back, the text behind a prefix
+ * The server asks for the text, HTML, RTF and CF_DIB the client offers and offers them back,
+ * the text behind a prefix
  * The data so goes from the Mac to the server and back through both directions of CLIPRDR
  * Without the server every test skips itself
  * Usage: clipboardEchoTests <test name>; CTest registers every test separately
@@ -11,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "pictures.h"
 #include "support.h"
 #include "VibeRDPCore/VibeRDPCore.h"
 
@@ -33,7 +35,7 @@
         }                                                                                       \
     } while (0)
 
-/* The Mac clipboard: text with a line end and letters beyond ASCII, HTML without a page around it, RTF */
+/* The Mac clipboard: text with a line end and letters beyond ASCII, HTML without a page around it, RTF, an image */
 static const char macText[] = "Привет\nмир 👋";
 static const char macHtml[] = "<p>Жирный <b>текст</b></p>";
 static const char macRtf[] = "{\\rtf1\\ansi \\b bold\\b0 }";
@@ -41,6 +43,14 @@ static const char echoPrefix[] = "echo: ";
 /* The HTML comes back as the page "HTML Format" wraps it in */
 static const char htmlBack[] =
     "<html><body><!--StartFragment--><p>Жирный <b>текст</b></p><!--EndFragment--></body></html>";
+/* Opaque, since CF_DIB keeps no alpha; each pixel its own colour, so a flip or a swap of channels shows */
+static const Picture macImage = { 2, 2, { { 255, 0, 0, 255 }, { 0, 255, 0, 255 }, { 0, 0, 255, 255 },
+                                          { 255, 255, 255, 255 } } };
+static uint8_t* macPng;
+static size_t macPngLength;
+
+/* The formats the Mac offers, all of them */
+#define OFFERED_COUNT 4
 
 /* What the clipboard callbacks saw; the recorder of support.c keeps the rest */
 static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -48,7 +58,7 @@ static VRCSession* current;
 static int questions;
 static int remoteChanges;
 static size_t remoteCount;
-static VRCClipboardFormat remoteFormats[3];
+static VRCClipboardFormat remoteFormats[OFFERED_COUNT];
 
 /* Windows pastes: the answer goes out from the callback itself, as the app may answer from any thread */
 static void onDataRequested(void* userData, VRCClipboardFormat format)
@@ -57,6 +67,11 @@ static void onDataRequested(void* userData, VRCClipboardFormat format)
     pthread_mutex_lock(&mutex);
     questions++;
     pthread_mutex_unlock(&mutex);
+    if (format == VRCClipboardFormatImage)
+    {
+        (void)VRCSessionProvideClipboardData(current, format, macPng, macPngLength);
+        return;
+    }
     const char* data = format == VRCClipboardFormatHtml ? macHtml : format == VRCClipboardFormatRtf ? macRtf : macText;
     (void)VRCSessionProvideClipboardData(current, format, data, strlen(data));
 }
@@ -67,7 +82,7 @@ static void onRemoteChanged(void* userData, const VRCClipboardFormat* formats, s
     pthread_mutex_lock(&mutex);
     remoteChanges++;
     remoteCount = count;
-    for (size_t i = 0; i < count && i < 3; i++)
+    for (size_t i = 0; i < count && i < OFFERED_COUNT; i++)
         remoteFormats[i] = formats[i];
     pthread_mutex_unlock(&mutex);
 }
@@ -98,10 +113,11 @@ static VRCSession* connectToEcho(Recorder* recorder, const char* socket)
         return NULL;
     current = session;
 
-    const VRCClipboardFormat offered[] = { VRCClipboardFormatText, VRCClipboardFormatHtml, VRCClipboardFormatRtf };
+    const VRCClipboardFormat offered[OFFERED_COUNT] = { VRCClipboardFormatText, VRCClipboardFormatHtml,
+                                                        VRCClipboardFormatRtf, VRCClipboardFormatImage };
     /* The sample server has no logon of its own: a name and a password spare the question */
     const VRCConnectionParams params = { .host = socket, .username = "tester", .password = "unused" };
-    if (VRCSessionOfferClipboard(session, offered, 3) != VRCResultOK ||
+    if (VRCSessionOfferClipboard(session, offered, OFFERED_COUNT) != VRCResultOK ||
         VRCSessionConnect(session, &params) != VRCResultOK || !recorderWaitForCertificate(recorder, STATE_TIMEOUT_MS) ||
         VRCSessionResolveCertificate(session, true) != VRCResultOK)
     {
@@ -124,12 +140,31 @@ static bool copyIs(VRCSession* session, VRCClipboardFormat format, const char* e
     return true;
 }
 
+/* The image went to the server as CF_DIB and comes back as PNG, pixel for pixel */
+static bool imageCameBack(VRCSession* session)
+{
+    void* data = NULL;
+    size_t length = 0;
+    CHECK(VRCSessionCopyRemoteClipboard(session, VRCClipboardFormatImage, ECHO_TIMEOUT_MS, &data, &length) ==
+          VRCResultOK);
+    Picture back;
+    const bool decoded = pictureDecodePng(data, length, &back);
+    free(data);
+    CHECK(decoded);
+    printf("image came back: %zux%zu\n", back.width, back.height);
+    CHECK(back.width == macImage.width && back.height == macImage.height);
+    for (size_t i = 0; i < macImage.width * macImage.height; i++)
+        CHECK(pictureNear(back.pixels[i], macImage.pixels[i]));
+    return true;
+}
+
 /*
  * The offer goes out when the channel starts, the server takes each format and offers them back,
  * and the copies bring them home: both directions, the registered formats and the conversions on the way
  */
 static bool testRoundTrip(const char* socket)
 {
+    CHECK(pictureEncodePng(&macImage, &macPng, &macPngLength));
     Recorder* recorder = recorderNew();
     VRCSession* session = connectToEcho(recorder, socket);
     CHECK(session != NULL);
@@ -139,20 +174,22 @@ static bool testRoundTrip(const char* socket)
     pthread_mutex_lock(&mutex);
     const int asked = questions;
     const size_t count = remoteCount;
-    VRCClipboardFormat formats[3];
+    VRCClipboardFormat formats[OFFERED_COUNT];
     memcpy(formats, remoteFormats, sizeof(formats));
     pthread_mutex_unlock(&mutex);
-    CHECK(asked == 3);
-    CHECK(count == 3);
+    CHECK(asked == OFFERED_COUNT);
+    CHECK(count == OFFERED_COUNT);
     CHECK(formats[0] == VRCClipboardFormatText);
     CHECK(formats[1] == VRCClipboardFormatHtml);
     CHECK(formats[2] == VRCClipboardFormatRtf);
+    CHECK(formats[3] == VRCClipboardFormatImage);
 
     char text[128];
     CHECK(snprintf(text, sizeof(text), "%s%s", echoPrefix, macText) < (int)sizeof(text));
     CHECK(copyIs(session, VRCClipboardFormatText, text));
     CHECK(copyIs(session, VRCClipboardFormatHtml, htmlBack));
     CHECK(copyIs(session, VRCClipboardFormatRtf, macRtf));
+    CHECK(imageCameBack(session));
 
     void* data = NULL;
     size_t length = 0;
@@ -167,6 +204,7 @@ static bool testRoundTrip(const char* socket)
           VRCResultInvalidState);
     VRCSessionDestroy(session);
     recorderFree(recorder);
+    free(macPng);
     return true;
 }
 

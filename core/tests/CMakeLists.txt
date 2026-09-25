@@ -98,22 +98,34 @@ foreach(test IN ITEMS wrapsHtmlWithoutBody marksTheBodyOfAPage bodyNeedsTheWhole
   set_tests_properties(${test} PROPERTIES TIMEOUT 60 ENVIRONMENT "${VRC_TEST_ENVIRONMENT}")
 endforeach()
 
+set(VRC_IMAGE_FRAMEWORKS "-framework CoreFoundation" "-framework CoreGraphics" "-framework ImageIO")
+add_executable(clipimageTests clipimageTests.c pictures.c ${PROJECT_SOURCE_DIR}/src/clipimage.c)
+target_include_directories(clipimageTests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(clipimageTests PRIVATE ${VRC_IMAGE_FRAMEWORKS})
+target_compile_options(clipimageTests PRIVATE -Wall -Wextra -Werror)
+foreach(test IN ITEMS pngToDibLayout transparentGoesOverWhite imageRoundTrip readsTopDown32 readsPalette
+                      readsBitfields readsV5Alpha brokenImageData)
+  add_test(NAME ${test} COMMAND clipimageTests ${test})
+  set_tests_properties(${test} PROPERTIES TIMEOUT 60 ENVIRONMENT "${VRC_TEST_ENVIRONMENT}")
+endforeach()
+
 # The clipboard module against a stand-in for the channel of the engine
 add_executable(clipboardTests clipboardTests.c ${PROJECT_SOURCE_DIR}/src/clipboard.c
-                              ${PROJECT_SOURCE_DIR}/src/cliphtml.c ${PROJECT_SOURCE_DIR}/src/cliptext.c)
+                              ${PROJECT_SOURCE_DIR}/src/cliphtml.c ${PROJECT_SOURCE_DIR}/src/clipimage.c
+                              ${PROJECT_SOURCE_DIR}/src/cliptext.c)
 target_include_directories(clipboardTests PRIVATE ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/include)
-target_link_libraries(clipboardTests PRIVATE freerdp-client)
+target_link_libraries(clipboardTests PRIVATE freerdp-client ${VRC_IMAGE_FRAMEWORKS})
 target_compile_options(clipboardTests PRIVATE -Wall -Wextra -Werror)
 foreach(test IN ITEMS offerWaitsForMonitorReady serverPastesText serverAsksForWhatIsNotOffered serverOffersFormats
                       offerRegisteredFormats copyRegisteredFormats copyFromServer lateAnswerIsDropped copyFailures
-                      detachEndsCopy)
+                      detachEndsCopy offerImage imageFromServer)
   add_test(NAME ${test} COMMAND clipboardTests ${test})
   set_tests_properties(${test} PROPERTIES TIMEOUT 60 ENVIRONMENT "${VRC_TEST_ENVIRONMENT}")
 endforeach()
 
 # The clipboard channel against the echo server that build-core.sh starts; without it the test skips itself
-add_executable(clipboardEchoTests clipboardEchoTests.c support.c)
-target_link_libraries(clipboardEchoTests PRIVATE VibeRDPCore)
+add_executable(clipboardEchoTests clipboardEchoTests.c pictures.c support.c)
+target_link_libraries(clipboardEchoTests PRIVATE VibeRDPCore ${VRC_IMAGE_FRAMEWORKS})
 target_compile_options(clipboardEchoTests PRIVATE -Wall -Wextra -Werror)
 add_test(NAME clipboardRoundTrip COMMAND clipboardEchoTests roundTrip)
 set_tests_properties(clipboardRoundTrip PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77

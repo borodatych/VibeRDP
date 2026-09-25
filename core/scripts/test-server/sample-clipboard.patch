@@ -11,10 +11,10 @@
  if(CHANNEL_AINPUT_SERVER)
 --- /dev/null
 +++ b/server/Sample/sf_cliprdr.c
-@@ -0,0 +1,196 @@
+@@ -0,0 +1,197 @@
 +/**
 + * Test tool of VibeRDP: an echo of the clipboard of the client
-+ * The server asks for the text, HTML and RTF the client offers and offers them back,
++ * The server asks for the text, HTML, RTF and CF_DIB the client offers and offers them back,
 + * the text behind a prefix and the rest as it came
 + * A client test so sees its data make the round trip through both directions of the channel
 + */
@@ -32,17 +32,18 @@
 +#define ECHO_PREFIX "echo: "
 +
 +/* The ids this server gives the formats in its own lists; registered formats go by their names */
-+static const UINT32 echo_ids[SF_CLIPBOARD_KINDS] = { CF_UNICODETEXT, 0xC100, 0xC101 };
++static const UINT32 echo_ids[SF_CLIPBOARD_KINDS] = { CF_UNICODETEXT, 0xC100, 0xC101, CF_DIB };
 +static const char* const echo_names[SF_CLIPBOARD_KINDS] = { nullptr, "HTML Format",
-+	                                                        "Rich Text Format" };
++	                                                        "Rich Text Format", nullptr };
 +
 +static int sf_cliprdr_kind(const CLIPRDR_FORMAT* format)
 +{
-+	if (format->formatId == CF_UNICODETEXT)
-+		return 0;
-+	for (int kind = 1; kind < SF_CLIPBOARD_KINDS; kind++)
-+		if (format->formatName && strcmp(format->formatName, echo_names[kind]) == 0)
++	for (int kind = 0; kind < SF_CLIPBOARD_KINDS; kind++)
++	{
++		if (echo_names[kind] ? (format->formatName && strcmp(format->formatName, echo_names[kind]) == 0)
++		                     : format->formatId == echo_ids[kind])
 +			return kind;
++	}
 +	return -1;
 +}
 +
@@ -316,8 +317,8 @@
  #include <winpr/thread.h>
  #include <winpr/image.h>
  
-+/* Test tool of VibeRDP: the formats of the clipboard echo, text, HTML and RTF */
-+#define SF_CLIPBOARD_KINDS 3
++/* Test tool of VibeRDP: the formats of the clipboard echo, text, HTML, RTF and CF_DIB */
++#define SF_CLIPBOARD_KINDS 4
 +
  struct test_peer_context
  {
@@ -326,7 +327,7 @@
  	UINT32 frame_id;
  	RdpsndServerContext* rdpsnd;
  	EncomspServerContext* encomsp;
-+	/* Test tool of VibeRDP: the clipboard echo, the text, HTML and RTF it holds and the ones it waits for */
++	/* Test tool of VibeRDP: the clipboard echo, the formats it holds and the ones it waits for */
 +	CliprdrServerContext* cliprdr;
 +	BYTE* clipboard[SF_CLIPBOARD_KINDS];
 +	UINT32 clipboard_length[SF_CLIPBOARD_KINDS];

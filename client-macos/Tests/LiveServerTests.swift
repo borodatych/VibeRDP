@@ -11,7 +11,7 @@ import XCTest
 /// VIBERDP_TEST_SERVER_SOCKET replays a RemoteFX recording of Windows Server 2008 R2,
 /// VIBERDP_INTERACTIVE_SERVER_SOCKET draws its icon wherever a mouse event points, resizes its desktop on G
 /// and drops the connection on D,
-/// VIBERDP_CLIPBOARD_SERVER_SOCKET takes the text, HTML and RTF the client offers and offers them back,
+/// VIBERDP_CLIPBOARD_SERVER_SOCKET takes the text, HTML, RTF and image the client offers and offers them back,
 /// the text behind "echo: "
 /// The servers listen on Unix sockets: no network, so no Local Network alert either
 @MainActor
@@ -146,7 +146,7 @@ final class LiveServerTests: XCTestCase {
         XCTAssertEqual(session.failures, [])
     }
 
-    /// The clipboard makes the round trip through the echo server: text, HTML and RTF of a private pasteboard
+    /// The clipboard makes the round trip through the echo server: text, HTML, RTF and an image of a private pasteboard
     /// go over and come back, and the paste on the Mac fetches each from the server while the paste waits
     /// The general pasteboard of this Mac is never touched
     func testClipboardRoundTrip() async throws {
@@ -160,6 +160,7 @@ final class LiveServerTests: XCTestCase {
         item.setString("Привет\nмир 👋", forType: .string)
         item.setData(Data("<p>Жирный <b>текст</b></p>".utf8), forType: .html)
         item.setData(Data(#"{\rtf1\ansi \b bold\b0 }"#.utf8), forType: .rtf)
+        item.setData(TestImage.tiff, forType: .tiff)
         pasteboard.writeObjects([item])
 
         suiteName = "tech.vibebrains.viberdp.tests.\(UUID().uuidString)"
@@ -184,6 +185,8 @@ final class LiveServerTests: XCTestCase {
             #"<meta charset="utf-8"><html><body><!--StartFragment--><p>Жирный <b>текст</b></p>"#
                 + "<!--EndFragment--></body></html>")
         XCTAssertEqual(pasteboard.data(forType: .rtf), Data(#"{\rtf1\ansi \b bold\b0 }"#.utf8))
+        XCTAssertTrue(TestImage.matches(try XCTUnwrap(pasteboard.data(forType: .png))))
+        XCTAssertTrue(TestImage.matches(try XCTUnwrap(pasteboard.data(forType: .tiff))))
         XCTAssertEqual(session.failures, [])
 
         bridge.stop()
