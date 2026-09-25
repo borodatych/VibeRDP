@@ -1,0 +1,12 @@
+--- a/server/Sample/sfreerdp.c
++++ b/server/Sample/sfreerdp.c
+@@ -1169,6 +1169,9 @@
+ 			goto fail;
+ 	}
+ 
++	/* Test tool of VibeRDP: the server would ask a client that never offered multitransport for it */
++	if (!freerdp_settings_set_bool(settings, FreeRDP_SupportMultitransport, FALSE))
++		goto fail;
+ 	if (!freerdp_settings_set_bool(settings, FreeRDP_RdpSecurity, TRUE))
+ 		goto fail;
+ 	if (!freerdp_settings_set_bool(settings, FreeRDP_TlsSecurity, TRUE))

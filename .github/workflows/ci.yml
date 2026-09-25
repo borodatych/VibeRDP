@@ -53,6 +53,9 @@ jobs:
         run: core/scripts/build-freerdp.sh
       - name: VibeRDPCore
         run: core/scripts/build-core.sh
+      # The local RDP peer of the live client test: without it that test skips itself
+      - name: Test server
+        run: core/scripts/build-test-server.sh
       # xcodebuild hands TEST_RUNNER_ variables to the app under test without the prefix:
       # the engine writes its debug log to a file, since the result bundles keep no console output of the app
       - name: Client

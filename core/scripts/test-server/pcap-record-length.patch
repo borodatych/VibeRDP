@@ -1,0 +1,12 @@
+--- a/server/Sample/sfreerdp.c
++++ b/server/Sample/sfreerdp.c
+@@ -584,7 +584,8 @@
+ 		record.data = Stream_Buffer(s);
+ 		if (!pcap_get_next_record_content(pcap_rfx, &record))
+ 			break;
+-		if (!Stream_SetPosition(s, Stream_Capacity(s)))
++		/* Test tool of VibeRDP: the buffer only grows, and its capacity would send the tail of a longer record too */
++		if (!Stream_SetPosition(s, record.length))
+ 			goto fail;
+ 
+ 		if (info->test_dump_rfx_realtime &&
