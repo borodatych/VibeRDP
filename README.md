@@ -23,7 +23,7 @@ Open-source RDP-клиент для macOS на замену Microsoft Windows Ap
 
 | Папка | Что внутри |
 |---|---|
-| `core/` | `VibeRDPCore` — тонкая C-обёртка над FreeRDP 3.x |
+| `core/` | `VibeRDPCore` — тонкая C-обёртка над FreeRDP 3.x; в `core/freerdp` — что VibeRDP добавляет к FreeRDP: декодер H.264 на VideoToolbox и исправления |
 | `client-macos/` | Приложение на Swift: AppKit + Metal, SwiftUI для настроек |
 | `helper-win/` | `vibe-seam-helper` на Rust — хелпер Seam-режима для Windows |
 | `protocol/` | Спецификация канала Seam |

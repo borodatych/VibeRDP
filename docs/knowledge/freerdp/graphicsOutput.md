@@ -42,8 +42,8 @@
 **Суть:**
 - В настройках клиента `SupportGraphicsPipeline` по умолчанию выключен — его значение равно `ServerMode` (`libfreerdp/core/settings.c:1339-1347`), а `RemoteFxCodec` не включает никто, кроме разбора командной строки (`client/common/cmdline.c`); ядро этот разбор не использует
 - Сервер может отказать клиенту без кодека: sample-сервер FreeRDP рисует только RemoteFX или NSCodec (`server/Sample/sfreerdp.c:249-251`)
-- H.264 (AVC420 и AVC444) идёт только внутри RDPGFX и требует декодера — в сборке его нет: решения 7 и 15 в [decisions.md](../../decisions.md)
-- `GfxH264` по умолчанию выключен (`libfreerdp/core/settings.c:1234`), и тогда клиент ставит в возможностях RDPGFX флаг `RDPGFX_CAPS_FLAG_AVC_DISABLED` (`channels/rdpgfx/client/rdpgfx_main.c:377-389`): сервер не шлёт кадров H.264, которые нечем декодировать
+- H.264 (AVC420 и AVC444) идёт только внутри RDPGFX и требует декодера: VibeRDP добавляет во FreeRDP свой, на VideoToolbox — [h264.md](h264.md), решение 24 в [decisions.md](../../decisions.md)
+- `GfxH264` по умолчанию выключен (`libfreerdp/core/settings.c:1234`), и тогда клиент ставит в возможностях RDPGFX флаг `RDPGFX_CAPS_FLAG_AVC_DISABLED` (`channels/rdpgfx/client/rdpgfx_main.c:377-389`): сервер не шлёт кадров H.264; ядро включает `GfxH264` и `GfxAVC444`
 
 **Применение:** `applyGraphics` в ядре включает оба: RDPGFX несёт современные кодеки, RemoteFX — для серверов без конвейера.
 
