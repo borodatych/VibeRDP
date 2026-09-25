@@ -97,6 +97,11 @@ struct ConnectionsView: View {
                 Button(Localization.text(.connectionsAdd)) {
                     model.addProfile()
                 }
+                if model.windowsAppInstalled {
+                    Button(Localization.text(.connectionsWindowsAppOffer)) {
+                        model.importWindowsApp()
+                    }
+                }
             }
         }
     }

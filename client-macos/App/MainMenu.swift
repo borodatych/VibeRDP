@@ -30,6 +30,9 @@ struct MainMenu {
         let file = NSMenu(title: Localization.text(.menuFile))
         file.addItem(
             Self.item(.menuFileImport, [:], #selector(ConnectionViewController.importConnectionFiles(_:)), key: "o"))
+        file.addItem(
+            Self.item(
+                .menuFileImportWindowsApp, [:], #selector(ConnectionViewController.importWindowsAppConnections(_:))))
         file.addItem(.separator())
         disconnectItem = Self.item(.menuFileDisconnect, [:], #selector(ConnectionViewController.disconnect(_:)))
         file.addItem(disconnectItem)

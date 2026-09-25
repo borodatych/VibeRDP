@@ -25,8 +25,12 @@ final class ConnectionsModel {
     /// A session exists, from the start of connecting until Disconnected: the list and the editor wait for it
     var isBusy = false
 
+    /// Windows App is installed: its connections can be brought over
+    var windowsAppInstalled = false
+
     @ObservationIgnored var onConnect: ((UUID) -> Void)?
     @ObservationIgnored var onDisconnect: (() -> Void)?
+    @ObservationIgnored var onImportWindowsApp: (() -> Void)?
 
     init(store: ProfileStore) {
         self.store = store
@@ -71,6 +75,16 @@ final class ConnectionsModel {
         store.add(profile)
         selection = profile.id
         return true
+    }
+
+    /// Profiles of another client, one by one as importProfile takes them: how many joined and how many were there
+    func importProfiles(_ profiles: [ConnectionProfile]) -> (added: Int, existing: Int) {
+        let added = profiles.filter { importProfile($0) }.count
+        return (added, profiles.count - added)
+    }
+
+    func importWindowsApp() {
+        onImportWindowsApp?()
     }
 
     /// The profile next to the deleted one takes the selection, so the list keeps one

@@ -30,6 +30,8 @@ final class ConnectionViewController: NSViewController {
         super.init(nibName: nil, bundle: nil)
         model.onConnect = { [weak self] id in self?.connect(id) }
         model.onDisconnect = { [weak self] in self?.session?.disconnect() }
+        model.onImportWindowsApp = { [weak self] in self?.importWindowsAppConnections(nil) }
+        model.windowsAppInstalled = WindowsAppStore.isInstalled
         // After a sleep the connection may be long dead: asking for the desktop shows it at once
         wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification, object: nil, queue: nil
@@ -71,6 +73,43 @@ final class ConnectionViewController: NSViewController {
                     self?.importFiles(urls, connecting: false)
                 }
             }
+        }
+    }
+
+    /// The menu command: the connections of Windows App join the list, without their passwords
+    /// Reading its store may bring the question of macOS about the data of other apps: it comes only on this command
+    @objc func importWindowsAppConnections(_ sender: Any?) {
+        importWindowsApp(from: WindowsAppStore())
+    }
+
+    func importWindowsApp(from store: WindowsAppStore) {
+        let profiles: [ConnectionProfile]
+        do {
+            profiles = try store.profiles()
+        } catch WindowsAppStore.ReadError.unknownSchema {
+            showImportProblem(.connectionsWindowsAppUnknown)
+            return
+        } catch {
+            showImportProblem(.connectionsWindowsAppUnreadable)
+            return
+        }
+        guard !profiles.isEmpty else {
+            showImportProblem(.connectionsWindowsAppEmpty)
+            return
+        }
+        let count = model.importProfiles(profiles)
+        model.status = Localization.text(
+            .connectionsWindowsAppImported, ["added": String(count.added), "existing": String(count.existing)])
+    }
+
+    /// An import that brought nothing: the status line shows only with a selected profile, so the answer is a sheet
+    private func showImportProblem(_ key: TextKey) {
+        let alert = NSAlert()
+        alert.messageText = Localization.text(key)
+        if let window = view.window {
+            alert.beginSheetModal(for: window)
+        } else {
+            alert.runModal()
         }
     }
 
@@ -440,8 +479,13 @@ final class ConnectionViewController: NSViewController {
 }
 
 extension ConnectionViewController: NSMenuItemValidation {
-    /// Disconnecting makes sense only while a session exists, from connecting until Disconnected
+    /// Disconnecting makes sense only while a session exists, from connecting until Disconnected,
+    /// and the import from Windows App only where it is installed
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        menuItem.action != #selector(disconnect(_:)) || session != nil
+        switch menuItem.action {
+        case #selector(disconnect(_:)): session != nil
+        case #selector(importWindowsAppConnections(_:)): model.windowsAppInstalled
+        default: true
+        }
     }
 }
