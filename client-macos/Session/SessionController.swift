@@ -1,4 +1,5 @@
 import Foundation
+import IOSurface
 import VibeRDPCore
 
 /// One connection attempt to one server: wraps a VRCSession and brings its callbacks to the main thread
@@ -10,6 +11,10 @@ final class SessionController {
         case failed(VRCErrorKind, name: String)
         /// The certificate needs the user; answer with answerCertificate
         case certificateQuestion(ServerCertificate, CertificateVerdict)
+        /// The desktop got a new surface of this size in pixels: take it with frameSurface
+        case frameResized(width: UInt32, height: UInt32)
+        /// Pixels of the current surface changed
+        case frameUpdated
     }
 
     private let trusted: TrustedCertificates
@@ -22,8 +27,9 @@ final class SessionController {
         self.onEvent = onEvent
     }
 
-    /// Starts connecting; false when the core refuses the parameters or cannot start
-    func connect(to address: ServerAddress, username: String, password: String) -> Bool {
+    /// Starts connecting with a desktop of the given size in pixels
+    /// False when the core refuses the parameters or cannot start
+    func connect(to address: ServerAddress, username: String, password: String, desktop: CGSize) -> Bool {
         guard handle == nil else { return false }
         let (stream, continuation) = AsyncStream.makeStream(of: CoreEvent.self)
         let sink = EventSink(continuation: continuation)
@@ -43,7 +49,8 @@ final class SessionController {
             username.withOptionalCString { user in
                 password.withOptionalCString { secret in
                     var params = VRCConnectionParams(
-                        host: host, port: address.port ?? 0, username: user, domain: nil, password: secret)
+                        host: host, port: address.port ?? 0, width: UInt32(desktop.width),
+                        height: UInt32(desktop.height), username: user, domain: nil, password: secret)
                     return VRCSessionConnect(session, &params)
                 }
             }
@@ -55,6 +62,11 @@ final class SessionController {
         if let handle {
             VRCSessionDisconnect(handle.session)
         }
+    }
+
+    /// The surface the engine draws the desktop into; nil before the first frameResized
+    func frameSurface() -> IOSurfaceRef? {
+        handle.flatMap { VRCSessionCopyFrameSurface($0.session) }
     }
 
     /// The user's answer to the last certificate question
@@ -76,6 +88,10 @@ final class SessionController {
             onEvent(.state(state))
         case .failed(let kind, let name):
             onEvent(.failed(kind, name: name))
+        case .frameResized(let width, let height):
+            onEvent(.frameResized(width: width, height: height))
+        case .frameUpdated:
+            onEvent(.frameUpdated)
         case .certificate(let host, let port, let pem):
             Task { [weak self] in
                 let examined = await Task.detached(priority: .userInitiated) {
@@ -110,6 +126,8 @@ private enum CoreEvent: Sendable {
     case state(VRCSessionState)
     case failed(VRCErrorKind, name: String)
     case certificate(host: String, port: UInt16, pem: Data)
+    case frameResized(width: UInt32, height: UInt32)
+    case frameUpdated
 }
 
 /// The userData of the session: the callbacks run on the session thread and only enqueue, never block
@@ -133,6 +151,13 @@ private final class EventSink: Sendable {
                 let chain = Data(bytes: pem, count: request.pemLength)
                 let event = CoreEvent.certificate(host: String(cString: host), port: request.port, pem: chain)
                 eventSink(userData).continuation.yield(event)
+            },
+            frameResized: { userData, width, height in
+                eventSink(userData).continuation.yield(.frameResized(width: width, height: height))
+            },
+            // The view redraws the whole desktop from the surface, so the rectangle is not carried over
+            frameUpdated: { userData, _, _, _, _ in
+                eventSink(userData).continuation.yield(.frameUpdated)
             })
     }
 }

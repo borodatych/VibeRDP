@@ -33,14 +33,16 @@ final class ConnectionTests: XCTestCase {
         }
 
         let address = try XCTUnwrap(ServerAddress("viberdp-test.invalid"))
-        XCTAssertTrue(controller.connect(to: address, username: "", password: ""))
+        let desktop = CGSize(width: 1024, height: 768)
+        XCTAssertTrue(controller.connect(to: address, username: "", password: "", desktop: desktop))
         await fulfillment(of: [ended], timeout: 10)
 
         XCTAssertEqual(events.first, .state(.connecting))
         XCTAssertEqual(events.last, .state(.disconnected))
         let notFound = events.contains { if case .failed(.hostNotFound, _) = $0 { true } else { false } }
         XCTAssertTrue(notFound, "\(events)")
-        XCTAssertFalse(controller.connect(to: address, username: "", password: ""), "a controller connects once")
+        XCTAssertFalse(
+            controller.connect(to: address, username: "", password: "", desktop: desktop), "a controller connects once")
     }
 
     func testFormRefusesAnEmptyHost() {

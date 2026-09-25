@@ -23,5 +23,10 @@ final class MainWindowTests: XCTestCase {
         let quit = try XCTUnwrap(application.items.first { $0.action == #selector(NSApplication.terminate(_:)) })
         XCTAssertEqual(quit.keyEquivalent, "q")
         XCTAssertEqual(quit.title, Localization.text(.menuAppQuit, ["app": "VibeRDP"]))
+
+        // The shortcut is the system's own, so only the item is checked
+        XCTAssertNotNil(bar.items[2].submenu?.items.first { $0.action == #selector(NSWindow.toggleFullScreen(_:)) })
+        let window = try XCTUnwrap((NSApp.delegate as? AppDelegate)?.mainWindow)
+        XCTAssertTrue(window.collectionBehavior.contains(.fullScreenPrimary))
     }
 }

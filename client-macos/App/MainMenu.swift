@@ -28,6 +28,8 @@ struct MainMenu {
 
         windowMenu = NSMenu(title: Localization.text(.menuWindow))
         windowMenu.addItem(Self.item(.menuWindowMinimize, [:], #selector(NSWindow.performMiniaturize(_:)), key: "m"))
+        // AppKit gives this item the system shortcut itself, fn-F, and replaces any other
+        windowMenu.addItem(Self.item(.menuWindowFullScreen, [:], #selector(NSWindow.toggleFullScreen(_:))))
 
         for submenu in [application, file, windowMenu] {
             let holder = NSMenuItem()

@@ -1,7 +1,7 @@
 import AppKit
 import VibeRDPCore
 
-/// Content of the main window until the session view arrives (roadmap 1.2): where to connect and how it goes
+/// Content of the main window: the connection form, and the remote desktop over it while connected
 @MainActor
 final class ConnectionViewController: NSViewController {
     static let fieldWidth: CGFloat = 320
@@ -16,6 +16,8 @@ final class ConnectionViewController: NSViewController {
 
     private let trusted: TrustedCertificates
     private var session: SessionController?
+    private let form = NSStackView()
+    private var desktop: DesktopView?
     private var host = ""
     /// Why the session ended: the error comes right before Disconnected, and Disconnected shows it
     private var failure: String?
@@ -52,16 +54,16 @@ final class ConnectionViewController: NSViewController {
         statusLabel.alignment = .center
         statusLabel.widthAnchor.constraint(lessThanOrEqualToConstant: Self.statusWidth).isActive = true
 
-        let stack = NSStackView(views: [grid, connectButton, statusLabel])
-        stack.orientation = .vertical
-        stack.spacing = Self.spacing
-        stack.translatesAutoresizingMaskIntoConstraints = false
+        form.setViews([grid, connectButton, statusLabel], in: .center)
+        form.orientation = .vertical
+        form.spacing = Self.spacing
+        form.translatesAutoresizingMaskIntoConstraints = false
 
         let container = NSView(frame: NSRect(origin: .zero, size: MainWindow.defaultSize))
-        container.addSubview(stack)
+        container.addSubview(form)
         NSLayoutConstraint.activate([
-            stack.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-            stack.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+            form.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            form.centerYAnchor.constraint(equalTo: container.centerYAnchor),
         ])
         view = container
         setEditing(true)
@@ -85,6 +87,10 @@ final class ConnectionViewController: NSViewController {
             statusLabel.stringValue = Localization.text(.connectionStatusInvalidHost)
             return
         }
+        guard let renderer = FrameRenderer() else {
+            statusLabel.stringValue = Localization.text(.connectionStatusNoMetal)
+            return
+        }
 
         let controller = SessionController(trusted: trusted) { [weak self] event in
             self?.handle(event)
@@ -92,9 +98,16 @@ final class ConnectionViewController: NSViewController {
         host = address.host
         failure = nil
         session = controller
+        desktop = DesktopView(renderer: renderer)
         setEditing(false)
-        if !controller.connect(to: address, username: userField.stringValue, password: passwordField.stringValue) {
+        // The desktop is as large as the window in points; scaling it to the pixels of the display is task 3.2
+        let size = view.bounds.size
+        let started = controller.connect(
+            to: address, username: userField.stringValue, password: passwordField.stringValue,
+            desktop: CGSize(width: size.width.rounded(), height: size.height.rounded()))
+        if !started {
             session = nil
+            desktop = nil
             setEditing(true)
             statusLabel.stringValue = Localization.text(.connectionStatusStartFailed, ["host": host])
         }
@@ -106,8 +119,10 @@ final class ConnectionViewController: NSViewController {
             statusLabel.stringValue = Localization.text(.connectionStatusConnecting, ["host": host])
         case .state(.connected):
             statusLabel.stringValue = Localization.text(.connectionStatusConnected, ["host": host])
+            showDesktop()
         case .state(.disconnected):
             closeCertificateQuestion()
+            hideDesktop()
             session = nil
             setEditing(true)
             statusLabel.stringValue = failure ?? Localization.text(.connectionStatusDisconnected, ["host": host])
@@ -117,7 +132,30 @@ final class ConnectionViewController: NSViewController {
             failure = Self.message(for: kind, name: name, host: host)
         case .certificateQuestion(let certificate, let verdict):
             ask(about: certificate, verdict: verdict)
+        case .frameResized:
+            desktop?.surface = session?.frameSurface()
+        case .frameUpdated:
+            desktop?.frameChanged()
         }
+    }
+
+    /// The desktop covers the form while connected; the form stays underneath for the next connection
+    private func showDesktop() {
+        guard let desktop, desktop.superview == nil else { return }
+        desktop.frame = view.bounds
+        desktop.autoresizingMask = [.width, .height]
+        view.addSubview(desktop)
+        form.isHidden = true
+        view.window?.subtitle = host
+        view.window?.makeFirstResponder(desktop)
+    }
+
+    private func hideDesktop() {
+        desktop?.removeFromSuperview()
+        desktop = nil
+        form.isHidden = false
+        view.window?.subtitle = ""
+        view.window?.makeFirstResponder(hostField)
     }
 
     private func ask(about certificate: ServerCertificate, verdict: CertificateVerdict) {

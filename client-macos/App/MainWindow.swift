@@ -14,6 +14,7 @@ enum MainWindow {
         window.title = title
         window.contentViewController = content
         window.autorecalculatesKeyViewLoop = true
+        window.collectionBehavior.insert(.fullScreenPrimary)
         // The delegate owns the window; AppKit must not free it behind that reference when it closes
         window.isReleasedWhenClosed = false
         window.center()
