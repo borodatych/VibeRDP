@@ -36,6 +36,8 @@ TEST_SERVER_RUN_DIR=""
 # XCTest counts the allowance in whole minutes
 TEST_TIME_ALLOWANCE=60
 APP="$DERIVED_DATA/Build/Products/Release/VibeRDP.app"
+# The finished app goes into the project, next to the sources, and stays out of git; the build tree stays in the cache
+DIST="$REPO_ROOT/dist"
 HOST_ARCH=$(uname -m)
 
 check_prerequisites() {
@@ -200,7 +202,15 @@ main() {
     for arch in $ARCHS; do
         [ "$arch" = "$HOST_ARCH" ] || test_app "$arch"
     done
-    log "Done: $APP"
+    publish_app
+}
+
+# Only an app that passed its checks and tests replaces the previous one
+publish_app() {
+    mkdir -p "$DIST"
+    rm -rf "$DIST/VibeRDP.app"
+    ditto "$APP" "$DIST/VibeRDP.app"
+    log "Done: $DIST/VibeRDP.app"
 }
 
 main "$@"

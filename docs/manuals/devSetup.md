@@ -158,9 +158,12 @@ cd helper-win && cargo fmt --check && cargo clippy -- -D warnings && cargo clipp
 ├── test-server/    # тестовые собеседники: src/ — копия FreeRDP с патчами, build/, kdc/ — тестовый KDC, server.crt и server.key
 ├── core-tests/     # журналы тестового KDC и Kerberos-сервера последнего прогона ядра
 └── client/
-    ├── DerivedData/  # сборка Xcode: Build/Products/Release/VibeRDP.app
+    ├── DerivedData/  # дерево сборки Xcode
     └── results/      # результаты тестов по архитектурам (.xcresult) и журналы тестовых серверов
 ```
+
+Готовое приложение — не в кэше, а в проекте: `dist/VibeRDP.app`.
+`build-client.sh` кладёт его туда только после проверок бандла и тестов, папка `dist/` исключена из git.
 
 Подключение FreeRDP из CMake:
 - `CMAKE_PREFIX_PATH=<папка кэша>/prefix/universal`
