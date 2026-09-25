@@ -1,5 +1,5 @@
 /*
- * Pointer input of a session: the app queues it from any thread, and the session thread sends it
+ * Input of a session, the mouse and the keyboard: the app queues it from any thread, and the session thread sends it
  * A slow link never blocks the caller, and nothing is sent while the session is set up or torn down
  */
 
@@ -13,16 +13,24 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* Moves merge, so only clicks and wheel steps fill the queue: a full one means the session stopped sending */
+/* Moves merge, so only clicks, wheel steps and keys fill the queue: a full one means the session stopped sending */
 #define VRC_INPUT_QUEUE_CAPACITY 256u
 
 /* The most wheel steps one rotation may need: RDP carries at most 255 units in one event */
 #define VRC_WHEEL_MAX_STEPS 32u
 
+/* Every key VRCSessionSendKey accepts: seven bits of scan code and the extended bit */
+#define VRC_KEY_COUNT 0x200u
+
 typedef enum VRCInputKind {
     VRCInputKindMove,
     VRCInputKindButton,
     VRCInputKindWheel,
+    VRCInputKindKey,
+    /* The desktop got the keyboard: the server learns the lock keys */
+    VRCInputKindFocusIn,
+    /* The desktop lost the keyboard: the keys the server holds down are released */
+    VRCInputKindReleaseKeys,
 } VRCInputKind;
 
 typedef struct VRCInputEvent {
@@ -33,7 +41,16 @@ typedef struct VRCInputEvent {
     bool pressed;
     VRCWheelAxis axis;
     int32_t delta;
+    uint16_t key;
+    bool repeat;
+    bool capsLock;
+    bool numLock;
 } VRCInputEvent;
+
+/* The keys the server holds down, as the session thread sent them */
+typedef struct VRCKeyState {
+    uint8_t down[VRC_KEY_COUNT / 8];
+} VRCKeyState;
 
 typedef struct VRCInputQueue {
     pthread_mutex_t mutex;
@@ -72,5 +89,17 @@ bool vrcButtonFlags(VRCMouseButton button, bool pressed, uint16_t* flags, bool* 
  * Returns the number of steps written to flags; a zero delta has none
  */
 size_t vrcWheelFlags(VRCWheelAxis axis, int32_t delta, uint16_t* flags, size_t capacity);
+
+/* A scan code of set 1 with the extended bit: not zero, at most 0x7F, and no other bits */
+bool vrcKeyValid(uint16_t key);
+
+/* Marks a key held down or released; an invalid key changes nothing */
+void vrcKeyStateSet(VRCKeyState* state, uint16_t key, bool down);
+
+/*
+ * Moves the keys held down into keys, in the order of their codes, and returns their count
+ * The keys moved are no longer held; those beyond the capacity stay
+ */
+size_t vrcKeyStateTakeDown(VRCKeyState* state, uint16_t* keys, size_t capacity);
 
 #endif

@@ -1,5 +1,5 @@
 /*
- * Input tests: the queue of pointer events and their encoding for RDP, built from core/src/input.c directly
+ * Input tests: the queue of mouse and keyboard events and their encoding for RDP, built from core/src/input.c directly
  * The framework exports only the VRC API, so the tests compile the module themselves
  * Usage: inputTests <test name>; CTest registers every test separately
  */
@@ -10,6 +10,7 @@
 #include <string.h>
 
 #include <freerdp/input.h>
+#include <freerdp/scancode.h>
 
 #include "input.h"
 
@@ -176,6 +177,85 @@ static bool testWheelSteps(void)
     return true;
 }
 
+/* A key between clicks keeps its place: Ctrl and a click reach the server in the order they were made */
+static bool testKeysKeepOrderWithPointer(void)
+{
+    VRCInputQueue queue;
+    vrcInputQueueInit(&queue);
+    vrcInputQueueOpen(&queue);
+    const VRCInputEvent control = { .kind = VRCInputKindKey, .key = RDP_SCANCODE_LCONTROL, .pressed = true };
+    const VRCInputEvent release = { .kind = VRCInputKindReleaseKeys };
+    CHECK(push(&queue, move(1, 1)) == VRCResultOK);
+    CHECK(push(&queue, control) == VRCResultOK);
+    CHECK(push(&queue, move(2, 2)) == VRCResultOK);
+    CHECK(push(&queue, button(VRCMouseButtonLeft, true)) == VRCResultOK);
+    CHECK(push(&queue, release) == VRCResultOK);
+
+    VRCInputEvent taken[5];
+    CHECK(vrcInputQueueTake(&queue, taken, 5) == 5);
+    CHECK(taken[0].kind == VRCInputKindMove && taken[0].x == 1);
+    CHECK(taken[1].kind == VRCInputKindKey && taken[1].key == RDP_SCANCODE_LCONTROL && taken[1].pressed);
+    CHECK(taken[2].kind == VRCInputKindMove && taken[2].x == 2);
+    CHECK(taken[3].kind == VRCInputKindButton);
+    CHECK(taken[4].kind == VRCInputKindReleaseKeys);
+    vrcInputQueueDestroy(&queue);
+    return true;
+}
+
+static bool testKeyValid(void)
+{
+    CHECK(vrcKeyValid(RDP_SCANCODE_KEY_A));
+    CHECK(vrcKeyValid(RDP_SCANCODE_RCONTROL));
+    CHECK(vrcKeyValid(VRC_KEY_PAUSE));
+    CHECK(vrcKeyValid(0x7F));
+    CHECK(vrcKeyValid(VRC_KEY_EXTENDED | 0x7F));
+
+    CHECK(!vrcKeyValid(0));
+    CHECK(!vrcKeyValid(VRC_KEY_EXTENDED));
+    /* The high bit of a scan code marks a release in the keyboard protocol, not a key */
+    CHECK(!vrcKeyValid(0x80));
+    CHECK(!vrcKeyValid(0x200 | RDP_SCANCODE_KEY_A));
+    CHECK(!vrcKeyValid(0xE01D));
+    return true;
+}
+
+/* The right Ctrl differs from the left by the extended bit alone, and the state tells them apart */
+static bool testKeyStateTracksKeys(void)
+{
+    VRCKeyState state = { 0 };
+    uint16_t keys[4];
+
+    vrcKeyStateSet(&state, RDP_SCANCODE_RCONTROL, true);
+    vrcKeyStateSet(&state, RDP_SCANCODE_LCONTROL, true);
+    vrcKeyStateSet(&state, RDP_SCANCODE_KEY_C, true);
+    vrcKeyStateSet(&state, RDP_SCANCODE_KEY_C, true);
+    vrcKeyStateSet(&state, RDP_SCANCODE_KEY_C, false);
+    /* An invalid key changes nothing, and a release of a key not held is harmless */
+    vrcKeyStateSet(&state, 0x80, true);
+    vrcKeyStateSet(&state, RDP_SCANCODE_KEY_V, false);
+
+    CHECK(vrcKeyStateTakeDown(&state, keys, 4) == 2);
+    CHECK(keys[0] == RDP_SCANCODE_LCONTROL && keys[1] == RDP_SCANCODE_RCONTROL);
+    CHECK(vrcKeyStateTakeDown(&state, keys, 4) == 0);
+    return true;
+}
+
+/* Keys beyond the room stay held and come with the next call */
+static bool testKeyStateTakeWithLessRoom(void)
+{
+    VRCKeyState state = { 0 };
+    uint16_t keys[1];
+
+    vrcKeyStateSet(&state, RDP_SCANCODE_LSHIFT, true);
+    vrcKeyStateSet(&state, RDP_SCANCODE_LWIN, true);
+    CHECK(vrcKeyStateTakeDown(&state, keys, 1) == 1);
+    CHECK(keys[0] == RDP_SCANCODE_LSHIFT);
+    CHECK(vrcKeyStateTakeDown(&state, keys, 1) == 1);
+    CHECK(keys[0] == RDP_SCANCODE_LWIN);
+    CHECK(vrcKeyStateTakeDown(&state, keys, 1) == 0);
+    return true;
+}
+
 typedef struct TestCase {
     const char* name;
     bool (*run)(void);
@@ -189,6 +269,10 @@ static const TestCase tests[] = {
     { "takeWithLessRoom", testTakeWithLessRoom },
     { "buttonFlags", testButtonFlags },
     { "wheelSteps", testWheelSteps },
+    { "keysKeepOrderWithPointer", testKeysKeepOrderWithPointer },
+    { "keyValid", testKeyValid },
+    { "keyStateTracksKeys", testKeyStateTracksKeys },
+    { "keyStateTakeWithLessRoom", testKeyStateTakeWithLessRoom },
 };
 
 int main(int argc, char* argv[])

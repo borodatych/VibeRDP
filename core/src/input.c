@@ -1,6 +1,7 @@
 #include "input.h"
 
 #include <freerdp/input.h>
+#include <freerdp/scancode.h>
 
 /* The largest rotation one pointer event carries: the field is 9 bits wide, signed */
 #define WHEEL_STEP_MAX 255
@@ -107,5 +108,34 @@ size_t vrcWheelFlags(VRCWheelAxis axis, int32_t delta, uint16_t* flags, size_t c
                                    : (uint16_t)(base | step);
         remaining -= step;
     }
+    return count;
+}
+
+bool vrcKeyValid(uint16_t key)
+{
+    const uint16_t code = RDP_SCANCODE_CODE(key);
+    return code != 0 && code <= 0x7F && (key & ~(uint16_t)(KBDEXT | 0xFF)) == 0;
+}
+
+void vrcKeyStateSet(VRCKeyState* state, uint16_t key, bool down)
+{
+    if (!vrcKeyValid(key))
+        return;
+    const uint8_t bit = (uint8_t)(1u << (key % 8));
+    if (down)
+        state->down[key / 8] |= bit;
+    else
+        state->down[key / 8] &= (uint8_t)~bit;
+}
+
+size_t vrcKeyStateTakeDown(VRCKeyState* state, uint16_t* keys, size_t capacity)
+{
+    size_t count = 0;
+    for (uint16_t key = 0; key < VRC_KEY_COUNT && count < capacity; key++)
+        if (state->down[key / 8] & (1u << (key % 8)))
+        {
+            keys[count++] = key;
+            vrcKeyStateSet(state, key, false);
+        }
     return count;
 }

@@ -51,7 +51,7 @@ target_include_directories(inputTests PRIVATE ${PROJECT_SOURCE_DIR}/src ${PROJEC
 target_link_libraries(inputTests PRIVATE freerdp-client)
 target_compile_options(inputTests PRIVATE -Wall -Wextra -Werror)
 foreach(test IN ITEMS queueKeepsOrder movesMerge closedQueueRefuses fullQueueFails takeWithLessRoom buttonFlags
-                      wheelSteps)
+                      wheelSteps keysKeepOrderWithPointer keyValid keyStateTracksKeys keyStateTakeWithLessRoom)
   add_test(NAME ${test} COMMAND inputTests ${test})
   set_tests_properties(${test} PROPERTIES TIMEOUT 60 ENVIRONMENT "${VRC_TEST_ENVIRONMENT}")
 endforeach()

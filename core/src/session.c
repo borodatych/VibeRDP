@@ -21,8 +21,13 @@
 #include <freerdp/gdi/gdi.h>
 #include <freerdp/graphics.h>
 #include <freerdp/input.h>
+#include <freerdp/scancode.h>
 #include <winpr/synch.h>
 #include <winpr/thread.h>
+
+/* The public header keeps its own copies, since no FreeRDP type crosses it */
+_Static_assert(VRC_KEY_EXTENDED == KBDEXT, "the extended bit of a key must be that of FreeRDP");
+_Static_assert(VRC_KEY_PAUSE == RDP_SCANCODE_PAUSE, "Pause must be the key FreeRDP names so");
 
 /* Where the certificate question stands: only a pending request can be answered, and only once */
 enum {
@@ -57,9 +62,11 @@ struct VRCSession {
     /* The surface locked for CPU writes between BeginPaint and EndPaint */
     IOSurfaceRef lockedFrame;
 
-    /* Pointer input the app queued; inputReady wakes the session thread, which alone sends it */
+    /* Input the app queued; inputReady wakes the session thread, which alone sends it */
     VRCInputQueue input;
     HANDLE inputReady;
+    /* The keys the server holds down: only the session thread touches it */
+    VRCKeyState keys;
 };
 
 /* The pointer FreeRDP allocates with the size the core registers: the converted image rides along */
@@ -389,6 +396,32 @@ static void sendInput(VRCSession* session, const VRCInputEvent* event)
                 (void)freerdp_input_send_mouse_event(context->input, steps[i], x, y);
             break;
         }
+        case VRCInputKindKey:
+            /* Pause is a whole sequence of presses and releases, so the server never holds it down */
+            if (event->key == VRC_KEY_PAUSE)
+            {
+                if (event->pressed)
+                    (void)freerdp_input_send_keyboard_pause_event(context->input);
+                break;
+            }
+            (void)freerdp_input_send_keyboard_event_ex(context->input, event->pressed, event->repeat, event->key);
+            vrcKeyStateSet(&session->keys, event->key, event->pressed);
+            break;
+        case VRCInputKindFocusIn:
+        {
+            const UINT16 toggles =
+                (event->capsLock ? KBD_SYNC_CAPS_LOCK : 0) | (event->numLock ? KBD_SYNC_NUM_LOCK : 0);
+            (void)freerdp_input_send_focus_in_event(context->input, toggles);
+            break;
+        }
+        case VRCInputKindReleaseKeys:
+        {
+            uint16_t keys[VRC_KEY_COUNT];
+            const size_t count = vrcKeyStateTakeDown(&session->keys, keys, ARRAYSIZE(keys));
+            for (size_t i = 0; i < count; i++)
+                (void)freerdp_input_send_keyboard_event_ex(context->input, FALSE, FALSE, keys[i]);
+            break;
+        }
     }
 }
 
@@ -496,6 +529,7 @@ static BOOL clientNew(freerdp* instance, rdpContext* context)
     session->certificateAnswered = CreateEventA(NULL, TRUE, FALSE, NULL);
     session->inputReady = CreateEventA(NULL, TRUE, FALSE, NULL);
     vrcInputQueueInit(&session->input);
+    session->keys = (VRCKeyState){ 0 };
     session->frame = NULL;
     session->lockedFrame = NULL;
     /* A static initializer cannot fail, so ClientFree always meets a valid mutex */
@@ -715,5 +749,32 @@ VRCResult VRCSessionSendMouseWheel(VRCSession* session, VRCWheelAxis axis, int32
         return VRCResultInvalidArgument;
 
     const VRCInputEvent event = { .kind = VRCInputKindWheel, .x = x, .y = y, .axis = axis, .delta = delta };
+    return queueInput(session, &event);
+}
+
+VRCResult VRCSessionSendKey(VRCSession* session, uint16_t key, bool pressed, bool repeat)
+{
+    if (!session || !vrcKeyValid(key))
+        return VRCResultInvalidArgument;
+
+    const VRCInputEvent event = { .kind = VRCInputKindKey, .key = key, .pressed = pressed, .repeat = repeat };
+    return queueInput(session, &event);
+}
+
+VRCResult VRCSessionSendFocusIn(VRCSession* session, bool capsLock, bool numLock)
+{
+    if (!session)
+        return VRCResultInvalidArgument;
+
+    const VRCInputEvent event = { .kind = VRCInputKindFocusIn, .capsLock = capsLock, .numLock = numLock };
+    return queueInput(session, &event);
+}
+
+VRCResult VRCSessionReleaseKeys(VRCSession* session)
+{
+    if (!session)
+        return VRCResultInvalidArgument;
+
+    const VRCInputEvent event = { .kind = VRCInputKindReleaseKeys };
     return queueInput(session, &event);
 }

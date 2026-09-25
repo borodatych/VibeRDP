@@ -114,13 +114,23 @@ static bool testInputNeedsAConnection(void)
     CHECK(VRCSessionSendMouseWheel(NULL, VRCWheelAxisVertical, 120, 1, 1) == VRCResultInvalidArgument);
     CHECK(VRCSessionSendMouseButton(session, (VRCMouseButton)5, true, 1, 1) == VRCResultInvalidArgument);
     CHECK(VRCSessionSendMouseWheel(session, (VRCWheelAxis)2, 120, 1, 1) == VRCResultInvalidArgument);
+    CHECK(VRCSessionSendKey(NULL, 0x1E, true, false) == VRCResultInvalidArgument);
+    CHECK(VRCSessionSendFocusIn(NULL, false, true) == VRCResultInvalidArgument);
+    CHECK(VRCSessionReleaseKeys(NULL) == VRCResultInvalidArgument);
+    CHECK(VRCSessionSendKey(session, 0, true, false) == VRCResultInvalidArgument);
+    CHECK(VRCSessionSendKey(session, 0x80, true, false) == VRCResultInvalidArgument);
+    CHECK(VRCSessionSendKey(session, 0xE01D, true, false) == VRCResultInvalidArgument);
 
     CHECK(VRCSessionSendMouseMove(session, 1, 1) == VRCResultInvalidState);
+    CHECK(VRCSessionSendKey(session, VRC_KEY_EXTENDED | 0x1D, true, false) == VRCResultInvalidState);
     const VRCConnectionParams params = loopbackParams(unusedPort());
     CHECK(VRCSessionConnect(session, &params) == VRCResultOK);
     CHECK(recorderWaitForState(recorder, VRCSessionStateDisconnected, STATE_TIMEOUT_MS));
     CHECK(VRCSessionSendMouseButton(session, VRCMouseButtonLeft, true, 1, 1) == VRCResultInvalidState);
     CHECK(VRCSessionSendMouseWheel(session, VRCWheelAxisVertical, 120, 1, 1) == VRCResultInvalidState);
+    CHECK(VRCSessionSendKey(session, VRC_KEY_PAUSE, true, false) == VRCResultInvalidState);
+    CHECK(VRCSessionSendFocusIn(session, true, true) == VRCResultInvalidState);
+    CHECK(VRCSessionReleaseKeys(session) == VRCResultInvalidState);
 
     VRCSessionDestroy(session);
     recorderFree(recorder);

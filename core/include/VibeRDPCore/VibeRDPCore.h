@@ -15,10 +15,12 @@
  * The engine draws into an IOSurface of the desktop size, BGRA in memory; the app shows it without a copy
  * frameResized gives the size of a new surface, frameUpdated the rectangle that changed in it
  *
- * Pointer input:
- * The app queues mouse events from any thread and never waits for the network; the session thread sends them
+ * Input:
+ * The app queues mouse and keyboard events from any thread and never waits for the network
+ * The session thread sends them
  * The queue holds them until the connection is active, also while the server reactivates it, and keeps their order
  * pointerChanged brings the pointer the server draws with, so the app can show it as its cursor
+ * Keys go by scan code: the server turns them into characters with the keyboard layout of the remote session
  */
 
 #ifndef VIBERDPCORE_H
@@ -100,6 +102,15 @@ typedef VRC_ENUM(VRCErrorKind) {
     VRCErrorKindAccountRestricted = 7,   /* The account is disabled, locked, expired or may not log on here */
     VRCErrorKindPasswordExpired = 8,     /* The password has to be changed first */
 } VRCErrorKind;
+
+/*
+ * A key of the PC keyboard is its scan code of set 1, as RDP carries it: the code in the low byte,
+ * with VRC_KEY_EXTENDED for the keys a real keyboard prefixes with E0, such as the right Ctrl or the arrows
+ */
+#define VRC_KEY_EXTENDED 0x100u
+
+/* Pause has no scan code of its own: for this key the core sends the sequence Windows expects */
+#define VRC_KEY_PAUSE (VRC_KEY_EXTENDED | 0x46u)
 
 typedef struct VRCSession VRCSession;
 
@@ -210,6 +221,19 @@ VRCResult VRCSessionSendMouseButton(VRCSession* session, VRCMouseButton button, 
  * InvalidArgument for a value outside VRCWheelAxis
  */
 VRCResult VRCSessionSendMouseWheel(VRCSession* session, VRCWheelAxis axis, int32_t delta, uint32_t x, uint32_t y);
+
+/*
+ * A press or a release of a key; repeat marks the presses the keyboard repeats while the key is held
+ * The core remembers the keys the server holds down, so VRCSessionReleaseKeys can let them all go
+ * InvalidArgument for a key that is no scan code: zero, above 0x7F, or with bits other than VRC_KEY_EXTENDED
+ */
+VRCResult VRCSessionSendKey(VRCSession* session, uint16_t key, bool pressed, bool repeat);
+
+/* The desktop got the keyboard: the server learns the state of the lock keys, as from mstsc on focus */
+VRCResult VRCSessionSendFocusIn(VRCSession* session, bool capsLock, bool numLock);
+
+/* The desktop lost the keyboard: every key the server holds down is released, so none sticks there */
+VRCResult VRCSessionReleaseKeys(VRCSession* session);
 
 #ifdef __cplusplus
 }
