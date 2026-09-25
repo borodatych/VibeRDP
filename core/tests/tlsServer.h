@@ -1,6 +1,7 @@
 /*
  * A fake RDP server that gets exactly as far as the TLS handshake:
  * it answers the X.224 connection request by choosing TLS, presents a self-signed certificate and hangs up
+ * The plain variant starts with TLS at once, as an RD Gateway speaks HTTPS
  * The certificate is generated at start, so no key material lives in the repository
  */
 
@@ -12,6 +13,7 @@
 typedef struct TlsServer TlsServer;
 
 TlsServer* tlsServerStart(void);
+TlsServer* tlsServerStartPlain(void);
 uint16_t tlsServerPort(const TlsServer* server);
 /* The server certificate in PEM, NUL-terminated */
 const char* tlsServerCertificatePem(const TlsServer* server);

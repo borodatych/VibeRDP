@@ -329,6 +329,8 @@ static bool testCredentialsCancelled(void)
     CHECK(recorderWaitForCredentials(recorder, STATE_TIMEOUT_MS));
     CHECK(VRCSessionCancelCredentials(session) == VRCResultOK);
     CHECK(VRCSessionCancelCredentials(session) == VRCResultInvalidState);
+    CHECK(VRCSessionResolveGatewayMessage(NULL, true) == VRCResultInvalidArgument);
+    CHECK(VRCSessionResolveGatewayMessage(session, true) == VRCResultInvalidState);
     CHECK(recorderWaitForState(recorder, VRCSessionStateDisconnected, STATE_TIMEOUT_MS));
 
     const RecorderSnapshot data = recorderSnapshot(recorder);
@@ -365,6 +367,43 @@ static bool testDisconnectWhileCredentialsPending(void)
     VRCSessionDestroy(session);
     recorderFree(recorder);
     tlsServerStop(server);
+    return true;
+}
+
+/*
+ * With a gateway the client talks TLS to the gateway before anything else, so the first certificate is the gateway's:
+ * its host and port, not those of the computer behind it
+ */
+static bool testGatewayComesFirst(void)
+{
+    TlsServer* gateway = tlsServerStartPlain();
+    Recorder* recorder = recorderNew();
+    const VRCCallbacks callbacks = recorderCallbacks();
+    VRCSession* session = VRCSessionCreate(&callbacks, recorder);
+    CHECK(session != NULL);
+    const VRCConnectionParams params = {
+        .host = "desktop.internal.invalid",
+        .username = "CORP\\alice",
+        .password = "secret",
+        .gatewayHost = "127.0.0.1",
+        .gatewayPort = tlsServerPort(gateway),
+        .gatewayUsesServerCredentials = true,
+    };
+    CHECK(VRCSessionConnect(session, &params) == VRCResultOK);
+    CHECK(recorderWaitForCertificate(recorder, STATE_TIMEOUT_MS));
+
+    const RecorderSnapshot data = recorderSnapshot(recorder);
+    CHECK(strcmp(data.certificateHost, "127.0.0.1") == 0);
+    CHECK(data.certificatePort == tlsServerPort(gateway));
+    CHECK(strncmp(data.certificatePem, tlsServerCertificatePem(gateway), strlen(tlsServerCertificatePem(gateway))) == 0);
+    /* The server credentials went to the gateway as well, so nobody was asked */
+    CHECK(data.credentialsCount == 0);
+
+    VRCSessionDisconnect(session);
+    CHECK(recorderWaitForState(recorder, VRCSessionStateDisconnected, STOP_BUDGET_MS));
+    VRCSessionDestroy(session);
+    recorderFree(recorder);
+    tlsServerStop(gateway);
     return true;
 }
 
@@ -567,6 +606,7 @@ static const TestCase tests[] = {
     { "credentialsShowTheUserName", testCredentialsShowTheUserName },
     { "credentialsCancelled", testCredentialsCancelled },
     { "disconnectWhileCredentialsPending", testDisconnectWhileCredentialsPending },
+    { "gatewayComesFirst", testGatewayComesFirst },
     { "certificateWithoutCallback", testCertificateWithoutCallback },
     { "disconnectWhileCertificatePending", testDisconnectWhileCertificatePending },
     { "destroyWhileCertificatePending", testDestroyWhileCertificatePending },

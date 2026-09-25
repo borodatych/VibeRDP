@@ -32,6 +32,7 @@ set(VRC_SESSION_TESTS
     credentialsShowTheUserName
     credentialsCancelled
     disconnectWhileCredentialsPending
+    gatewayComesFirst
     certificateWithoutCallback
     disconnectWhileCertificatePending
     destroyWhileCertificatePending)
@@ -57,6 +58,15 @@ target_compile_options(inputTests PRIVATE -Wall -Wextra -Werror)
 foreach(test IN ITEMS queueKeepsOrder movesMerge closedQueueRefuses fullQueueFails takeWithLessRoom buttonFlags
                       wheelSteps keysKeepOrderWithPointer keyValid keyStateTracksKeys keyStateTakeWithLessRoom)
   add_test(NAME ${test} COMMAND inputTests ${test})
+  set_tests_properties(${test} PROPERTIES TIMEOUT 60 ENVIRONMENT "${VRC_TEST_ENVIRONMENT}")
+endforeach()
+
+add_executable(decisionTests decisionTests.c ${PROJECT_SOURCE_DIR}/src/decision.c)
+target_include_directories(decisionTests PRIVATE ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/include)
+target_link_libraries(decisionTests PRIVATE freerdp-client)
+target_compile_options(decisionTests PRIVATE -Wall -Wextra -Werror)
+foreach(test IN ITEMS answerNeedsAQuestion answerBeforeTheWait answerFromAnotherThread abortEndsTheWait)
+  add_test(NAME ${test} COMMAND decisionTests ${test})
   set_tests_properties(${test} PROPERTIES TIMEOUT 60 ENVIRONMENT "${VRC_TEST_ENVIRONMENT}")
 endforeach()
 

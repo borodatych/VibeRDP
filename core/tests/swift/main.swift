@@ -50,15 +50,18 @@ var callbacks = VRCCallbacks(
     frameResized: nil,
     frameUpdated: nil,
     pointerChanged: nil,
-    credentialsNeeded: nil)
+    credentialsNeeded: nil,
+    gatewayMessage: nil)
 
 guard let session = VRCSessionCreate(&callbacks, Unmanaged.passUnretained(watched).toOpaque()) else {
     fatalError("VRCSessionCreate returned nil")
 }
 
 let result: VRCResult = "127.0.0.1".withCString { host in
-    var params = VRCConnectionParams(
-        host: host, port: unusedPort(), width: 0, height: 0, username: nil, domain: nil, password: nil)
+    // The zero initializer leaves every optional field empty: no credentials, no gateway
+    var params = VRCConnectionParams()
+    params.host = host
+    params.port = unusedPort()
     return VRCSessionConnect(session, &params)
 }
 precondition(result == .OK, "VRCSessionConnect returned \(result)")

@@ -36,6 +36,8 @@ static const uint8_t connectionConfirmTls[] = { 0x03, 0x00, 0x00, 0x13, 0x0E, 0x
                                                 0x00, 0x02, 0x00, 0x08, 0x00, 0x01, 0x00, 0x00, 0x00 };
 
 struct TlsServer {
+    /* The server answers the X.224 connection request before TLS, as an RDP server does */
+    bool negotiates;
     int listener;
     uint16_t port;
     pthread_t thread;
@@ -121,7 +123,7 @@ static void serveClient(TlsServer* server, int fd)
     (void)setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
     (void)setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
     (void)setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, sizeof(noSigPipe));
-    if (!negotiateTls(fd))
+    if (server->negotiates && !negotiateTls(fd))
         return;
 
     SSL* ssl = SSL_new(server->tls);
@@ -172,11 +174,12 @@ static int listenLoopback(uint16_t* port)
     return fd;
 }
 
-TlsServer* tlsServerStart(void)
+static TlsServer* start(bool negotiates)
 {
     TlsServer* server = calloc(1, sizeof(TlsServer));
     if (!server)
         abort();
+    server->negotiates = negotiates;
 
     EVP_PKEY* key = EVP_RSA_gen(RSA_BITS);
     if (!key)
@@ -195,6 +198,16 @@ TlsServer* tlsServerStart(void)
     if (pthread_create(&server->thread, NULL, serveLoop, server) != 0)
         fail("pthread_create");
     return server;
+}
+
+TlsServer* tlsServerStart(void)
+{
+    return start(true);
+}
+
+TlsServer* tlsServerStartPlain(void)
+{
+    return start(false);
 }
 
 uint16_t tlsServerPort(const TlsServer* server)

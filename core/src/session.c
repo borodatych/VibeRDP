@@ -7,6 +7,7 @@
 #define __STDC_WANT_LIB_EXT1__ 1
 
 #include "VibeRDPCore/VibeRDPCore.h"
+#include "decision.h"
 #include "frame.h"
 #include "input.h"
 #include "pointer.h"
@@ -26,20 +27,13 @@
 #include <freerdp/graphics.h>
 #include <freerdp/input.h>
 #include <freerdp/scancode.h>
+#include <winpr/string.h>
 #include <winpr/synch.h>
 #include <winpr/thread.h>
 
 /* The public header keeps its own copies, since no FreeRDP type crosses it */
 _Static_assert(VRC_KEY_EXTENDED == KBDEXT, "the extended bit of a key must be that of FreeRDP");
 _Static_assert(VRC_KEY_PAUSE == RDP_SCANCODE_PAUSE, "Pause must be the key FreeRDP names so");
-
-/* Where the certificate question stands: only a pending request can be answered, and only once */
-enum {
-    CertificateIdle,
-    CertificatePending,
-    CertificateAccepted,
-    CertificateRejected,
-};
 
 /* Where the credentials question stands; the answer itself is kept under credentialsMutex */
 enum {
@@ -59,11 +53,12 @@ struct VRCSession {
     VRCCallbacks callbacks;
     void* userData;
     atomic_bool started;
-    atomic_int certificateState;
+    /* Answered by VRCSessionResolveCertificate */
+    VRCDecision certificate;
     /* The core turned the certificate down: the TLS failure that follows is that decision, not a broken handshake */
     atomic_bool certificateRejected;
-    /* Set by VRCSessionResolveCertificate; the session thread waits for it together with the abort event */
-    HANDLE certificateAnswered;
+    /* Answered by VRCSessionResolveGatewayMessage */
+    VRCDecision gatewayConsent;
 
     /* The credentials question: its state and the answer change together, under the mutex */
     pthread_mutex_t credentialsMutex;
@@ -665,28 +660,50 @@ static int verifyX509Certificate(freerdp* instance, const BYTE* data, size_t len
         return CERTIFICATE_REJECTED;
     }
 
-    (void)ResetEvent(session->certificateAnswered);
-    atomic_store(&session->certificateState, CertificatePending);
+    vrcDecisionOpen(&session->certificate);
     const VRCCertificateRequest request = { .host = hostname, .port = port, .pem = data, .pemLength = length };
     session->callbacks.verifyCertificate(session->userData, &request);
 
-    HANDLE handles[] = { session->certificateAnswered, freerdp_abort_event(instance->context) };
-    const DWORD status = WaitForMultipleObjects(ARRAYSIZE(handles), handles, FALSE, INFINITE);
-    /* Back to idle before anything else: an answer racing with the abort now gets InvalidState */
-    const int answer = atomic_exchange(&session->certificateState, CertificateIdle);
-    if (status == WAIT_OBJECT_0 && answer == CertificateAccepted)
+    if (vrcDecisionWait(&session->certificate, freerdp_abort_event(instance->context)))
         return CERTIFICATE_ACCEPTED;
     atomic_store(&session->certificateRejected, true);
     return CERTIFICATE_REJECTED;
+}
+
+/*
+ * Runs on the session thread when the gateway has a message: the text goes to the app, and consent waits for it
+ * length counts the bytes of UTF-16 text; a message that needs consent and has nobody to ask is declined
+ */
+static BOOL presentGatewayMessage(freerdp* instance, UINT32 type, BOOL isDisplayMandatory, BOOL isConsentMandatory,
+                                  size_t length, const WCHAR* message)
+{
+    (void)isDisplayMandatory;
+    VRCSession* session = (VRCSession*)instance->context;
+    if (!session->callbacks.gatewayMessage)
+        return !isConsentMandatory;
+
+    char* text = message ? ConvertWCharNToUtf8Alloc(message, length / sizeof(WCHAR), NULL) : NULL;
+    const VRCGatewayMessage request = {
+        .kind = type == GATEWAY_MESSAGE_CONSENT ? VRCGatewayMessageKindConsent : VRCGatewayMessageKindService,
+        .needsConsent = isConsentMandatory,
+        .text = text ? text : "",
+    };
+    if (isConsentMandatory)
+        vrcDecisionOpen(&session->gatewayConsent);
+    session->callbacks.gatewayMessage(session->userData, &request);
+    free(text);
+
+    return !isConsentMandatory || vrcDecisionWait(&session->gatewayConsent, freerdp_abort_event(instance->context));
 }
 
 static BOOL clientNew(freerdp* instance, rdpContext* context)
 {
     VRCSession* session = (VRCSession*)context;
 
-    atomic_init(&session->certificateState, CertificateIdle);
+    /* Both are made even if one fails, so ClientFree meets two initialized decisions */
+    const bool certificate = vrcDecisionInit(&session->certificate);
+    const bool gatewayConsent = vrcDecisionInit(&session->gatewayConsent);
     atomic_init(&session->certificateRejected, false);
-    session->certificateAnswered = CreateEventA(NULL, TRUE, FALSE, NULL);
     /* A static initializer cannot fail, so ClientFree always meets a valid mutex */
     session->credentialsMutex = (pthread_mutex_t)PTHREAD_MUTEX_INITIALIZER;
     session->credentialsState = CredentialsIdle;
@@ -706,6 +723,7 @@ static BOOL clientNew(freerdp* instance, rdpContext* context)
     instance->PostDisconnect = postDisconnect;
     instance->VerifyX509Certificate = verifyX509Certificate;
     instance->AuthenticateEx = authenticate;
+    instance->PresentGatewayMessage = presentGatewayMessage;
 
     /*
      * The client library installs console prompts that read stdin and print to it; an app has neither
@@ -714,11 +732,9 @@ static BOOL clientNew(freerdp* instance, rdpContext* context)
     instance->ChooseSmartcard = NULL;
     instance->VerifyCertificateEx = NULL;
     instance->VerifyChangedCertificateEx = NULL;
-    instance->PresentGatewayMessage = NULL;
     instance->LogonErrorInfo = NULL;
     instance->GetAccessToken = NULL;
-    return session->certificateAnswered != NULL && session->credentialsAnswered != NULL &&
-           session->inputReady != NULL;
+    return certificate && gatewayConsent && session->credentialsAnswered != NULL && session->inputReady != NULL;
 }
 
 static void clientFree(freerdp* instance, rdpContext* context)
@@ -726,8 +742,8 @@ static void clientFree(freerdp* instance, rdpContext* context)
     (void)instance;
     VRCSession* session = (VRCSession*)context;
 
-    if (session->certificateAnswered)
-        (void)CloseHandle(session->certificateAnswered);
+    vrcDecisionDestroy(&session->certificate);
+    vrcDecisionDestroy(&session->gatewayConsent);
     if (session->credentialsAnswered)
         (void)CloseHandle(session->credentialsAnswered);
     clearAnswer(session);
@@ -761,13 +777,43 @@ static BOOL applyCredentials(rdpSettings* settings, const VRCConnectionParams* p
     return applied;
 }
 
+/*
+ * A gateway always, or only for addresses outside the local network; without a host the connection goes direct
+ * With the server credentials the gateway starts with them too: the engine then asks for neither again
+ */
+static BOOL applyGateway(rdpSettings* settings, const VRCConnectionParams* params)
+{
+    if (!params->gatewayHost || params->gatewayHost[0] == '\0')
+        return freerdp_set_gateway_usage_method(settings, TSC_PROXY_MODE_NONE_DIRECT);
+
+    const bool same = params->gatewayUsesServerCredentials;
+    char* user = NULL;
+    char* domain = NULL;
+    const BOOL split = splitUsername(same ? params->username : params->gatewayUsername,
+                                     same ? params->domain : params->gatewayDomain, &user, &domain);
+    const BOOL applied =
+        split &&
+        freerdp_set_gateway_usage_method(settings,
+                                         params->gatewayBypassLocal ? TSC_PROXY_MODE_DETECT : TSC_PROXY_MODE_DIRECT) &&
+        freerdp_settings_set_string(settings, FreeRDP_GatewayHostname, params->gatewayHost) &&
+        (params->gatewayPort == 0 || freerdp_settings_set_uint32(settings, FreeRDP_GatewayPort, params->gatewayPort)) &&
+        freerdp_settings_set_bool(settings, FreeRDP_GatewayUseSameCredentials, same) &&
+        freerdp_settings_set_string(settings, FreeRDP_GatewayUsername, user) &&
+        freerdp_settings_set_string(settings, FreeRDP_GatewayDomain, domain) &&
+        freerdp_settings_set_string(settings, FreeRDP_GatewayPassword,
+                                    same ? params->password : params->gatewayPassword);
+    free(user);
+    free(domain);
+    return applied;
+}
+
 static BOOL applyParams(rdpSettings* settings, const VRCConnectionParams* params)
 {
     return freerdp_settings_set_string(settings, FreeRDP_ServerHostname, params->host) &&
            (params->port == 0 || freerdp_settings_set_uint32(settings, FreeRDP_ServerPort, params->port)) &&
            (params->width == 0 || freerdp_settings_set_uint32(settings, FreeRDP_DesktopWidth, params->width)) &&
            (params->height == 0 || freerdp_settings_set_uint32(settings, FreeRDP_DesktopHeight, params->height)) &&
-           applyCredentials(settings, params);
+           applyCredentials(settings, params) && applyGateway(settings, params);
 }
 
 /*
@@ -892,13 +938,14 @@ VRCResult VRCSessionResolveCertificate(VRCSession* session, bool accept)
 {
     if (!session)
         return VRCResultInvalidArgument;
+    return vrcDecisionAnswer(&session->certificate, accept);
+}
 
-    int pending = CertificatePending;
-    if (!atomic_compare_exchange_strong(&session->certificateState, &pending,
-                                        accept ? CertificateAccepted : CertificateRejected))
-        return VRCResultInvalidState;
-    (void)SetEvent(session->certificateAnswered);
-    return VRCResultOK;
+VRCResult VRCSessionResolveGatewayMessage(VRCSession* session, bool accept)
+{
+    if (!session)
+        return VRCResultInvalidArgument;
+    return vrcDecisionAnswer(&session->gatewayConsent, accept);
 }
 
 IOSurfaceRef VRCSessionCopyFrameSurface(VRCSession* session)

@@ -16,6 +16,10 @@
  * and the session waits until VRCSessionProvideCredentials or VRCSessionCancelCredentials answers
  * or the session is asked to end; a wrong password ends the session, and the app retries with a new one
  *
+ * RD Gateway:
+ * With a gateway the engine reaches the computer through it: the gateway presents its own certificate
+ * and may ask for its own credentials, and a message that needs consent waits for VRCSessionResolveGatewayMessage
+ *
  * The remote desktop:
  * The engine draws into an IOSurface of the desktop size, BGRA in memory; the app shows it without a copy
  * frameResized gives the size of a new surface, frameUpdated the rectangle that changed in it
@@ -125,6 +129,18 @@ typedef VRC_ENUM(VRCCredentialsTarget) {
     VRCCredentialsTargetGateway = 1,
 } VRCCredentialsTarget;
 
+/* What a gateway says: a consent message before the connection, or a service message along the way */
+typedef VRC_ENUM(VRCGatewayMessageKind) {
+    VRCGatewayMessageKindConsent = 0,
+    VRCGatewayMessageKindService = 1,
+} VRCGatewayMessageKind;
+
+typedef struct VRCGatewayMessage {
+    VRCGatewayMessageKind kind;
+    bool needsConsent; /* The connection waits for VRCSessionResolveGatewayMessage; otherwise it goes on */
+    const char* text;  /* UTF-8, as the gateway administrator wrote it */
+} VRCGatewayMessage;
+
 /* The engine lacks a user name or a password for the target */
 typedef struct VRCCredentialsRequest {
     VRCCredentialsTarget target;
@@ -175,6 +191,12 @@ typedef struct VRCCallbacks {
      * Without this callback the engine goes on without them: NLA then fails, TLS shows the logon screen of Windows
      */
     void (*credentialsNeeded)(void* userData, const VRCCredentialsRequest* request);
+
+    /*
+     * The gateway has a message for the user; the message stays valid only during the call
+     * Without this callback a message that needs consent is declined, and the connection ends
+     */
+    void (*gatewayMessage)(void* userData, const VRCGatewayMessage* message);
 } VRCCallbacks;
 
 /*
@@ -189,6 +211,15 @@ typedef struct VRCConnectionParams {
     const char* username; /* Optional; without a domain, DOMAIN\user is split and user@domain is kept whole */
     const char* domain;   /* Optional */
     const char* password; /* Optional; the engine settings keep it until VRCSessionDestroy */
+
+    /* RD Gateway: NULL or empty connects directly */
+    const char* gatewayHost;
+    uint16_t gatewayPort;              /* 0 keeps the default, 443 */
+    bool gatewayUsesServerCredentials; /* The gateway gets the user name and password of the computer */
+    bool gatewayBypassLocal;           /* Addresses of the local network are reached directly */
+    const char* gatewayUsername;       /* Optional, as username; ignored when the server credentials are used */
+    const char* gatewayDomain;         /* Optional */
+    const char* gatewayPassword;       /* Optional */
 } VRCConnectionParams;
 
 /*
@@ -230,6 +261,12 @@ VRCResult VRCSessionProvideCredentials(VRCSession* session, const char* username
 
 /* Declines the pending credentials request: the session ends as after VRCSessionDisconnect, with no error */
 VRCResult VRCSessionCancelCredentials(VRCSession* session);
+
+/*
+ * Answers a gateway message that needs consent: accept goes on, decline ends the connection
+ * InvalidState when no such message is pending
+ */
+VRCResult VRCSessionResolveGatewayMessage(VRCSession* session, bool accept);
 
 /*
  * The surface the engine draws the desktop into, retained for the caller; NULL while there is none
