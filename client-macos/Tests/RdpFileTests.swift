@@ -70,6 +70,39 @@ final class RdpFileTests: XCTestCase {
         XCTAssertEqual(none.username, "")
     }
 
+    /// The gateway of a file, as FreeRDP reads it: used always (1) or outside the local network (2), never otherwise
+    func testGatewaySettings() throws {
+        let always = try XCTUnwrap(
+            RdpFile(
+                data: Data(
+                    """
+                    full address:s:desktop.internal
+                    gatewayhostname:s:gw.corp.com:8443
+                    gatewayusagemethod:i:1
+                    promptcredentialonce:i:0
+
+                    """.utf8)))
+        let profile = try XCTUnwrap(always.profile(named: "x"))
+        XCTAssertEqual(profile.gatewayAddress, "gw.corp.com:8443")
+        XCTAssertEqual(profile.gateway?.port, 8443)
+        XCTAssertFalse(profile.gatewayUsesServerCredentials)
+        XCTAssertFalse(profile.gatewayBypassLocal)
+
+        let detect = try XCTUnwrap(
+            RdpFile(data: Data("full address:s:w\ngatewayhostname:s:gw\ngatewayusagemethod:i:2\n".utf8)))
+        XCTAssertEqual(detect.profile(named: "x")?.gatewayAddress, "gw")
+        XCTAssertEqual(detect.profile(named: "x")?.gatewayBypassLocal, true)
+        XCTAssertEqual(detect.profile(named: "x")?.gatewayUsesServerCredentials, true)
+
+        for method in [0, 3, 4] {
+            let off = try XCTUnwrap(
+                RdpFile(data: Data("full address:s:w\ngatewayhostname:s:gw\ngatewayusagemethod:i:\(method)\n".utf8)))
+            XCTAssertEqual(off.profile(named: "x")?.gatewayAddress, "", "method \(method)")
+        }
+        let noMethod = try XCTUnwrap(RdpFile(data: Data("full address:s:w\ngatewayhostname:s:gw\n".utf8)))
+        XCTAssertEqual(noMethod.profile(named: "x")?.gatewayAddress, "")
+    }
+
     /// A file without settings is no connection file, and one without an address makes no profile
     func testWhatIsNoConnection() throws {
         XCTAssertNil(RdpFile(data: Data()))

@@ -131,10 +131,25 @@ private struct ProfileEditor: View {
                     isOn: Binding(
                         get: { model.selectedProfile?.remembersPassword ?? false },
                         set: { model.setRemembersPassword($0) }))
-                if model.hasSavedPassword {
+                if model.hasSavedPassword || model.hasSavedGatewayPassword {
                     Button(Localization.text(.profilePasswordForget)) {
                         model.forgetPassword()
                     }
+                }
+            }
+            Section(Localization.text(.profileGatewaySection)) {
+                TextField(
+                    Localization.text(.profileGatewayAddressLabel), text: field(\.gatewayAddress),
+                    prompt: Text(Localization.text(.profileGatewayAddressPlaceholder)))
+                if !(model.selectedProfile?.gatewayAddress.isEmpty ?? true) {
+                    Toggle(
+                        Localization.text(.profileGatewaySameCredentials), isOn: flag(\.gatewayUsesServerCredentials))
+                    if !(model.selectedProfile?.gatewayUsesServerCredentials ?? true) {
+                        TextField(
+                            Localization.text(.profileGatewayUserLabel), text: field(\.gatewayUsername),
+                            prompt: Text(Localization.text(.connectionUserPlaceholder)))
+                    }
+                    Toggle(Localization.text(.profileGatewayBypassLocal), isOn: flag(\.gatewayBypassLocal))
                 }
             }
             Section(Localization.text(.profileKeyboardSection)) {
@@ -156,6 +171,12 @@ private struct ProfileEditor: View {
     private func field(_ keyPath: WritableKeyPath<ConnectionProfile, String>) -> Binding<String> {
         Binding(
             get: { model.selectedProfile?[keyPath: keyPath] ?? "" },
+            set: { value in model.update { $0[keyPath: keyPath] = value } })
+    }
+
+    private func flag(_ keyPath: WritableKeyPath<ConnectionProfile, Bool>) -> Binding<Bool> {
+        Binding(
+            get: { model.selectedProfile?[keyPath: keyPath] ?? false },
             set: { value in model.update { $0[keyPath: keyPath] = value } })
     }
 

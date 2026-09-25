@@ -13,6 +13,8 @@ final class SessionController {
         case certificateQuestion(ServerCertificate, CertificateVerdict)
         /// The engine lacks a user name or a password; answer with answerCredentials or cancelCredentials
         case credentialsQuestion(CredentialsRequest)
+        /// The gateway has a message; one that needs consent waits for answerGatewayMessage
+        case gatewayMessage(GatewayMessage)
         /// The desktop got a new surface of this size in pixels: take it with frameSurface
         case frameResized(width: UInt32, height: UInt32)
         /// Pixels of the current surface changed
@@ -31,9 +33,13 @@ final class SessionController {
         self.onEvent = onEvent
     }
 
-    /// Starts connecting with a desktop of the given size in pixels
+    /// Starts connecting with a desktop of the given size in pixels, through the gateway when there is one
+    /// Empty credentials are not given at all: the engine asks for them when the server needs them
     /// False when the core refuses the parameters or cannot start
-    func connect(to address: ServerAddress, username: String, password: String, desktop: CGSize) -> Bool {
+    func connect(
+        to address: ServerAddress, username: String, password: String, gateway: GatewayParameters? = nil,
+        desktop: CGSize
+    ) -> Bool {
         guard handle == nil else { return false }
         let (stream, continuation) = AsyncStream.makeStream(of: CoreEvent.self)
         let sink = EventSink(continuation: continuation)
@@ -49,16 +55,24 @@ final class SessionController {
             }
         }
 
-        let result = address.host.withCString { host in
-            username.withOptionalCString { user in
-                password.withOptionalCString { secret in
-                    var params = VRCConnectionParams(
-                        host: host, port: address.port ?? 0, width: UInt32(desktop.width),
-                        height: UInt32(desktop.height), username: user, domain: nil, password: secret)
-                    return VRCSessionConnect(session, &params)
-                }
-            }
+        let strings = CStrings()
+        var params = VRCConnectionParams()
+        params.host = strings.copy(address.host)
+        params.port = address.port ?? 0
+        params.width = UInt32(desktop.width)
+        params.height = UInt32(desktop.height)
+        params.username = strings.copy(username)
+        params.password = strings.copy(password)
+        if let gateway {
+            params.gatewayHost = strings.copy(gateway.address.host)
+            params.gatewayPort = gateway.address.port ?? 0
+            params.gatewayUsesServerCredentials = gateway.usesServerCredentials
+            params.gatewayBypassLocal = gateway.bypassLocal
+            params.gatewayUsername = strings.copy(gateway.username)
+            params.gatewayPassword = strings.copy(gateway.password)
         }
+        // The engine copies the strings during the call, so they may go right after it
+        let result = withExtendedLifetime(strings) { VRCSessionConnect(session, &params) }
         return result == .OK
     }
 
@@ -84,6 +98,13 @@ final class SessionController {
     func cancelCredentials() {
         if let handle {
             _ = VRCSessionCancelCredentials(handle.session)
+        }
+    }
+
+    /// The user's answer to a gateway message that needs consent
+    func answerGatewayMessage(accept: Bool) {
+        if let handle {
+            _ = VRCSessionResolveGatewayMessage(handle.session, accept)
         }
     }
 
@@ -114,6 +135,8 @@ final class SessionController {
             onEvent(.pointer(pointer))
         case .credentials(let request):
             onEvent(.credentialsQuestion(request))
+        case .gatewayMessage(let message):
+            onEvent(.gatewayMessage(message))
         case .certificate(let host, let port, let pem):
             Task { [weak self] in
                 let examined = await Task.detached(priority: .userInitiated) {
@@ -150,6 +173,23 @@ struct CredentialsRequest: Equatable, Sendable {
     let username: String?
 }
 
+/// Where the gateway is and whose credentials it takes
+struct GatewayParameters: Equatable {
+    let address: ServerAddress
+    let usesServerCredentials: Bool
+    let bypassLocal: Bool
+    /// The gateway's own credentials; empty lets the engine ask for them
+    let username: String
+    let password: String
+}
+
+/// What a gateway tells the user: a consent to accept before connecting, or a notice along the way
+struct GatewayMessage: Equatable, Sendable {
+    let kind: VRCGatewayMessageKind
+    let needsConsent: Bool
+    let text: String
+}
+
 /// What the C callbacks hand over, copied out of memory that is valid only during the call
 private enum CoreEvent: Sendable {
     case state(VRCSessionState)
@@ -159,6 +199,7 @@ private enum CoreEvent: Sendable {
     case frameUpdated
     case pointer(RemotePointer)
     case credentials(CredentialsRequest)
+    case gatewayMessage(GatewayMessage)
 }
 
 /// The userData of the session: the callbacks run on the session thread and only enqueue, never block
@@ -198,6 +239,13 @@ private final class EventSink: Sendable {
                 let username = request.username.map { String(cString: $0) }
                 eventSink(userData).continuation.yield(
                     .credentials(CredentialsRequest(target: request.target, username: username)))
+            },
+            gatewayMessage: { userData, message in
+                guard let message = message?.pointee else { return }
+                let text = message.text.map { String(cString: $0) } ?? ""
+                eventSink(userData).continuation.yield(
+                    .gatewayMessage(
+                        GatewayMessage(kind: message.kind, needsConsent: message.needsConsent, text: text)))
             })
     }
 }
@@ -280,9 +328,21 @@ extension SessionController: DesktopInput {
     }
 }
 
-extension String {
-    /// An empty field means the value is not given at all
-    fileprivate func withOptionalCString<Result>(_ body: (UnsafePointer<CChar>?) -> Result) -> Result {
-        isEmpty ? body(nil) : withCString(body)
+/// C copies of the strings of one call, freed together once the call is over
+/// An empty string is not given at all; the copies are cleared first, since some of them are passwords
+private final class CStrings {
+    private var copies: [(pointer: UnsafeMutablePointer<CChar>, length: Int)] = []
+
+    func copy(_ string: String) -> UnsafePointer<CChar>? {
+        guard !string.isEmpty, let pointer = strdup(string) else { return nil }
+        copies.append((pointer, strlen(pointer)))
+        return UnsafePointer(pointer)
+    }
+
+    deinit {
+        for copy in copies {
+            _ = memset_s(copy.pointer, copy.length, 0, copy.length)
+            free(copy.pointer)
+        }
     }
 }

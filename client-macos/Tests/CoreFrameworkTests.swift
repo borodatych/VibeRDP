@@ -14,7 +14,7 @@ final class CoreFrameworkTests: XCTestCase {
     func testSessionLifecycleThroughTheFramework() {
         var callbacks = VRCCallbacks(
             stateChanged: nil, error: nil, verifyCertificate: nil, frameResized: nil, frameUpdated: nil,
-            pointerChanged: nil, credentialsNeeded: nil)
+            pointerChanged: nil, credentialsNeeded: nil, gatewayMessage: nil)
         let session = VRCSessionCreate(&callbacks, nil)
         XCTAssertNotNil(session)
         VRCSessionDestroy(session)
@@ -23,8 +23,8 @@ final class CoreFrameworkTests: XCTestCase {
     func testConnectRejectsMissingHost() {
         let session = VRCSessionCreate(nil, nil)
         defer { VRCSessionDestroy(session) }
-        var params = VRCConnectionParams(
-            host: nil, port: 0, width: 0, height: 0, username: nil, domain: nil, password: nil)
+        // The zero initializer leaves the host out, as well as every optional field
+        var params = VRCConnectionParams()
         XCTAssertEqual(VRCSessionConnect(session, &params), .invalidArgument)
     }
 }

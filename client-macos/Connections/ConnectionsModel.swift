@@ -19,6 +19,7 @@ final class ConnectionsModel {
     /// Typed in the editor for the selected profile: used for the next connection, never kept in the store
     var password = ""
     private(set) var hasSavedPassword = false
+    private(set) var hasSavedGatewayPassword = false
     /// How the last connection went, in the user's words
     var status = ""
     /// A session exists, from the start of connecting until Disconnected: the list and the editor wait for it
@@ -37,9 +38,10 @@ final class ConnectionsModel {
         selection.flatMap(store.profile)
     }
 
-    /// The selected profile has an address the client can read, and no session is running
+    /// The selected profile has an address and a gateway field the client can read, and no session is running
     var canConnect: Bool {
-        !isBusy && selectedProfile.flatMap { ServerAddress($0.address) } != nil
+        guard !isBusy, let profile = selectedProfile else { return false }
+        return ServerAddress(profile.address) != nil && profile.hasValidGateway
     }
 
     func update(_ change: (inout ConnectionProfile) -> Void) {
@@ -87,9 +89,12 @@ final class ConnectionsModel {
         }
     }
 
+    /// Forgets the saved passwords, both of the computer and of the gateway
     func forgetPassword() {
         guard let id = selection else { return }
-        store.passwords.deletePassword(for: id)
+        for kind in PasswordKind.allCases {
+            store.passwords.deletePassword(for: id, kind: kind)
+        }
         refreshSavedPassword()
     }
 
@@ -103,6 +108,7 @@ final class ConnectionsModel {
     }
 
     func refreshSavedPassword() {
-        hasSavedPassword = selection.map { store.passwords.hasPassword(for: $0) } ?? false
+        hasSavedPassword = selection.map { store.passwords.hasPassword(for: $0, kind: .server) } ?? false
+        hasSavedGatewayPassword = selection.map { store.passwords.hasPassword(for: $0, kind: .gateway) } ?? false
     }
 }

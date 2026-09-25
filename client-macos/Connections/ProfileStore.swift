@@ -2,7 +2,7 @@ import Foundation
 import Observation
 
 /// The saved connections, kept in the app defaults in the order they were added
-/// A profile that goes takes its saved password with it
+/// A profile that goes takes its saved passwords with it
 @MainActor
 @Observable
 final class ProfileStore {
@@ -48,6 +48,8 @@ final class ProfileStore {
 
     func delete(_ id: UUID) {
         profiles.removeAll { $0.id == id }
-        passwords.deletePassword(for: id)
+        for kind in PasswordKind.allCases {
+            passwords.deletePassword(for: id, kind: kind)
+        }
     }
 }

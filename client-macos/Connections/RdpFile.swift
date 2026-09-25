@@ -70,10 +70,23 @@ struct RdpFile: Equatable {
         return "\(domain)\\\(user)"
     }
 
+    /// The gateway the file goes through: the host when `gatewayusagemethod` says always (1) or outside
+    /// the local network (2); FreeRDP treats the other methods as a direct connection, and so does the profile
+    var gatewayAddress: String {
+        guard let host = string("gatewayhostname"), let method = integer("gatewayusagemethod"), [1, 2].contains(method)
+        else { return "" }
+        return host
+    }
+
     /// The profile the file describes, named after the file; nil without an address
+    /// `promptcredentialonce:i:0` gives the gateway credentials of its own; without the setting the gateway
+    /// takes those of the computer, as a new profile does
     func profile(named name: String) -> ConnectionProfile? {
         guard let address else { return nil }
-        return ConnectionProfile(name: name, address: address, username: username)
+        return ConnectionProfile(
+            name: name, address: address, username: username, gatewayAddress: gatewayAddress,
+            gatewayUsesServerCredentials: integer("promptcredentialonce").map { $0 != 0 } ?? true,
+            gatewayBypassLocal: integer("gatewayusagemethod") == 2)
     }
 }
 

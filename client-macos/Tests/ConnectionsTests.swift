@@ -38,16 +38,36 @@ final class ProfileStoreTests: XCTestCase {
         XCTAssertNil(reopened.profile(UUID()))
     }
 
-    /// A profile that goes takes its saved password with it
-    func testDeleteForgetsThePassword() {
+    /// A profile that goes takes its saved passwords with it, the gateway's too
+    func testDeleteForgetsThePasswords() {
         let passwords = MemoryPasswordStore()
         let store = ProfileStore(defaults: defaults, passwords: passwords)
         let profile = ConnectionProfile(address: "win")
         store.add(profile)
-        XCTAssertEqual(passwords.setPassword("secret", for: profile.id, label: "x"), errSecSuccess)
+        XCTAssertEqual(passwords.setPassword("secret", for: profile.id, kind: .server, label: "x"), errSecSuccess)
+        XCTAssertEqual(passwords.setPassword("gate", for: profile.id, kind: .gateway, label: "x"), errSecSuccess)
         store.delete(profile.id)
         XCTAssertEqual(store.profiles, [])
-        XCTAssertNil(passwords.password(for: profile.id))
+        XCTAssertTrue(passwords.passwords.isEmpty)
+    }
+
+    /// A profile saved without the gateway settings reads with their defaults: a direct connection
+    func testProfileWithoutGatewaySettingsDecodes() throws {
+        let id = UUID()
+        let stored = Data(
+            """
+            [{"id":"\(id.uuidString)","name":"Офис","address":"win","username":"alice",
+              "remembersPassword":false,"keyboard":"pc"}]
+            """.utf8)
+        defaults.set(stored, forKey: ProfileStore.defaultsKey)
+        let profile = try XCTUnwrap(ProfileStore(defaults: defaults, passwords: MemoryPasswordStore()).profile(id))
+        XCTAssertEqual(profile.name, "Офис")
+        XCTAssertFalse(profile.remembersPassword)
+        XCTAssertEqual(profile.keyboard, .pc)
+        XCTAssertEqual(profile.gatewayAddress, "")
+        XCTAssertNil(profile.gateway)
+        XCTAssertTrue(profile.gatewayUsesServerCredentials)
+        XCTAssertTrue(profile.hasValidGateway)
     }
 
     func testUnreadableProfilesLeaveTheListEmpty() {
@@ -114,11 +134,15 @@ final class ConnectionsModelTests: XCTestCase {
         XCTAssertNil(model.selection)
     }
 
-    /// A readable address and no session running
+    /// A readable address, a readable gateway or none, and no session running
     func testCanConnect() {
         model.addProfile()
         XCTAssertFalse(model.canConnect)
         model.update { $0.address = "win.corp:3390" }
+        XCTAssertTrue(model.canConnect)
+        model.update { $0.gatewayAddress = "two words" }
+        XCTAssertFalse(model.canConnect, "an unreadable gateway must not quietly connect directly")
+        model.update { $0.gatewayAddress = "gw.corp:8443" }
         XCTAssertTrue(model.canConnect)
         model.isBusy = true
         XCTAssertFalse(model.canConnect)
@@ -132,7 +156,7 @@ final class ConnectionsModelTests: XCTestCase {
         model.addProfile()
         let first = try XCTUnwrap(model.selection)
         model.addProfile()
-        XCTAssertEqual(passwords.setPassword("secret", for: first, label: "x"), errSecSuccess)
+        XCTAssertEqual(passwords.setPassword("secret", for: first, kind: .server, label: "x"), errSecSuccess)
         model.password = "typed"
         model.selection = first
         XCTAssertEqual(model.password, "")
@@ -143,13 +167,13 @@ final class ConnectionsModelTests: XCTestCase {
     func testRememberOffForgetsThePassword() throws {
         model.addProfile()
         let id = try XCTUnwrap(model.selection)
-        XCTAssertEqual(passwords.setPassword("secret", for: id, label: "x"), errSecSuccess)
+        XCTAssertEqual(passwords.setPassword("secret", for: id, kind: .server, label: "x"), errSecSuccess)
         model.refreshSavedPassword()
         XCTAssertTrue(model.hasSavedPassword)
 
         model.setRemembersPassword(false)
         XCTAssertEqual(model.selectedProfile?.remembersPassword, false)
-        XCTAssertNil(passwords.password(for: id))
+        XCTAssertNil(passwords.password(for: id, kind: .server))
         XCTAssertFalse(model.hasSavedPassword)
     }
 
@@ -181,25 +205,36 @@ final class LoginAttemptTests: XCTestCase {
     private let profile = ConnectionProfile(address: "win", username: "CORP\\alice")
 
     func testTypedPasswordWinsOverTheSavedOne() {
-        let typed = LoginAttempt.first(for: profile, typed: "typed", saved: "saved")
+        let typed = LoginAttempt.first(for: profile, typed: "typed", saved: "saved", savedGateway: nil)
         XCTAssertEqual(typed.password, "typed")
         XCTAssertTrue(typed.typedByUser)
         XCTAssertEqual(typed.username, "CORP\\alice")
         XCTAssertEqual(typed.passwordToSave, "typed")
 
-        let saved = LoginAttempt.first(for: profile, typed: "", saved: "saved")
+        let saved = LoginAttempt.first(for: profile, typed: "", saved: "saved", savedGateway: nil)
         XCTAssertEqual(saved.password, "saved")
         XCTAssertFalse(saved.typedByUser)
         XCTAssertNil(saved.passwordToSave, "a saved password is not saved again")
 
-        let none = LoginAttempt.first(for: profile, typed: "", saved: nil)
+        let none = LoginAttempt.first(for: profile, typed: "", saved: nil, savedGateway: nil)
         XCTAssertNil(none.password)
         XCTAssertNil(none.passwordToSave)
     }
 
+    /// The gateway's own password is saved apart from the computer's, and only when the user typed it
+    func testGatewayPassword() {
+        var attempt = LoginAttempt.first(for: profile, typed: "typed", saved: nil, savedGateway: "gate-saved")
+        XCTAssertEqual(attempt.gatewayPassword, "gate-saved")
+        XCTAssertNil(attempt.gatewayPasswordToSave, "a saved gateway password is not saved again")
+        attempt.answeredGateway(username: "GW\\bob", password: "gate-new", remember: true)
+        XCTAssertEqual(attempt.gatewayUsername, "GW\\bob")
+        XCTAssertEqual(attempt.gatewayPasswordToSave, "gate-new")
+        XCTAssertEqual(attempt.passwordToSave, "typed")
+    }
+
     /// An answer to a question is the user's own password, saved only when the box stays ticked
     func testAnsweredPassword() {
-        var attempt = LoginAttempt.first(for: profile, typed: "", saved: "old")
+        var attempt = LoginAttempt.first(for: profile, typed: "", saved: "old", savedGateway: nil)
         attempt.answered(username: "bob@corp", password: "new", remember: true)
         XCTAssertEqual(attempt.username, "bob@corp")
         XCTAssertEqual(attempt.passwordToSave, "new")
@@ -222,23 +257,38 @@ final class KeychainPasswordStoreTests: XCTestCase {
     }
 
     override func tearDown() async throws {
-        store.deletePassword(for: id)
+        for kind in PasswordKind.allCases {
+            store.deletePassword(for: id, kind: kind)
+        }
     }
 
     func testSaveReadReplaceAndDelete() {
-        XCTAssertFalse(store.hasPassword(for: id))
-        XCTAssertNil(store.password(for: id))
+        XCTAssertFalse(store.hasPassword(for: id, kind: .server))
+        XCTAssertNil(store.password(for: id, kind: .server))
 
-        XCTAssertEqual(store.setPassword("первый пароль", for: id, label: "VibeRDP: тест"), errSecSuccess)
-        XCTAssertTrue(store.hasPassword(for: id))
-        XCTAssertEqual(store.password(for: id), "первый пароль")
+        XCTAssertEqual(
+            store.setPassword("первый пароль", for: id, kind: .server, label: "VibeRDP: тест"), errSecSuccess)
+        XCTAssertTrue(store.hasPassword(for: id, kind: .server))
+        XCTAssertEqual(store.password(for: id, kind: .server), "первый пароль")
 
-        XCTAssertEqual(store.setPassword("второй", for: id, label: "VibeRDP: тест"), errSecSuccess)
-        XCTAssertEqual(store.password(for: id), "второй")
-        XCTAssertNil(store.password(for: UUID()))
+        XCTAssertEqual(store.setPassword("второй", for: id, kind: .server, label: "VibeRDP: тест"), errSecSuccess)
+        XCTAssertEqual(store.password(for: id, kind: .server), "второй")
+        XCTAssertNil(store.password(for: UUID(), kind: .server))
 
-        store.deletePassword(for: id)
-        XCTAssertFalse(store.hasPassword(for: id))
+        store.deletePassword(for: id, kind: .server)
+        XCTAssertFalse(store.hasPassword(for: id, kind: .server))
+    }
+
+    /// The gateway's password is a separate item of the same profile
+    func testGatewayPasswordIsSeparate() {
+        XCTAssertEqual(store.setPassword("computer", for: id, kind: .server, label: "VibeRDP: тест"), errSecSuccess)
+        XCTAssertEqual(
+            store.setPassword("gateway", for: id, kind: .gateway, label: "VibeRDP, шлюз: тест"), errSecSuccess)
+        XCTAssertEqual(store.password(for: id, kind: .server), "computer")
+        XCTAssertEqual(store.password(for: id, kind: .gateway), "gateway")
+        store.deletePassword(for: id, kind: .gateway)
+        XCTAssertEqual(store.password(for: id, kind: .server), "computer")
+        XCTAssertFalse(store.hasPassword(for: id, kind: .gateway))
     }
 }
 

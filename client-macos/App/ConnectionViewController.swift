@@ -92,14 +92,21 @@ final class ConnectionViewController: NSViewController {
     func connect(_ id: UUID) {
         guard session == nil, let profile = model.store.profile(id) else { return }
         let typed = model.password
-        let saved = typed.isEmpty ? model.store.passwords.password(for: id) : nil
-        start(LoginAttempt.first(for: profile, typed: typed, saved: saved))
+        let passwords = model.store.passwords
+        let saved = typed.isEmpty ? passwords.password(for: id, kind: .server) : nil
+        let ownGateway = profile.gateway != nil && !profile.gatewayUsesServerCredentials
+        let savedGateway = ownGateway ? passwords.password(for: id, kind: .gateway) : nil
+        start(LoginAttempt.first(for: profile, typed: typed, saved: saved, savedGateway: savedGateway))
     }
 
     private func start(_ attempt: LoginAttempt) {
         guard let profile = model.store.profile(attempt.profileID) else { return }
         guard let address = ServerAddress(profile.address) else {
             model.status = Localization.text(.connectionStatusInvalidHost)
+            return
+        }
+        guard profile.hasValidGateway else {
+            model.status = Localization.text(.connectionStatusInvalidGateway)
             return
         }
         guard let renderer = FrameRenderer() else {
@@ -121,8 +128,14 @@ final class ConnectionViewController: NSViewController {
         model.isBusy = true
         // The desktop is as large as the window in points; scaling it to the pixels of the display is task 3.2
         let size = view.bounds.size
+        let gateway = profile.gateway.map {
+            GatewayParameters(
+                address: $0, usesServerCredentials: profile.gatewayUsesServerCredentials,
+                bypassLocal: profile.gatewayBypassLocal, username: attempt.gatewayUsername,
+                password: attempt.gatewayPassword ?? "")
+        }
         let started = controller.connect(
-            to: address, username: attempt.username, password: attempt.password ?? "",
+            to: address, username: attempt.username, password: attempt.password ?? "", gateway: gateway,
             desktop: CGSize(width: size.width.rounded(), height: size.height.rounded()))
         if !started {
             session = nil
@@ -151,6 +164,8 @@ final class ConnectionViewController: NSViewController {
             ask(about: certificate, verdict: verdict)
         case .credentialsQuestion(let request):
             askForCredentials(request)
+        case .gatewayMessage(let message):
+            show(message)
         case .frameResized:
             desktop?.surface = session?.frameSurface()
         case .frameUpdated:
@@ -165,10 +180,17 @@ final class ConnectionViewController: NSViewController {
     private func signedIn() {
         guard let attempt, var profile = model.store.profile(attempt.profileID) else { return }
         profile.username = attempt.username
+        if !profile.gatewayUsesServerCredentials {
+            profile.gatewayUsername = attempt.gatewayUsername
+        }
         model.store.update(profile)
         model.password = ""
-        if let password = attempt.passwordToSave {
-            let status = model.store.passwords.setPassword(password, for: profile.id, label: Self.label(for: profile))
+        let saved: [(PasswordKind, String?)] = [
+            (.server, attempt.passwordToSave), (.gateway, attempt.gatewayPasswordToSave),
+        ]
+        for case (let kind, let password?) in saved {
+            let status = model.store.passwords.setPassword(
+                password, for: profile.id, kind: kind, label: Self.label(for: profile, kind: kind))
             if status != errSecSuccess {
                 tell(Localization.text(.connectionPasswordNotSaved, ["code": String(status)]))
             }
@@ -184,9 +206,14 @@ final class ConnectionViewController: NSViewController {
         let ended = attempt
         attempt = nil
         model.status = failure?.message ?? Localization.text(.connectionStatusDisconnected, ["host": host])
+        guard let ended, let failure, let profile = model.store.profile(ended.profileID) else { return }
         // A wrong password is asked for again, and the answer starts a new connection
-        if failure?.kind == .authentication, let ended {
-            askAgain(after: ended)
+        // A gateway turns a wrong password down as access denied, which for it asks for the gateway password again
+        if failure.kind == .authentication {
+            askAgain(after: ended, gateway: false)
+        } else if failure.kind == .accountRestricted, let gateway = profile.gateway {
+            model.status = Localization.text(.connectionErrorGatewayDenied, ["gateway": gateway.host])
+            askAgain(after: ended, gateway: !profile.gatewayUsesServerCredentials)
         }
     }
 
@@ -227,14 +254,17 @@ final class ConnectionViewController: NSViewController {
     }
 
     /// The engine waits for credentials it was not given; declining ends the connection without an error
+    /// A gateway that takes the credentials of the computer asks for those, so the question is about the computer
     private func askForCredentials(_ request: CredentialsRequest) {
-        guard let window = view.window, let attempt else {
+        guard let window = view.window, let attempt, let profile = model.store.profile(attempt.profileID) else {
             session?.cancelCredentials()
             return
         }
+        let ownGateway = request.target == .gateway && !profile.gatewayUsesServerCredentials
+        let known = ownGateway ? attempt.gatewayUsername : attempt.username
         let prompt = CredentialsPrompt(
-            target: request.target, host: host, username: request.username ?? attempt.username,
-            remember: attempt.remember, retry: false)
+            target: ownGateway ? .gateway : .server, host: ownGateway ? profile.gateway?.host ?? host : host,
+            username: request.username ?? known, remember: attempt.remember, retry: false)
         let session = self.session
         prompt.alert.beginSheetModal(for: window) { [weak self] response in
             MainActor.assumeIsolated {
@@ -243,26 +273,36 @@ final class ConnectionViewController: NSViewController {
                     session.cancelCredentials()
                     return
                 }
-                if request.target == .server {
+                if ownGateway {
+                    self.attempt?.answeredGateway(
+                        username: answer.username, password: answer.password, remember: answer.remember)
+                } else {
                     self.attempt?.answered(
                         username: answer.username, password: answer.password, remember: answer.remember)
-                    self.applyRemember(answer.remember)
                 }
+                self.applyRemember(answer.remember)
                 session.answerCredentials(username: answer.username, password: answer.password)
             }
         }
     }
 
-    /// After a wrong password: the same profile, the name and password the user enters now
-    private func askAgain(after ended: LoginAttempt) {
-        guard let window = view.window else { return }
+    /// After a wrong password: the same profile, the name and password the user enters now,
+    /// for the computer or for a gateway with credentials of its own
+    private func askAgain(after ended: LoginAttempt, gateway: Bool) {
+        guard let window = view.window, let profile = model.store.profile(ended.profileID) else { return }
         let prompt = CredentialsPrompt(
-            target: .server, host: host, username: ended.username, remember: ended.remember, retry: true)
+            target: gateway ? .gateway : .server, host: gateway ? profile.gateway?.host ?? host : host,
+            username: gateway ? ended.gatewayUsername : ended.username, remember: ended.remember, retry: true)
         prompt.alert.beginSheetModal(for: window) { [weak self] response in
             MainActor.assumeIsolated {
                 guard let self, self.session == nil, let answer = prompt.answer(for: response) else { return }
                 var next = ended
-                next.answered(username: answer.username, password: answer.password, remember: answer.remember)
+                if gateway {
+                    next.answeredGateway(
+                        username: answer.username, password: answer.password, remember: answer.remember)
+                } else {
+                    next.answered(username: answer.username, password: answer.password, remember: answer.remember)
+                }
                 self.attempt = next
                 self.applyRemember(answer.remember)
                 self.start(next)
@@ -270,13 +310,42 @@ final class ConnectionViewController: NSViewController {
         }
     }
 
-    /// Unticking the box in a question forgets the saved password at once, as in the editor
+    /// A gateway message: a consent waits for the user's answer, a notice only needs to be read
+    private func show(_ message: GatewayMessage) {
+        guard let window = view.window else {
+            if message.needsConsent {
+                session?.answerGatewayMessage(accept: false)
+            }
+            return
+        }
+        let gateway = attempt.flatMap { model.store.profile($0.profileID)?.gateway?.host } ?? host
+        let alert = NSAlert()
+        alert.messageText = Localization.text(.gatewayMessageTitle, ["gateway": gateway])
+        alert.informativeText = message.text
+        if message.needsConsent {
+            alert.addButton(withTitle: Localization.text(.gatewayMessageAccept))
+            alert.addButton(withTitle: Localization.text(.gatewayMessageDecline))
+        } else {
+            alert.addButton(withTitle: Localization.text(.gatewayMessageClose))
+        }
+        let session = self.session
+        alert.beginSheetModal(for: window) { [weak self] response in
+            MainActor.assumeIsolated {
+                guard message.needsConsent, let self, let session, session === self.session else { return }
+                session.answerGatewayMessage(accept: response == .alertFirstButtonReturn)
+            }
+        }
+    }
+
+    /// Unticking the box in a question forgets the saved passwords at once, as in the editor
     private func applyRemember(_ remember: Bool) {
         guard let id = attempt?.profileID, var profile = model.store.profile(id) else { return }
         profile.remembersPassword = remember
         model.store.update(profile)
         if !remember {
-            model.store.passwords.deletePassword(for: id)
+            for kind in PasswordKind.allCases {
+                model.store.passwords.deletePassword(for: id, kind: kind)
+            }
             model.refreshSavedPassword()
         }
     }
@@ -296,9 +365,14 @@ final class ConnectionViewController: NSViewController {
         }
     }
 
-    /// What Keychain Access shows for the saved password
-    static func label(for profile: ConnectionProfile) -> String {
-        Localization.text(.connectionPasswordLabelInKeychain, ["connection": profile.title])
+    /// What Keychain Access shows for a saved password
+    static func label(for profile: ConnectionProfile, kind: PasswordKind) -> String {
+        let key: TextKey =
+            switch kind {
+            case .server: .connectionPasswordLabelInKeychain
+            case .gateway: .connectionGatewayPasswordLabelInKeychain
+            }
+        return Localization.text(key, ["connection": profile.title])
     }
 
     /// The reason in the app's words; the engine name of the error stays as a code for support

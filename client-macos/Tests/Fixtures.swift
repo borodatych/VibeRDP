@@ -36,25 +36,27 @@ enum Fixtures {
 /// Passwords in memory, so tests of the profiles never touch the login keychain
 @MainActor
 final class MemoryPasswordStore: PasswordStore {
-    private(set) var passwords: [UUID: String] = [:]
-    private(set) var labels: [UUID: String] = [:]
+    private(set) var passwords: [String: String] = [:]
+    private(set) var labels: [String: String] = [:]
 
-    func password(for id: UUID) -> String? {
-        passwords[id]
+    func password(for id: UUID, kind: PasswordKind) -> String? {
+        passwords[KeychainPasswordStore.account(for: id, kind: kind)]
     }
 
-    func hasPassword(for id: UUID) -> Bool {
-        passwords[id] != nil
+    func hasPassword(for id: UUID, kind: PasswordKind) -> Bool {
+        password(for: id, kind: kind) != nil
     }
 
-    func setPassword(_ password: String, for id: UUID, label: String) -> OSStatus {
-        passwords[id] = password
-        labels[id] = label
+    func setPassword(_ password: String, for id: UUID, kind: PasswordKind, label: String) -> OSStatus {
+        let account = KeychainPasswordStore.account(for: id, kind: kind)
+        passwords[account] = password
+        labels[account] = label
         return errSecSuccess
     }
 
-    func deletePassword(for id: UUID) {
-        passwords[id] = nil
-        labels[id] = nil
+    func deletePassword(for id: UUID, kind: PasswordKind) {
+        let account = KeychainPasswordStore.account(for: id, kind: kind)
+        passwords[account] = nil
+        labels[account] = nil
     }
 }

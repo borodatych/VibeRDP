@@ -216,6 +216,8 @@ private final class LiveSession {
             // An empty answer goes on without credentials: the sample server has no logon of its own
             credentialsQuestions += 1
             controller.answerCredentials(username: "", password: "")
+        case .gatewayMessage:
+            break
         case .frameResized(let width, let height):
             resized = true
             desktopSize = CGSize(width: Int(width), height: Int(height))
