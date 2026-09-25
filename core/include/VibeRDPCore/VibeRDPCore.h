@@ -3,12 +3,17 @@
  * No FreeRDP type crosses this header, so Swift never sees the engine internals
  *
  * Threading:
- * Every callback runs on the session thread that the core owns, never on the caller's thread
- * Callbacks must return quickly and must not call VRCSessionDestroy: it waits for the session thread
+ * Callbacks run on threads the core owns, never on the caller's thread: the session thread,
+ * and for frameUpdated also the channel thread of the engine that carries the graphics pipeline
+ * Callbacks must return quickly and must not call VRCSessionDestroy: it waits for those threads
  *
  * Server certificates:
  * The core trusts no certificate by itself: every chain goes to the verifyCertificate callback,
  * and the session waits until VRCSessionResolveCertificate answers or the session is asked to end
+ *
+ * The remote desktop:
+ * The engine draws into an IOSurface of the desktop size, BGRA in memory; the app shows it without a copy
+ * frameResized gives the size of a new surface, frameUpdated the rectangle that changed in it
  */
 
 #ifndef VIBERDPCORE_H
@@ -17,6 +22,9 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+
+#include <CoreFoundation/CFBase.h>
+#include <IOSurface/IOSurfaceRef.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -84,6 +92,12 @@ typedef struct VRCCallbacks {
      * Without this callback every certificate is rejected
      */
     void (*verifyCertificate)(void* userData, const VRCCertificateRequest* request);
+
+    /* The desktop got a surface of this size in pixels: once before Connected, again whenever the server resizes it */
+    void (*frameResized)(void* userData, uint32_t width, uint32_t height);
+
+    /* Pixels changed inside this rectangle of the current surface */
+    void (*frameUpdated)(void* userData, uint32_t x, uint32_t y, uint32_t width, uint32_t height);
 } VRCCallbacks;
 
 /*
@@ -93,6 +107,8 @@ typedef struct VRCCallbacks {
 typedef struct VRCConnectionParams {
     const char* host;     /* Required: host name or address */
     uint16_t port;        /* 0 keeps the default RDP port */
+    uint32_t width;       /* Desktop size in pixels the client asks for; 0 keeps the engine default, 1024 */
+    uint32_t height;      /* 0 keeps the engine default, 768 */
     const char* username; /* Optional; without a domain, DOMAIN\user is split and user@domain is kept whole */
     const char* domain;   /* Optional */
     const char* password; /* Optional; the engine settings keep it until VRCSessionDestroy */
@@ -125,6 +141,12 @@ void VRCSessionDisconnect(VRCSession* session);
  * Returns InvalidState when no request is pending: already answered, or the session ended meanwhile
  */
 VRCResult VRCSessionResolveCertificate(VRCSession* session, bool accept);
+
+/*
+ * The surface the engine draws the desktop into, retained for the caller; NULL while there is none
+ * After frameResized the engine draws into a new surface, and the old one stays valid until released
+ */
+CF_RETURNS_RETAINED IOSurfaceRef VRCSessionCopyFrameSurface(VRCSession* session);
 
 #ifdef __cplusplus
 }

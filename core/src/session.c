@@ -4,7 +4,9 @@
  */
 
 #include "VibeRDPCore/VibeRDPCore.h"
+#include "frame.h"
 
+#include <pthread.h>
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -41,6 +43,15 @@ struct VRCSession {
     atomic_bool certificateRejected;
     /* Set by VRCSessionResolveCertificate; the session thread waits for it together with the abort event */
     HANDLE certificateAnswered;
+
+    /*
+     * The surface the engine draws into; it changes only under the update lock of FreeRDP,
+     * which also serializes the paints, and frameMutex lets VRCSessionCopyFrameSurface read it from any thread
+     */
+    IOSurfaceRef frame;
+    pthread_mutex_t frameMutex;
+    /* The surface locked for CPU writes between BeginPaint and EndPaint */
+    IOSurfaceRef lockedFrame;
 };
 
 /* The session served by the current thread: VRCSessionDestroy must not wait for its own thread */
@@ -108,18 +119,130 @@ static BOOL preConnect(freerdp* instance)
            PubSub_SubscribeChannelDisconnected(pubSub, freerdp_client_OnChannelDisconnectedEventHandler) >= 0;
 }
 
+/* Swaps the surface the app reads; the caller holds the update lock, so no paint sees the change halfway */
+static void replaceFrame(VRCSession* session, IOSurfaceRef surface)
+{
+    pthread_mutex_lock(&session->frameMutex);
+    IOSurfaceRef old = session->frame;
+    session->frame = surface;
+    pthread_mutex_unlock(&session->frameMutex);
+    if (old)
+        CFRelease(old);
+}
+
+static void notifyFrameResized(const VRCSession* session, UINT32 width, UINT32 height)
+{
+    if (session->callbacks.frameResized)
+        session->callbacks.frameResized(session->userData, width, height);
+}
+
+/* The changed rectangle, cut to the frame: the engine may invalidate beyond the edges */
+static void notifyFrameUpdated(const VRCSession* session, const rdpGdi* gdi, const GDI_RGN* invalid)
+{
+    const INT32 left = invalid->x < 0 ? 0 : invalid->x;
+    const INT32 top = invalid->y < 0 ? 0 : invalid->y;
+    const INT32 right = invalid->x + invalid->w > gdi->width ? gdi->width : invalid->x + invalid->w;
+    const INT32 bottom = invalid->y + invalid->h > gdi->height ? gdi->height : invalid->y + invalid->h;
+
+    if (session->callbacks.frameUpdated && right > left && bottom > top)
+        session->callbacks.frameUpdated(session->userData, (uint32_t)left, (uint32_t)top, (uint32_t)(right - left),
+                                        (uint32_t)(bottom - top));
+}
+
+/* Paints run on engine threads under the update lock: with the graphics pipeline, on the channel thread */
+static BOOL beginPaint(rdpContext* context)
+{
+    VRCSession* session = (VRCSession*)context;
+
+    if (!session->lockedFrame && session->frame)
+    {
+        (void)IOSurfaceLock(session->frame, 0, NULL);
+        session->lockedFrame = session->frame;
+    }
+    context->gdi->primary->hdc->hwnd->invalid->null = TRUE;
+    return TRUE;
+}
+
+static BOOL endPaint(rdpContext* context)
+{
+    VRCSession* session = (VRCSession*)context;
+    HGDI_WND window = context->gdi->primary->hdc->hwnd;
+
+    if (session->lockedFrame)
+    {
+        (void)IOSurfaceUnlock(session->lockedFrame, 0, NULL);
+        session->lockedFrame = NULL;
+    }
+    if (!window->invalid->null)
+        notifyFrameUpdated(session, context->gdi, window->invalid);
+    window->ninvalid = 0;
+    return TRUE;
+}
+
+/* The server changed the desktop size: a new surface replaces the old one together with the engine buffer */
+static BOOL desktopResize(rdpContext* context)
+{
+    VRCSession* session = (VRCSession*)context;
+    const UINT32 width = freerdp_settings_get_uint32(context->settings, FreeRDP_DesktopWidth);
+    const UINT32 height = freerdp_settings_get_uint32(context->settings, FreeRDP_DesktopHeight);
+    IOSurfaceRef surface = vrcFrameSurfaceCreate(width, height);
+    if (!surface)
+        return FALSE;
+
+    rdp_update_lock(context->update);
+    const BOOL resized = gdi_resize_ex(context->gdi, width, height, (UINT32)IOSurfaceGetBytesPerRow(surface),
+                                       PIXEL_FORMAT_BGRX32, IOSurfaceGetBaseAddress(surface), NULL);
+    if (resized)
+        replaceFrame(session, surface);
+    else
+        CFRelease(surface);
+    rdp_update_unlock(context->update);
+
+    if (resized)
+        notifyFrameResized(session, width, height);
+    return resized;
+}
+
+/* BGRX32 is B, G, R, X in memory: the byte order of a BGRA IOSurface and of MTLPixelFormatBGRA8Unorm */
 static BOOL postConnect(freerdp* instance)
 {
-    return gdi_init(instance, PIXEL_FORMAT_XRGB32);
+    rdpContext* context = instance->context;
+    VRCSession* session = (VRCSession*)context;
+    const UINT32 width = freerdp_settings_get_uint32(context->settings, FreeRDP_DesktopWidth);
+    const UINT32 height = freerdp_settings_get_uint32(context->settings, FreeRDP_DesktopHeight);
+    IOSurfaceRef surface = vrcFrameSurfaceCreate(width, height);
+    if (!surface)
+        return FALSE;
+
+    /* No free function: the surface owns the memory, and the engine only draws into it */
+    if (!gdi_init_ex(instance, PIXEL_FORMAT_BGRX32, (UINT32)IOSurfaceGetBytesPerRow(surface),
+                     IOSurfaceGetBaseAddress(surface), NULL))
+    {
+        CFRelease(surface);
+        return FALSE;
+    }
+    replaceFrame(session, surface);
+    context->update->BeginPaint = beginPaint;
+    context->update->EndPaint = endPaint;
+    context->update->DesktopResize = desktopResize;
+    notifyFrameResized(session, width, height);
+    return TRUE;
 }
 
 static void postDisconnect(freerdp* instance)
 {
+    VRCSession* session = (VRCSession*)instance->context;
     wPubSub* pubSub = instance->context->pubSub;
 
     (void)PubSub_UnsubscribeChannelConnected(pubSub, freerdp_client_OnChannelConnectedEventHandler);
     (void)PubSub_UnsubscribeChannelDisconnected(pubSub, freerdp_client_OnChannelDisconnectedEventHandler);
     gdi_free(instance);
+    if (session->lockedFrame)
+    {
+        (void)IOSurfaceUnlock(session->lockedFrame, 0, NULL);
+        session->lockedFrame = NULL;
+    }
+    replaceFrame(session, NULL);
 }
 
 /* Runs until the session ends; a stop without a reason gets a generic one, so the caller always learns why */
@@ -200,6 +323,10 @@ static BOOL clientNew(freerdp* instance, rdpContext* context)
     atomic_init(&session->certificateState, CertificateIdle);
     atomic_init(&session->certificateRejected, false);
     session->certificateAnswered = CreateEventA(NULL, TRUE, FALSE, NULL);
+    session->frame = NULL;
+    session->lockedFrame = NULL;
+    /* A static initializer cannot fail, so ClientFree always meets a valid mutex */
+    session->frameMutex = (pthread_mutex_t)PTHREAD_MUTEX_INITIALIZER;
     instance->PreConnect = preConnect;
     instance->PostConnect = postConnect;
     instance->PostDisconnect = postDisconnect;
@@ -226,6 +353,9 @@ static void clientFree(freerdp* instance, rdpContext* context)
 
     if (session->certificateAnswered)
         (void)CloseHandle(session->certificateAnswered);
+    /* A session that connected released its surface in PostDisconnect; one that never did has none */
+    replaceFrame(session, NULL);
+    pthread_mutex_destroy(&session->frameMutex);
 }
 
 static int clientStart(rdpContext* context)
@@ -262,7 +392,19 @@ static BOOL applyParams(rdpSettings* settings, const VRCConnectionParams* params
 {
     return freerdp_settings_set_string(settings, FreeRDP_ServerHostname, params->host) &&
            (params->port == 0 || freerdp_settings_set_uint32(settings, FreeRDP_ServerPort, params->port)) &&
+           (params->width == 0 || freerdp_settings_set_uint32(settings, FreeRDP_DesktopWidth, params->width)) &&
+           (params->height == 0 || freerdp_settings_set_uint32(settings, FreeRDP_DesktopHeight, params->height)) &&
            applyCredentials(settings, params);
+}
+
+/*
+ * The graphics pipeline carries the modern codecs, and RemoteFX serves the servers without it;
+ * a client leaves both off by default, and a server may refuse a client with no codec at all
+ */
+static BOOL applyGraphics(rdpSettings* settings)
+{
+    return freerdp_settings_set_bool(settings, FreeRDP_SupportGraphicsPipeline, TRUE) &&
+           freerdp_settings_set_bool(settings, FreeRDP_RemoteFxCodec, TRUE);
 }
 
 /* NLA and TLS stay negotiable; the legacy RDP Security layer has weak encryption and no server authentication */
@@ -323,8 +465,8 @@ VRCResult VRCSessionConnect(VRCSession* session, const VRCConnectionParams* para
         return VRCResultInvalidState;
 
     rdpSettings* settings = session->common.context.settings;
-    if (!applyParams(settings, params) || !applySecurity(settings) || !disableFeaturesNeedingDeviceChannels(settings) ||
-        freerdp_client_start(&session->common.context) != 0)
+    if (!applyParams(settings, params) || !applySecurity(settings) || !applyGraphics(settings) ||
+        !disableFeaturesNeedingDeviceChannels(settings) || freerdp_client_start(&session->common.context) != 0)
         return VRCResultFailure;
     return VRCResultOK;
 }
@@ -346,4 +488,17 @@ VRCResult VRCSessionResolveCertificate(VRCSession* session, bool accept)
         return VRCResultInvalidState;
     (void)SetEvent(session->certificateAnswered);
     return VRCResultOK;
+}
+
+IOSurfaceRef VRCSessionCopyFrameSurface(VRCSession* session)
+{
+    if (!session)
+        return NULL;
+
+    pthread_mutex_lock(&session->frameMutex);
+    IOSurfaceRef surface = session->frame;
+    if (surface)
+        CFRetain(surface);
+    pthread_mutex_unlock(&session->frameMutex);
+    return surface;
 }

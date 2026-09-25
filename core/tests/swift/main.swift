@@ -46,14 +46,17 @@ var callbacks = VRCCallbacks(
     error: { userData, _, code, _, _ in
         observer(from: userData).errorCode = code
     },
-    verifyCertificate: nil)
+    verifyCertificate: nil,
+    frameResized: nil,
+    frameUpdated: nil)
 
 guard let session = VRCSessionCreate(&callbacks, Unmanaged.passUnretained(watched).toOpaque()) else {
     fatalError("VRCSessionCreate returned nil")
 }
 
 let result: VRCResult = "127.0.0.1".withCString { host in
-    var params = VRCConnectionParams(host: host, port: unusedPort(), username: nil, domain: nil, password: nil)
+    var params = VRCConnectionParams(
+        host: host, port: unusedPort(), width: 0, height: 0, username: nil, domain: nil, password: nil)
     return VRCSessionConnect(session, &params)
 }
 precondition(result == .OK, "VRCSessionConnect returned \(result)")

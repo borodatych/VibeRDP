@@ -27,7 +27,7 @@ set(VRC_PUBLIC_HEADER ${CMAKE_CURRENT_SOURCE_DIR}/include/VibeRDPCore/VibeRDPCor
 set(VRC_MODULE_MAP ${CMAKE_CURRENT_SOURCE_DIR}/framework/module.modulemap)
 set(VRC_EXPORTS ${CMAKE_CURRENT_SOURCE_DIR}/framework/exports.txt)
 
-add_library(VibeRDPCore SHARED src/session.c ${VRC_PUBLIC_HEADER} ${VRC_MODULE_MAP})
+add_library(VibeRDPCore SHARED src/session.c src/frame.c ${VRC_PUBLIC_HEADER} ${VRC_MODULE_MAP})
 set_source_files_properties(${VRC_MODULE_MAP} PROPERTIES MACOSX_PACKAGE_LOCATION Modules)
 set_target_properties(VibeRDPCore PROPERTIES
   FRAMEWORK TRUE
@@ -40,7 +40,7 @@ set_target_properties(VibeRDPCore PROPERTIES
   BUILD_WITH_INSTALL_NAME_DIR ON
   LINK_DEPENDS ${VRC_EXPORTS})
 target_include_directories(VibeRDPCore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(VibeRDPCore PRIVATE freerdp-client)
+target_link_libraries(VibeRDPCore PRIVATE freerdp-client "-framework IOSurface" "-framework CoreFoundation")
 target_link_options(VibeRDPCore PRIVATE "LINKER:-exported_symbols_list,${VRC_EXPORTS}" "LINKER:-dead_strip")
 # FreeRDP headers come from an imported target and count as system headers: the strict warnings hit only our code
 target_compile_options(VibeRDPCore PRIVATE -Wall -Wextra -Werror)

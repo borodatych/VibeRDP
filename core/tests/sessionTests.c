@@ -60,6 +60,9 @@ static bool testLifecycle(void)
     }
     VRCSession* bare = VRCSessionCreate(NULL, NULL);
     CHECK(bare != NULL);
+    /* No desktop before Connected, so no surface to draw */
+    CHECK(VRCSessionCopyFrameSurface(bare) == NULL);
+    CHECK(VRCSessionCopyFrameSurface(NULL) == NULL);
     VRCSessionDestroy(bare);
     VRCSessionDestroy(NULL);
     VRCSessionDisconnect(NULL);

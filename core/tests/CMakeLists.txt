@@ -35,6 +35,15 @@ foreach(test IN LISTS VRC_SESSION_TESTS)
   set_tests_properties(${test} PROPERTIES TIMEOUT 60 ENVIRONMENT "${VRC_TEST_ENVIRONMENT}")
 endforeach()
 
+add_executable(frameTests frameTests.c ${PROJECT_SOURCE_DIR}/src/frame.c)
+target_include_directories(frameTests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(frameTests PRIVATE "-framework IOSurface" "-framework CoreFoundation")
+target_compile_options(frameTests PRIVATE -Wall -Wextra -Werror)
+foreach(test IN ITEMS surfaceMatchesTheDesktop emptySizeHasNoSurface)
+  add_test(NAME ${test} COMMAND frameTests ${test})
+  set_tests_properties(${test} PROPERTIES TIMEOUT 60 ENVIRONMENT "${VRC_TEST_ENVIRONMENT}")
+endforeach()
+
 # Swift imports the module of the built framework, as the app does
 # swiftc accepts no UndefinedBehaviorSanitizer and CMake builds Swift only with Ninja or Xcode
 if(NOT VRC_SANITIZE AND CMAKE_GENERATOR MATCHES "Ninja")
