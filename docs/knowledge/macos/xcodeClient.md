@@ -29,8 +29,12 @@
 - Жёстко приложение на Swift 6 грузит только `libswiftCore` и `libswift_Concurrency` из `/usr/lib/swift` — обе есть в macOS 14
 - В срезе x86_64 есть слабая ссылка на `___chkstk_darwin` — пробу стека; рядом лежит её приватная копия из compiler-rt (`non-external (was a private external) ___chkstk_darwin`), так что без системной функции код не падает
 - Ни то ни другое не вызов API новее минимальной macOS, а проверка по `nm -m` видит их как `(undefined) weak external`
+- SwiftUI добавляет слабые ссылки на свои символы новее macOS 14: `_TagTraitWritingModifier`, новые `ForEach.create` и `Section.create`, — и на `__availability_version_check` из libSystem
+- Их даёт код SDK, встроенный в приложение: `View.tag(_:)` — `@export(implementation)` с веткой `if #available(macOS 26.0, *)` и запасной веткой для старых систем (`SwiftUICore.swiftinterface` в SDK Xcode 27, строки 14495-14512)
+- Слабой ссылка на символ Swift бывает только внутри такой проверки: неохраняемый вызов API новее минимальной macOS компилятор Swift не пропускает
+- `__availability_version_check` — то, что вызывает сама проверка; без него compiler-rt читает версию системы из её файла
 
-**Применение:** `check_binary` в `core/scripts/common.sh` пропускает именно эти символы — список `TOOLCHAIN_WEAK_SYMBOLS`; любая другая слабая ссылка роняет сборку.
+**Применение:** `check_binary` в `core/scripts/common.sh` пропускает именно эти символы — список `TOOLCHAIN_WEAK_SYMBOLS`, символы Swift по префиксу `_$s`; любая другая слабая ссылка, из C и Objective-C в первую очередь, роняет сборку.
 
 ## XcodeGen и xcodebuild
 
