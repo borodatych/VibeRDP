@@ -18,15 +18,17 @@ SCHEME=VibeRDP
 FRAMEWORK="$CACHE_DIR/core/VibeRDPCore.framework"
 DERIVED_DATA="$CACHE_DIR/client/DerivedData"
 RESULTS="$CACHE_DIR/client/results"
-# The local RDP peer of core/scripts/build-test-server.sh; without it the live test skips itself
+# The local RDP peer of core/scripts/build-test-server.sh; without it the live tests skip themselves
 TEST_SERVER="$CACHE_DIR/test-server"
 TEST_SERVER_SAMPLE="$TEST_SERVER/build/server/Sample"
 # With --local-only the port only names the socket file: the server opens no TCP port
-TEST_SERVER_PORT=3389
+# One server replays a recording, the other answers the mouse: the sample server does either, not both
+TEST_SERVER_REPLAY_PORT=3389
+TEST_SERVER_INTERACTIVE_PORT=3390
 # The server opens its socket within milliseconds; the margin is for a machine busy with something else
 TEST_SERVER_START_TIMEOUT=10
-# Set while a test server runs: its process and the folder of its socket
-TEST_SERVER_PID=""
+# Set while test servers run: their processes and the folder of their sockets
+TEST_SERVER_PIDS=""
 TEST_SERVER_RUN_DIR=""
 # A test that hangs fails alone after this many seconds, the others still run, and the result bundle gets finished
 # XCTest counts the allowance in whole minutes
@@ -75,42 +77,62 @@ check_app() {
     codesign --verify --deep --strict "$APP" || die "$APP fails signature verification"
 }
 
-# The live test connects to a sample server that this script starts, not the app under test:
+# The live tests connect to sample servers that this script starts, not the app under test:
 # macOS asks the user whether an app may read a removable volume, and the cache may live on one,
 # and it asks again after every build, since the ad-hoc signature of the app changes with it
 # The script has the access of its terminal already, and a test killed for hanging leaves no server behind
-start_test_server() {
+start_test_servers() {
     local arch=$1
-    local server_log="$RESULTS/test-server-$arch.log"
-    local socket polls=0
 
     TEST_SERVER_RUN_DIR=$(mktemp -d)
-    socket="$TEST_SERVER_RUN_DIR/tfreerdp-server.$TEST_SERVER_PORT"
+    launch_test_server "$arch" replay "$TEST_SERVER_REPLAY_PORT" \
+        "--pcap=$TEST_SERVER/src/server/Sample/rfx_test.pcap"
+    launch_test_server "$arch" interactive "$TEST_SERVER_INTERACTIVE_PORT"
+    # xcodebuild hands TEST_RUNNER_ variables to the app under test without the prefix
+    TEST_RUNNER_VIBERDP_TEST_SERVER_SOCKET=$(test_server_socket "$TEST_SERVER_REPLAY_PORT")
+    TEST_RUNNER_VIBERDP_INTERACTIVE_SERVER_SOCKET=$(test_server_socket "$TEST_SERVER_INTERACTIVE_PORT")
+    export TEST_RUNNER_VIBERDP_TEST_SERVER_SOCKET TEST_RUNNER_VIBERDP_INTERACTIVE_SERVER_SOCKET
+}
+
+# The sample server names its socket after the port, in the folder that TMPDIR gives it
+test_server_socket() {
+    printf '%s/tfreerdp-server.%s' "$TEST_SERVER_RUN_DIR" "$1"
+}
+
+# One sample server on its own socket; the arguments after the port choose what it does
+launch_test_server() {
+    local arch=$1 mode=$2 port=$3
+    shift 3
+    local server_log="$RESULTS/test-server-$mode-$arch.log"
+    local socket pid polls=0
+
+    socket=$(test_server_socket "$port")
+
     # The server makes its socket in TMPDIR: a folder of its own gives the socket a known and free path
     # It reads its test icon from the working folder, and the build puts the icon next to the binary
-    (cd "$TEST_SERVER_SAMPLE" && TMPDIR="$TEST_SERVER_RUN_DIR" exec ./sfreerdp-server \
-        "--port=$TEST_SERVER_PORT" --local-only "--pcap=$TEST_SERVER/src/server/Sample/rfx_test.pcap" \
-        "--cert=$TEST_SERVER/server.crt" "--key=$TEST_SERVER/server.key") >"$server_log" 2>&1 &
-    TEST_SERVER_PID=$!
+    (cd "$TEST_SERVER_SAMPLE" && TMPDIR="$TEST_SERVER_RUN_DIR" exec ./sfreerdp-server "--port=$port" --local-only \
+        "--cert=$TEST_SERVER/server.crt" "--key=$TEST_SERVER/server.key" "$@") >"$server_log" 2>&1 &
+    pid=$!
+    TEST_SERVER_PIDS="$TEST_SERVER_PIDS $pid"
     until [ -S "$socket" ]; do
-        kill -0 "$TEST_SERVER_PID" 2>/dev/null || die "the test server exited, see $server_log"
+        kill -0 "$pid" 2>/dev/null || die "the $mode test server exited, see $server_log"
         [ "$polls" -lt "$((TEST_SERVER_START_TIMEOUT * 10))" ] ||
-            die "the test server opened no socket in $TEST_SERVER_START_TIMEOUT s, see $server_log"
+            die "the $mode test server opened no socket in $TEST_SERVER_START_TIMEOUT s, see $server_log"
         sleep 0.1
         polls=$((polls + 1))
     done
-    # xcodebuild hands TEST_RUNNER_ variables to the app under test without the prefix
-    export TEST_RUNNER_VIBERDP_TEST_SERVER_SOCKET="$socket"
 }
 
 # Runs on exit too, so a failed run leaves no server and no socket folder behind
-stop_test_server() {
-    unset TEST_RUNNER_VIBERDP_TEST_SERVER_SOCKET
-    if [ -n "$TEST_SERVER_PID" ]; then
-        kill "$TEST_SERVER_PID" 2>/dev/null || true
-        wait "$TEST_SERVER_PID" 2>/dev/null || true
-        TEST_SERVER_PID=""
-    fi
+stop_test_servers() {
+    local pid
+
+    unset TEST_RUNNER_VIBERDP_TEST_SERVER_SOCKET TEST_RUNNER_VIBERDP_INTERACTIVE_SERVER_SOCKET
+    for pid in $TEST_SERVER_PIDS; do
+        kill "$pid" 2>/dev/null || true
+        wait "$pid" 2>/dev/null || true
+    done
+    TEST_SERVER_PIDS=""
     if [ -n "$TEST_SERVER_RUN_DIR" ]; then
         rm -rf "$TEST_SERVER_RUN_DIR"
         TEST_SERVER_RUN_DIR=""
@@ -133,13 +155,13 @@ test_app() {
     mkdir -p "$RESULTS"
     rm -rf "$results"
     if [ -x "$TEST_SERVER_SAMPLE/sfreerdp-server" ]; then
-        start_test_server "$arch"
+        start_test_servers "$arch"
     fi
     run_bounded "$FOREIGN_RUN_TIMEOUT" xcodebuild -quiet -project "$PROJECT" -scheme "$SCHEME" \
         -derivedDataPath "$DERIVED_DATA" -destination "platform=macOS,arch=$arch" -resultBundlePath "$results" \
         -test-timeouts-enabled YES -default-test-execution-time-allowance "$TEST_TIME_ALLOWANCE" \
         -maximum-test-execution-time-allowance "$TEST_TIME_ALLOWANCE" test
-    stop_test_server
+    stop_test_servers
     summary=$(xcrun xcresulttool get test-results summary --path "$results")
     total=$(plutil -extract totalTestCount raw -o - - <<<"$summary")
     passed=$(plutil -extract passedTests raw -o - - <<<"$summary")
@@ -153,7 +175,7 @@ test_app() {
 main() {
     local arch
 
-    trap stop_test_server EXIT
+    trap stop_test_servers EXIT
     check_prerequisites
     generate_project
     build_app

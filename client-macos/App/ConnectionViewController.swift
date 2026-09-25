@@ -103,7 +103,9 @@ final class ConnectionViewController: NSViewController {
         host = address.host
         failure = nil
         session = controller
-        desktop = DesktopView(renderer: renderer)
+        let desktop = DesktopView(renderer: renderer)
+        desktop.input = controller
+        self.desktop = desktop
         setEditing(false)
         // The desktop is as large as the window in points; scaling it to the pixels of the display is task 3.2
         let size = view.bounds.size
@@ -112,7 +114,7 @@ final class ConnectionViewController: NSViewController {
             desktop: CGSize(width: size.width.rounded(), height: size.height.rounded()))
         if !started {
             session = nil
-            desktop = nil
+            self.desktop = nil
             setEditing(true)
             statusLabel.stringValue = Localization.text(.connectionStatusStartFailed, ["host": host])
         }
@@ -141,6 +143,8 @@ final class ConnectionViewController: NSViewController {
             desktop?.surface = session?.frameSurface()
         case .frameUpdated:
             desktop?.frameChanged()
+        case .pointer(let pointer):
+            desktop?.pointer = pointer
         }
     }
 

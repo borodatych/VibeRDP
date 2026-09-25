@@ -15,6 +15,8 @@ final class SessionController {
         case frameResized(width: UInt32, height: UInt32)
         /// Pixels of the current surface changed
         case frameUpdated
+        /// The server changed its pointer
+        case pointer(RemotePointer)
     }
 
     private let trusted: TrustedCertificates
@@ -92,6 +94,8 @@ final class SessionController {
             onEvent(.frameResized(width: width, height: height))
         case .frameUpdated:
             onEvent(.frameUpdated)
+        case .pointer(let pointer):
+            onEvent(.pointer(pointer))
         case .certificate(let host, let port, let pem):
             Task { [weak self] in
                 let examined = await Task.detached(priority: .userInitiated) {
@@ -128,6 +132,7 @@ private enum CoreEvent: Sendable {
     case certificate(host: String, port: UInt16, pem: Data)
     case frameResized(width: UInt32, height: UInt32)
     case frameUpdated
+    case pointer(RemotePointer)
 }
 
 /// The userData of the session: the callbacks run on the session thread and only enqueue, never block
@@ -158,7 +163,27 @@ private final class EventSink: Sendable {
             // The view redraws the whole desktop from the surface, so the rectangle is not carried over
             frameUpdated: { userData, _, _, _, _ in
                 eventSink(userData).continuation.yield(.frameUpdated)
+            },
+            pointerChanged: { userData, kind, image in
+                eventSink(userData).continuation.yield(.pointer(remotePointer(kind, image)))
             })
+    }
+}
+
+/// The pointer out of the core, with its pixels copied: the core keeps them only for the call
+private func remotePointer(_ kind: VRCPointerKind, _ image: UnsafePointer<VRCPointerImage>?) -> RemotePointer {
+    switch kind {
+    case .hidden:
+        return .hidden
+    case .system:
+        return .system
+    case .image:
+        guard let image = image?.pointee, let pixels = image.pixels else { return .system }
+        let bytes = Data(bytes: pixels, count: Int(image.width) * Int(image.height) * 4)
+        return .image(
+            PointerImage(
+                width: Int(image.width), height: Int(image.height), hotspotX: Int(image.hotspotX),
+                hotspotY: Int(image.hotspotY), pixels: bytes))
     }
 }
 
@@ -180,6 +205,27 @@ private final class SessionHandle {
     deinit {
         VRCSessionDestroy(session)
         sink.continuation.finish()
+    }
+}
+
+/// The mouse goes to the core queue: the calls return at once, and input outside a connection is refused there
+extension SessionController: DesktopInput {
+    func mouseMoved(to point: DesktopPoint) {
+        if let handle {
+            _ = VRCSessionSendMouseMove(handle.session, point.x, point.y)
+        }
+    }
+
+    func mouseButton(_ button: VRCMouseButton, pressed: Bool, at point: DesktopPoint) {
+        if let handle {
+            _ = VRCSessionSendMouseButton(handle.session, button, pressed, point.x, point.y)
+        }
+    }
+
+    func mouseWheel(_ axis: VRCWheelAxis, delta: Int32, at point: DesktopPoint) {
+        if let handle {
+            _ = VRCSessionSendMouseWheel(handle.session, axis, delta, point.x, point.y)
+        }
     }
 }
 

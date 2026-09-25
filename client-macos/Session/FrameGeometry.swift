@@ -17,4 +17,14 @@ struct FrameGeometry: Equatable {
         let offsetY = ((destination.height - height) / 2).rounded(.down)
         return FrameGeometry(scale: scale, covered: CGRect(x: offsetX, y: offsetY, width: width, height: height))
     }
+
+    /// The desktop pixel under a point of the drawable, both counted from the top left corner
+    /// The inverse of fit: a point over the bars lands on the nearest edge of the desktop; nil for empty sizes
+    static func desktopPixel(at point: CGPoint, source: CGSize, into destination: CGSize) -> CGPoint? {
+        let geometry = fit(source: source, into: destination)
+        guard geometry.covered.width > 0, geometry.covered.height > 0 else { return nil }
+        let x = ((point.x - geometry.covered.minX) / geometry.scale).rounded(.down)
+        let y = ((point.y - geometry.covered.minY) / geometry.scale).rounded(.down)
+        return CGPoint(x: min(max(x, 0), source.width - 1), y: min(max(y, 0), source.height - 1))
+    }
 }
