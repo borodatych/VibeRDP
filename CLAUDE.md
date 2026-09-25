@@ -55,6 +55,12 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer VIBERDP_CACHE_DIR=/Volu
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer VIBERDP_CACHE_DIR=/Volumes/Storage/Caches/VibeRDP XCODEGEN=/Volumes/Storage/Caches/VibeRDP/tools/xcodegen-2.46.0/xcodegen/bin/xcodegen client-macos/scripts/build-client.sh
 ```
 
+Образ `.dmg` — после клиента, нужен экран и `rsvg-convert`; итог в `dist/`:
+
+```bash
+VIBERDP_CACHE_DIR=/Volumes/Storage/Caches/VibeRDP client-macos/scripts/build-dmg.sh
+```
+
 Exe хелпера и его проверку `helper-win/scripts/check-exe.ps1` гоняет только CI на Windows.
 Перед коммитом — отсутствие атрибуции ассистента в истории, вывод должен быть пустым:
 
