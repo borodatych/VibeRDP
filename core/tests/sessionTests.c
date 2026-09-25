@@ -257,6 +257,117 @@ static VRCSession* connectToTlsServer(const TlsServer* server, const VRCCallback
     return session;
 }
 
+/*
+ * Over TLS the engine asks for missing credentials before the handshake: the answer lets the connection go on,
+ * so the certificate question follows it; a second answer finds nothing pending
+ */
+static bool testCredentialsProvided(void)
+{
+    TlsServer* server = tlsServerStart();
+    Recorder* recorder = recorderNew();
+    VRCCallbacks callbacks = recorderCallbacks();
+    callbacks.credentialsNeeded = recorderOnCredentialsNeeded;
+    VRCSession* session = connectToTlsServer(server, &callbacks, recorder);
+    CHECK(session != NULL);
+    CHECK(recorderWaitForCredentials(recorder, STATE_TIMEOUT_MS));
+
+    RecorderSnapshot data = recorderSnapshot(recorder);
+    CHECK(data.credentialsTarget == VRCCredentialsTargetServer);
+    CHECK(data.credentialsUsername[0] == '\0');
+    CHECK(data.certificateCount == 0);
+    CHECK(VRCSessionProvideCredentials(session, "CORP\\alice", NULL, "secret") == VRCResultOK);
+    CHECK(VRCSessionProvideCredentials(session, "CORP\\alice", NULL, "secret") == VRCResultInvalidState);
+
+    CHECK(recorderWaitForCertificate(recorder, STATE_TIMEOUT_MS));
+    CHECK(VRCSessionResolveCertificate(session, false) == VRCResultOK);
+    CHECK(recorderWaitForState(recorder, VRCSessionStateDisconnected, STATE_TIMEOUT_MS));
+    data = recorderSnapshot(recorder);
+    printError(&data);
+    CHECK(data.credentialsCount == 1);
+    CHECK(data.errorKind == VRCErrorKindCertificateRejected);
+
+    VRCSessionDestroy(session);
+    recorderFree(recorder);
+    tlsServerStop(server);
+    return true;
+}
+
+/* A user name without a password is asked about too, and the question shows it with its domain */
+static bool testCredentialsShowTheUserName(void)
+{
+    TlsServer* server = tlsServerStart();
+    Recorder* recorder = recorderNew();
+    VRCCallbacks callbacks = recorderCallbacks();
+    callbacks.credentialsNeeded = recorderOnCredentialsNeeded;
+    VRCSession* session = VRCSessionCreate(&callbacks, recorder);
+    CHECK(session != NULL);
+    VRCConnectionParams params = loopbackParams(tlsServerPort(server));
+    params.username = "CORP\\bob";
+    CHECK(VRCSessionConnect(session, &params) == VRCResultOK);
+    CHECK(recorderWaitForCredentials(recorder, STATE_TIMEOUT_MS));
+
+    const RecorderSnapshot data = recorderSnapshot(recorder);
+    CHECK(strcmp(data.credentialsUsername, "CORP\\bob") == 0);
+    CHECK(VRCSessionCancelCredentials(session) == VRCResultOK);
+    CHECK(recorderWaitForState(recorder, VRCSessionStateDisconnected, STATE_TIMEOUT_MS));
+
+    VRCSessionDestroy(session);
+    recorderFree(recorder);
+    tlsServerStop(server);
+    return true;
+}
+
+/* A declined question ends the session as the user's own disconnect does: no error, and no certificate asked */
+static bool testCredentialsCancelled(void)
+{
+    TlsServer* server = tlsServerStart();
+    Recorder* recorder = recorderNew();
+    VRCCallbacks callbacks = recorderCallbacks();
+    callbacks.credentialsNeeded = recorderOnCredentialsNeeded;
+    VRCSession* session = connectToTlsServer(server, &callbacks, recorder);
+    CHECK(session != NULL);
+    CHECK(recorderWaitForCredentials(recorder, STATE_TIMEOUT_MS));
+    CHECK(VRCSessionCancelCredentials(session) == VRCResultOK);
+    CHECK(VRCSessionCancelCredentials(session) == VRCResultInvalidState);
+    CHECK(recorderWaitForState(recorder, VRCSessionStateDisconnected, STATE_TIMEOUT_MS));
+
+    const RecorderSnapshot data = recorderSnapshot(recorder);
+    printError(&data);
+    CHECK(endedWithoutConnecting(&data));
+    CHECK(data.errorCount == 0);
+    CHECK(data.certificateCount == 0);
+    CHECK(tlsServerContinuedCount(server) == 0);
+
+    VRCSessionDestroy(session);
+    recorderFree(recorder);
+    tlsServerStop(server);
+    return true;
+}
+
+/* The user's disconnect ends a question nobody answered, and a late answer finds nothing pending */
+static bool testDisconnectWhileCredentialsPending(void)
+{
+    TlsServer* server = tlsServerStart();
+    Recorder* recorder = recorderNew();
+    VRCCallbacks callbacks = recorderCallbacks();
+    callbacks.credentialsNeeded = recorderOnCredentialsNeeded;
+    VRCSession* session = connectToTlsServer(server, &callbacks, recorder);
+    CHECK(session != NULL);
+    CHECK(recorderWaitForCredentials(recorder, STATE_TIMEOUT_MS));
+
+    const int64_t started = monotonicMs();
+    VRCSessionDisconnect(session);
+    CHECK(recorderWaitForState(recorder, VRCSessionStateDisconnected, STOP_BUDGET_MS));
+    CHECK(monotonicMs() - started < STOP_BUDGET_MS);
+    CHECK(VRCSessionProvideCredentials(session, "alice", NULL, "secret") == VRCResultInvalidState);
+    CHECK(recorderSnapshot(recorder).errorCount == 0);
+
+    VRCSessionDestroy(session);
+    recorderFree(recorder);
+    tlsServerStop(server);
+    return true;
+}
+
 static bool testResolveWithoutRequest(void)
 {
     VRCSession* session = VRCSessionCreate(NULL, NULL);
@@ -264,6 +375,10 @@ static bool testResolveWithoutRequest(void)
     CHECK(VRCSessionResolveCertificate(NULL, true) == VRCResultInvalidArgument);
     CHECK(VRCSessionResolveCertificate(session, true) == VRCResultInvalidState);
     CHECK(VRCSessionResolveCertificate(session, false) == VRCResultInvalidState);
+    CHECK(VRCSessionProvideCredentials(NULL, "alice", NULL, "secret") == VRCResultInvalidArgument);
+    CHECK(VRCSessionCancelCredentials(NULL) == VRCResultInvalidArgument);
+    CHECK(VRCSessionProvideCredentials(session, "alice", NULL, "secret") == VRCResultInvalidState);
+    CHECK(VRCSessionCancelCredentials(session) == VRCResultInvalidState);
     VRCSessionDestroy(session);
     return true;
 }
@@ -448,6 +563,10 @@ static const TestCase tests[] = {
     { "resolveWithoutRequest", testResolveWithoutRequest },
     { "certificateRejected", testCertificateRejected },
     { "certificateAccepted", testCertificateAccepted },
+    { "credentialsProvided", testCredentialsProvided },
+    { "credentialsShowTheUserName", testCredentialsShowTheUserName },
+    { "credentialsCancelled", testCredentialsCancelled },
+    { "disconnectWhileCredentialsPending", testDisconnectWhileCredentialsPending },
     { "certificateWithoutCallback", testCertificateWithoutCallback },
     { "disconnectWhileCertificatePending", testDisconnectWhileCertificatePending },
     { "destroyWhileCertificatePending", testDestroyWhileCertificatePending },

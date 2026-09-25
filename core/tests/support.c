@@ -81,6 +81,19 @@ static void onVerifyCertificate(void* userData, const VRCCertificateRequest* req
     pthread_mutex_unlock(&recorder->mutex);
 }
 
+void recorderOnCredentialsNeeded(void* userData, const VRCCredentialsRequest* request)
+{
+    Recorder* recorder = userData;
+
+    pthread_mutex_lock(&recorder->mutex);
+    recorder->data.credentialsCount++;
+    recorder->data.credentialsTarget = request->target;
+    snprintf(recorder->data.credentialsUsername, sizeof(recorder->data.credentialsUsername), "%s",
+             request->username ? request->username : "");
+    pthread_cond_broadcast(&recorder->changed);
+    pthread_mutex_unlock(&recorder->mutex);
+}
+
 VRCCallbacks recorderCallbacks(void)
 {
     VRCCallbacks callbacks = {
@@ -103,6 +116,12 @@ static bool hasCertificate(const RecorderSnapshot* data, const void* unused)
 {
     (void)unused;
     return data->certificateCount > 0;
+}
+
+static bool hasCredentials(const RecorderSnapshot* data, const void* unused)
+{
+    (void)unused;
+    return data->credentialsCount > 0;
 }
 
 /* Waits until the recorded data satisfy the condition or the time runs out */
@@ -136,6 +155,11 @@ bool recorderWaitForState(Recorder* recorder, VRCSessionState state, int timeout
 bool recorderWaitForCertificate(Recorder* recorder, int timeoutMs)
 {
     return waitFor(recorder, hasCertificate, NULL, timeoutMs);
+}
+
+bool recorderWaitForCredentials(Recorder* recorder, int timeoutMs)
+{
+    return waitFor(recorder, hasCredentials, NULL, timeoutMs);
 }
 
 RecorderSnapshot recorderSnapshot(Recorder* recorder)

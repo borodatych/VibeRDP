@@ -11,6 +11,11 @@
  * The core trusts no certificate by itself: every chain goes to the verifyCertificate callback,
  * and the session waits until VRCSessionResolveCertificate answers or the session is asked to end
  *
+ * Credentials:
+ * When the engine needs a user name or password it was not given, credentialsNeeded asks the app,
+ * and the session waits until VRCSessionProvideCredentials or VRCSessionCancelCredentials answers
+ * or the session is asked to end; a wrong password ends the session, and the app retries with a new one
+ *
  * The remote desktop:
  * The engine draws into an IOSurface of the desktop size, BGRA in memory; the app shows it without a copy
  * frameResized gives the size of a new surface, frameUpdated the rectangle that changed in it
@@ -114,6 +119,18 @@ typedef VRC_ENUM(VRCErrorKind) {
 
 typedef struct VRCSession VRCSession;
 
+/* Whose credentials the engine asks for: the remote computer, or the RD Gateway in front of it */
+typedef VRC_ENUM(VRCCredentialsTarget) {
+    VRCCredentialsTargetServer = 0,
+    VRCCredentialsTargetGateway = 1,
+} VRCCredentialsTarget;
+
+/* The engine lacks a user name or a password for the target */
+typedef struct VRCCredentialsRequest {
+    VRCCredentialsTarget target;
+    const char* username; /* What the engine holds, DOMAIN\user when it has a domain; NULL when nothing */
+} VRCCredentialsRequest;
+
 /* A certificate the server presented during the TLS handshake */
 typedef struct VRCCertificateRequest {
     const char* host;   /* Name the client connects to: the certificate has to be issued for it */
@@ -151,6 +168,13 @@ typedef struct VRCCallbacks {
      * A server request to move the pointer is not passed on: macOS does not move the cursor from under the user
      */
     void (*pointerChanged)(void* userData, VRCPointerKind kind, const VRCPointerImage* image);
+
+    /*
+     * The engine needs credentials it was not given: the connection waits for an answer
+     * The request stays valid only during the call
+     * Without this callback the engine goes on without them: NLA then fails, TLS shows the logon screen of Windows
+     */
+    void (*credentialsNeeded)(void* userData, const VRCCredentialsRequest* request);
 } VRCCallbacks;
 
 /*
@@ -194,6 +218,18 @@ void VRCSessionDisconnect(VRCSession* session);
  * Returns InvalidState when no request is pending: already answered, or the session ended meanwhile
  */
 VRCResult VRCSessionResolveCertificate(VRCSession* session, bool accept);
+
+/*
+ * Answers the pending credentials request from any thread; the core copies the strings
+ * Without a domain the user name is read as in VRCConnectionParams: DOMAIN\user is split, user@domain kept whole
+ * An empty password goes on without one: over TLS Windows then asks on its own logon screen
+ * InvalidState when no request is pending: already answered, or the session ended meanwhile
+ */
+VRCResult VRCSessionProvideCredentials(VRCSession* session, const char* username, const char* domain,
+                                       const char* password);
+
+/* Declines the pending credentials request: the session ends as after VRCSessionDisconnect, with no error */
+VRCResult VRCSessionCancelCredentials(VRCSession* session);
 
 /*
  * The surface the engine draws the desktop into, retained for the caller; NULL while there is none

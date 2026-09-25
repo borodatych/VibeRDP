@@ -28,6 +28,10 @@ set(VRC_SESSION_TESTS
     resolveWithoutRequest
     certificateRejected
     certificateAccepted
+    credentialsProvided
+    credentialsShowTheUserName
+    credentialsCancelled
+    disconnectWhileCredentialsPending
     certificateWithoutCallback
     disconnectWhileCertificatePending
     destroyWhileCertificatePending)

@@ -3,6 +3,9 @@
  * The lifecycle follows the reference clients of FreeRDP: client/Sample and client/Mac
  */
 
+/* memset_s clears a password so the compiler cannot drop the write; the header declares it only on request */
+#define __STDC_WANT_LIB_EXT1__ 1
+
 #include "VibeRDPCore/VibeRDPCore.h"
 #include "frame.h"
 #include "input.h"
@@ -13,6 +16,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include <freerdp/client.h>
 #include <freerdp/client/cmdline.h>
@@ -37,6 +41,14 @@ enum {
     CertificateRejected,
 };
 
+/* Where the credentials question stands; the answer itself is kept under credentialsMutex */
+enum {
+    CredentialsIdle,
+    CredentialsPending,
+    CredentialsProvided,
+    CredentialsCancelled,
+};
+
 /* VerifyX509Certificate: above zero accepts; 2 accepts for this connection only, since the store is the app's */
 #define CERTIFICATE_ACCEPTED 2
 #define CERTIFICATE_REJECTED 0
@@ -52,6 +64,15 @@ struct VRCSession {
     atomic_bool certificateRejected;
     /* Set by VRCSessionResolveCertificate; the session thread waits for it together with the abort event */
     HANDLE certificateAnswered;
+
+    /* The credentials question: its state and the answer change together, under the mutex */
+    pthread_mutex_t credentialsMutex;
+    int credentialsState;
+    char* answeredUsername;
+    char* answeredDomain;
+    char* answeredPassword;
+    /* Set by VRCSessionProvideCredentials and VRCSessionCancelCredentials */
+    HANDLE credentialsAnswered;
 
     /*
      * The surface the engine draws into; it changes only under the update lock of FreeRDP,
@@ -493,6 +514,145 @@ static DWORD WINAPI sessionThread(LPVOID arg)
     return 0;
 }
 
+/* A copy that may hold a password: cleared before it is freed, so no stale copy stays in the heap */
+static void freeSecret(char* secret)
+{
+    if (secret)
+        (void)memset_s(secret, strlen(secret), 0, strlen(secret));
+    free(secret);
+}
+
+/* Moves a string into a FreeRDP settings slot, which owns and later frees it */
+static void replaceString(char** slot, char* value)
+{
+    freeSecret(*slot);
+    *slot = value;
+}
+
+/*
+ * Without a separate domain the user name follows the engine rule: DOMAIN\user is split,
+ * user@domain goes whole with an empty domain, which CredSSP and the Client Info PDU expect
+ */
+static BOOL splitUsername(const char* username, const char* domain, char** user, char** userDomain)
+{
+    *user = NULL;
+    *userDomain = NULL;
+    if (domain || !username)
+    {
+        *user = username ? _strdup(username) : NULL;
+        *userDomain = domain ? _strdup(domain) : NULL;
+        return (!username || *user) && (!domain || *userDomain);
+    }
+    if (!freerdp_parse_username(username, user, userDomain))
+        return FALSE;
+    if (!*userDomain)
+        *userDomain = _strdup("");
+    return *userDomain != NULL;
+}
+
+/* DOMAIN\user, as the user typed it, for the question; NULL when the engine holds no user name */
+static char* joinUsername(const char* username, const char* domain)
+{
+    if (!username || username[0] == '\0')
+        return NULL;
+    if (!domain || domain[0] == '\0')
+        return _strdup(username);
+    const size_t length = strlen(domain) + 1 + strlen(username) + 1;
+    char* joined = malloc(length);
+    if (joined)
+        (void)snprintf(joined, length, "%s\\%s", domain, username);
+    return joined;
+}
+
+/* The question the engine asks through AuthenticateEx: whose credentials, or none this client can answer */
+static bool credentialsTarget(rdp_auth_reason reason, VRCCredentialsTarget* target)
+{
+    switch (reason)
+    {
+        case AUTH_NLA:
+        case AUTH_TLS:
+        case AUTH_RDP:
+        case AUTH_RDSTLS:
+            *target = VRCCredentialsTargetServer;
+            return true;
+        case GW_AUTH_HTTP:
+        case GW_AUTH_RDG:
+        case GW_AUTH_RPC:
+            *target = VRCCredentialsTargetGateway;
+            return true;
+        default:
+            /* Smart card and FIDO PINs: the client signs in with a password only */
+            return false;
+    }
+}
+
+/* Drops a stored answer; the caller holds credentialsMutex */
+static void clearAnswer(VRCSession* session)
+{
+    freeSecret(session->answeredUsername);
+    freeSecret(session->answeredDomain);
+    freeSecret(session->answeredPassword);
+    session->answeredUsername = NULL;
+    session->answeredDomain = NULL;
+    session->answeredPassword = NULL;
+}
+
+/*
+ * Runs on the session thread when the engine lacks a user name or a password: the app answers, the thread waits
+ * The slots belong to the engine settings: the server ones, or the gateway ones for a gateway reason
+ */
+static BOOL authenticate(freerdp* instance, char** username, char** password, char** domain, rdp_auth_reason reason)
+{
+    VRCSession* session = (VRCSession*)instance->context;
+    VRCCredentialsTarget target = VRCCredentialsTargetServer;
+    if (!credentialsTarget(reason, &target))
+        return FALSE;
+    /* Nothing to ask: the engine goes on without credentials, as it does without the callback of its own */
+    if (!session->callbacks.credentialsNeeded)
+        return TRUE;
+
+    pthread_mutex_lock(&session->credentialsMutex);
+    clearAnswer(session);
+    session->credentialsState = CredentialsPending;
+    (void)ResetEvent(session->credentialsAnswered);
+    pthread_mutex_unlock(&session->credentialsMutex);
+
+    char* shown = joinUsername(*username, *domain);
+    const VRCCredentialsRequest request = { .target = target, .username = shown };
+    session->callbacks.credentialsNeeded(session->userData, &request);
+    free(shown);
+
+    HANDLE handles[] = { session->credentialsAnswered, freerdp_abort_event(instance->context) };
+    const DWORD status = WaitForMultipleObjects(ARRAYSIZE(handles), handles, FALSE, INFINITE);
+
+    /* Back to idle before anything else: an answer racing with the abort now gets InvalidState */
+    pthread_mutex_lock(&session->credentialsMutex);
+    const int answer = session->credentialsState;
+    session->credentialsState = CredentialsIdle;
+    char* user = NULL;
+    char* userDomain = NULL;
+    BOOL provided = status == WAIT_OBJECT_0 && answer == CredentialsProvided &&
+                    splitUsername(session->answeredUsername, session->answeredDomain, &user, &userDomain);
+    if (provided)
+    {
+        char* secret = session->answeredPassword ? _strdup(session->answeredPassword) : _strdup("");
+        provided = secret != NULL;
+        if (provided)
+        {
+            replaceString(username, user);
+            replaceString(domain, userDomain);
+            replaceString(password, secret);
+            user = NULL;
+            userDomain = NULL;
+        }
+    }
+    clearAnswer(session);
+    pthread_mutex_unlock(&session->credentialsMutex);
+    free(user);
+    free(userDomain);
+    return provided;
+}
+
 /* Runs on the session thread during the TLS handshake: the app decides, the engine keeps no certificate store */
 static int verifyX509Certificate(freerdp* instance, const BYTE* data, size_t length, const char* hostname,
                                  UINT16 port, DWORD flags)
@@ -527,6 +687,13 @@ static BOOL clientNew(freerdp* instance, rdpContext* context)
     atomic_init(&session->certificateState, CertificateIdle);
     atomic_init(&session->certificateRejected, false);
     session->certificateAnswered = CreateEventA(NULL, TRUE, FALSE, NULL);
+    /* A static initializer cannot fail, so ClientFree always meets a valid mutex */
+    session->credentialsMutex = (pthread_mutex_t)PTHREAD_MUTEX_INITIALIZER;
+    session->credentialsState = CredentialsIdle;
+    session->answeredUsername = NULL;
+    session->answeredDomain = NULL;
+    session->answeredPassword = NULL;
+    session->credentialsAnswered = CreateEventA(NULL, TRUE, FALSE, NULL);
     session->inputReady = CreateEventA(NULL, TRUE, FALSE, NULL);
     vrcInputQueueInit(&session->input);
     session->keys = (VRCKeyState){ 0 };
@@ -538,19 +705,20 @@ static BOOL clientNew(freerdp* instance, rdpContext* context)
     instance->PostConnect = postConnect;
     instance->PostDisconnect = postDisconnect;
     instance->VerifyX509Certificate = verifyX509Certificate;
+    instance->AuthenticateEx = authenticate;
 
     /*
      * The client library installs console prompts that read stdin and print to it; an app has neither
-     * Without them the engine goes on without asking: missing credentials fail NLA with a reported error
+     * Credentials go through AuthenticateEx above; the rest the engine goes on without
      */
-    instance->AuthenticateEx = NULL;
     instance->ChooseSmartcard = NULL;
     instance->VerifyCertificateEx = NULL;
     instance->VerifyChangedCertificateEx = NULL;
     instance->PresentGatewayMessage = NULL;
     instance->LogonErrorInfo = NULL;
     instance->GetAccessToken = NULL;
-    return session->certificateAnswered != NULL && session->inputReady != NULL;
+    return session->certificateAnswered != NULL && session->credentialsAnswered != NULL &&
+           session->inputReady != NULL;
 }
 
 static void clientFree(freerdp* instance, rdpContext* context)
@@ -560,6 +728,10 @@ static void clientFree(freerdp* instance, rdpContext* context)
 
     if (session->certificateAnswered)
         (void)CloseHandle(session->certificateAnswered);
+    if (session->credentialsAnswered)
+        (void)CloseHandle(session->credentialsAnswered);
+    clearAnswer(session);
+    pthread_mutex_destroy(&session->credentialsMutex);
     if (session->inputReady)
         (void)CloseHandle(session->inputReady);
     vrcInputQueueDestroy(&session->input);
@@ -576,22 +748,13 @@ static int clientStart(rdpContext* context)
     return common->thread ? 0 : -1;
 }
 
-/*
- * Without a separate domain the user name follows the engine rule: DOMAIN\user is split,
- * user@domain goes whole with an empty domain, which CredSSP and the Client Info PDU expect
- */
 static BOOL applyCredentials(rdpSettings* settings, const VRCConnectionParams* params)
 {
-    if (params->domain || !params->username)
-        return freerdp_settings_set_string(settings, FreeRDP_Username, params->username) &&
-               freerdp_settings_set_string(settings, FreeRDP_Domain, params->domain) &&
-               freerdp_settings_set_string(settings, FreeRDP_Password, params->password);
-
     char* user = NULL;
     char* domain = NULL;
-    const BOOL applied = freerdp_parse_username(params->username, &user, &domain) &&
+    const BOOL applied = splitUsername(params->username, params->domain, &user, &domain) &&
                          freerdp_settings_set_string(settings, FreeRDP_Username, user) &&
-                         freerdp_settings_set_string(settings, FreeRDP_Domain, domain ? domain : "") &&
+                         freerdp_settings_set_string(settings, FreeRDP_Domain, domain) &&
                          freerdp_settings_set_string(settings, FreeRDP_Password, params->password);
     free(user);
     free(domain);
@@ -685,6 +848,44 @@ void VRCSessionDisconnect(VRCSession* session)
 {
     if (session && atomic_load(&session->started))
         (void)freerdp_abort_connect_context(&session->common.context);
+}
+
+/* Stores the answer and wakes the session thread, only while a question is pending */
+static VRCResult answerCredentials(VRCSession* session, int answer, const char* username, const char* domain,
+                                   const char* password)
+{
+    VRCResult result = VRCResultInvalidState;
+
+    pthread_mutex_lock(&session->credentialsMutex);
+    if (session->credentialsState == CredentialsPending)
+    {
+        session->answeredUsername = username ? _strdup(username) : NULL;
+        session->answeredDomain = domain ? _strdup(domain) : NULL;
+        session->answeredPassword = password ? _strdup(password) : NULL;
+        const bool copied = (!username || session->answeredUsername) && (!domain || session->answeredDomain) &&
+                            (!password || session->answeredPassword);
+        /* An answer the core could not keep is a cancel: the session must not go on with half of it */
+        session->credentialsState = copied ? answer : CredentialsCancelled;
+        result = copied ? VRCResultOK : VRCResultFailure;
+        (void)SetEvent(session->credentialsAnswered);
+    }
+    pthread_mutex_unlock(&session->credentialsMutex);
+    return result;
+}
+
+VRCResult VRCSessionProvideCredentials(VRCSession* session, const char* username, const char* domain,
+                                       const char* password)
+{
+    if (!session)
+        return VRCResultInvalidArgument;
+    return answerCredentials(session, CredentialsProvided, username, domain, password);
+}
+
+VRCResult VRCSessionCancelCredentials(VRCSession* session)
+{
+    if (!session)
+        return VRCResultInvalidArgument;
+    return answerCredentials(session, CredentialsCancelled, NULL, NULL, NULL);
 }
 
 VRCResult VRCSessionResolveCertificate(VRCSession* session, bool accept)

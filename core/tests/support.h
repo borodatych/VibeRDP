@@ -31,16 +31,27 @@ typedef struct RecorderSnapshot {
     uint16_t certificatePort;
     /* NUL-terminated copy of the last chain, cut to the buffer */
     char certificatePem[RECORDED_PEM_MAX];
+    int credentialsCount;
+    VRCCredentialsTarget credentialsTarget;
+    /* The user name of the last request; empty when it had none */
+    char credentialsUsername[RECORDED_TEXT_MAX];
 } RecorderSnapshot;
 
 Recorder* recorderNew(void);
 void recorderFree(Recorder* recorder);
 
-/* Callbacks that feed the recorder passed as userData; certificate requests are recorded and left pending */
+/*
+ * Callbacks that feed the recorder passed as userData; certificate requests are recorded and left pending
+ * Credentials are not asked for: a test that wants the question sets recorderOnCredentialsNeeded itself
+ */
 VRCCallbacks recorderCallbacks(void);
+
+/* Records a credentials request and leaves it pending */
+void recorderOnCredentialsNeeded(void* userData, const VRCCredentialsRequest* request);
 
 bool recorderWaitForState(Recorder* recorder, VRCSessionState state, int timeoutMs);
 bool recorderWaitForCertificate(Recorder* recorder, int timeoutMs);
+bool recorderWaitForCredentials(Recorder* recorder, int timeoutMs);
 RecorderSnapshot recorderSnapshot(Recorder* recorder);
 
 typedef enum FakeServerMode {
