@@ -63,8 +63,10 @@ run_bounded() {
 # Swift symbols, mangled as _$s, are weak only inside an #available branch: Swift refuses an unguarded call
 # to a newer API, and SDK code inlined into the app, as SwiftUI's tag(_:), carries its own check and fallback
 # __availability_version_check is what those checks call, and compiler-rt reads the system version without it
+# Xcode 26.6 links _dispatch_once_f into the app weakly, and Xcode 27 strongly:
+# libdispatch has had it since macOS 10.6, so the reference resolves on every target
 # shellcheck disable=SC2016 # the dollar sign belongs to the symbol names, nothing expands here
-TOOLCHAIN_WEAK_SYMBOLS=' __swift_FORCE_LOAD_\$_| ____chkstk_darwin | _\$s| __availability_version_check '
+TOOLCHAIN_WEAK_SYMBOLS=' __swift_FORCE_LOAD_\$_| ____chkstk_darwin | _\$s| __availability_version_check | _dispatch_once_f '
 
 # Every slice is present, records the deployment target and uses no API newer than it
 # A weak reference to such an API resolves to NULL on an older macOS and crashes there
