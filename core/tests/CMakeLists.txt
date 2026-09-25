@@ -1,8 +1,9 @@
 # Session tests run against local fake servers: no RDP host is needed
-# HOME points into the build tree, so nothing the engine writes reaches the real home folder
+# HOME points into the build tree, so nothing the engine writes reaches the real home folder,
+# and Kerberos reads no configuration of this Mac
 set(VRC_TEST_HOME ${CMAKE_CURRENT_BINARY_DIR}/home)
 file(MAKE_DIRECTORY ${VRC_TEST_HOME})
-set(VRC_TEST_ENVIRONMENT "HOME=${VRC_TEST_HOME}")
+set(VRC_TEST_ENVIRONMENT "HOME=${VRC_TEST_HOME}" "KRB5_CONFIG=/dev/null")
 if(VRC_SANITIZE)
   # To symbolize a report the sanitizer runs atos against the live process, which waits for debugger permission
   # and hangs the test; the raw addresses resolve offline: atos -o <binary> -l 0x100000000 <address>...
@@ -68,6 +69,25 @@ target_compile_options(decisionTests PRIVATE -Wall -Wextra -Werror)
 foreach(test IN ITEMS answerNeedsAQuestion answerBeforeTheWait answerFromAnotherThread abortEndsTheWait)
   add_test(NAME ${test} COMMAND decisionTests ${test})
   set_tests_properties(${test} PROPERTIES TIMEOUT 60 ENVIRONMENT "${VRC_TEST_ENVIRONMENT}")
+endforeach()
+
+add_executable(kerberosTests kerberosTests.c ${PROJECT_SOURCE_DIR}/src/kerberos.c)
+target_include_directories(kerberosTests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_include_directories(kerberosTests SYSTEM PRIVATE ${VRC_KRB5_INCLUDE_DIR})
+target_link_libraries(kerberosTests PRIVATE freerdp-client)
+target_compile_options(kerberosTests PRIVATE -Wall -Wextra -Werror)
+foreach(test IN ITEMS namesAreUnique destroyTakesTheCache destroyWithoutACache)
+  add_test(NAME ${test} COMMAND kerberosTests ${test})
+  set_tests_properties(${test} PROPERTIES TIMEOUT 60 ENVIRONMENT "${VRC_TEST_ENVIRONMENT}")
+endforeach()
+
+# Kerberos logons through NLA against the test peer that build-core.sh starts; without it they skip themselves
+add_executable(kerberosLogonTests kerberosLogonTests.c support.c)
+target_link_libraries(kerberosLogonTests PRIVATE VibeRDPCore)
+target_compile_options(kerberosLogonTests PRIVATE -Wall -Wextra -Werror)
+foreach(test IN ITEMS logonWithPrincipalName logonWithDomainPrefix wrongPasswordFailsTheLogon ticketsLeaveWithTheSession)
+  add_test(NAME ${test} COMMAND kerberosLogonTests ${test})
+  set_tests_properties(${test} PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77 ENVIRONMENT "${VRC_TEST_ENVIRONMENT}")
 endforeach()
 
 add_executable(pointerTests pointerTests.c ${PROJECT_SOURCE_DIR}/src/pointer.c)

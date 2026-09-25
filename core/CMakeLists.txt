@@ -19,15 +19,21 @@ if(VRC_SANITIZE)
 endif()
 
 find_package(FreeRDP-Client 3 CONFIG REQUIRED)
+# The Kerberos of the engine lies in the same prefix without a package of its own; the name with its folder
+# cannot match krb5.h of the Kerberos framework in the SDK
+find_path(VRC_KRB5_INCLUDE_DIR krb5/krb5.h NO_CMAKE_ENVIRONMENT_PATH NO_SYSTEM_ENVIRONMENT_PATH NO_CMAKE_SYSTEM_PATH
+          REQUIRED)
 
-# A dynamic framework with FreeRDP and OpenSSL linked in: the linker resolves their frameworks and channel objects here,
-# so the app links one bundle and never repeats the dependency list of the engine
-# Only the VRC API is exported: the engine symbols stay private and cannot clash with another OpenSSL in the process
+# A dynamic framework with FreeRDP, OpenSSL and Kerberos linked in: the linker resolves their frameworks and channel
+# objects here, so the app links one bundle and never repeats the dependency list of the engine
+# Only the VRC API is exported: the engine symbols stay private and cannot clash with another OpenSSL or Kerberos
+# in the process
 set(VRC_PUBLIC_HEADER ${CMAKE_CURRENT_SOURCE_DIR}/include/VibeRDPCore/VibeRDPCore.h)
 set(VRC_MODULE_MAP ${CMAKE_CURRENT_SOURCE_DIR}/framework/module.modulemap)
 set(VRC_EXPORTS ${CMAKE_CURRENT_SOURCE_DIR}/framework/exports.txt)
 
-add_library(VibeRDPCore SHARED src/session.c src/decision.c src/frame.c src/input.c src/pointer.c ${VRC_PUBLIC_HEADER} ${VRC_MODULE_MAP})
+add_library(VibeRDPCore SHARED src/session.c src/decision.c src/frame.c src/input.c src/kerberos.c src/pointer.c
+            ${VRC_PUBLIC_HEADER} ${VRC_MODULE_MAP})
 set_source_files_properties(${VRC_MODULE_MAP} PROPERTIES MACOSX_PACKAGE_LOCATION Modules)
 set_target_properties(VibeRDPCore PROPERTIES
   FRAMEWORK TRUE
@@ -40,6 +46,7 @@ set_target_properties(VibeRDPCore PROPERTIES
   BUILD_WITH_INSTALL_NAME_DIR ON
   LINK_DEPENDS ${VRC_EXPORTS})
 target_include_directories(VibeRDPCore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(VibeRDPCore SYSTEM PRIVATE ${VRC_KRB5_INCLUDE_DIR})
 target_link_libraries(VibeRDPCore PRIVATE freerdp-client "-framework IOSurface" "-framework CoreFoundation")
 target_link_options(VibeRDPCore PRIVATE "LINKER:-exported_symbols_list,${VRC_EXPORTS}" "LINKER:-dead_strip")
 # FreeRDP headers come from an imported target and count as system headers: the strict warnings hit only our code

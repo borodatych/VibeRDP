@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds OpenSSL and FreeRDP as universal static libraries for the macOS client
+# Builds OpenSSL, MIT Kerberos and FreeRDP as universal static libraries for the macOS client
 # Every build parameter comes from build.env at the repository root
 # How to run it and what it produces: docs/manuals/devSetup.md
 #
@@ -18,6 +18,7 @@ DOWNLOADS="$CACHE_DIR/downloads"
 SOURCES="$CACHE_DIR/src"
 STAGE="$CACHE_DIR/stage"
 OPENSSL_SRC="$SOURCES/openssl-$OPENSSL_VERSION"
+KRB5_SRC="$SOURCES/krb5-$KRB5_VERSION"
 
 is_enabled_channel() {
     case " $FREERDP_CHANNELS " in
@@ -41,7 +42,7 @@ object_list() {
 
 check_prerequisites() {
     local tool channel
-    for tool in "$CMAKE" perl make curl shasum tar lipo otool nm strings; do
+    for tool in "$CMAKE" perl make curl shasum tar lipo otool nm strings pkg-config; do
         command -v "$tool" >/dev/null || die "$tool not found, see docs/manuals/devSetup.md"
     done
     [ -f "$FREERDP_SRC/CMakeLists.txt" ] || die "FreeRDP submodule is missing: git submodule update --init"
@@ -62,6 +63,77 @@ fetch_openssl() {
     fi
     echo "$OPENSSL_SHA256  $tarball" | shasum -a 256 -c - >/dev/null || die "checksum mismatch: $tarball"
     [ -f "$OPENSSL_SRC/Configure" ] || tar -xzf "$tarball" -C "$SOURCES"
+}
+
+fetch_krb5() {
+    local tarball="$DOWNLOADS/krb5-$KRB5_VERSION.tar.gz"
+    # The releases of a series live in a folder named after it: 1.22.2 in 1.22
+    local url="https://kerberos.org/dist/krb5/${KRB5_VERSION%.*}/krb5-$KRB5_VERSION.tar.gz"
+
+    mkdir -p "$DOWNLOADS" "$SOURCES"
+    if [ ! -f "$tarball" ]; then
+        log "Downloading MIT Kerberos $KRB5_VERSION"
+        curl -fsSL -o "$tarball.part" "$url"
+        mv "$tarball.part" "$tarball"
+    fi
+    echo "$KRB5_SHA256  $tarball" | shasum -a 256 -c - >/dev/null || die "checksum mismatch: $tarball"
+    [ -f "$KRB5_SRC/src/configure" ] || tar -xzf "$tarball" -C "$SOURCES"
+}
+
+build_krb5() {
+    local arch=$1
+    local build_dir="$BUILD/krb5-$arch"
+    local stage_dir="$STAGE/krb5-$arch"
+    local stamp="$stage_dir/.stamp"
+    local signature="$KRB5_VERSION $MACOSX_DEPLOYMENT_TARGET $RUNTIME_PREFIX"
+    local krb5_root="$stage_dir$RUNTIME_PREFIX"
+    local part deps
+
+    if [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$signature" ]; then
+        log "MIT Kerberos $KRB5_VERSION ($arch) is up to date"
+        return 0
+    fi
+
+    log "Building MIT Kerberos $KRB5_VERSION ($arch)"
+    rm -rf "$build_dir" "$stage_dir"
+    mkdir -p "$build_dir"
+    # Static libraries with the plugins linked in; the builtin crypto keeps OpenSSL out of it, and without PKINIT,
+    # TLS for KDC proxies, LDAP and line editing it needs nothing beyond the system
+    # Its default ticket cache on macOS is the system one, API:, which lives in Kerberos.framework: a shared build
+    # links the framework into libkrb5, a static one leaves it to every program, the tools of Kerberos too
+    # Without --with-krb5-config=no configure takes the default cache and keytab names from a krb5-config in PATH,
+    # which would be whatever Kerberos this machine has
+    # The configure checks run programs of the target architecture: another one runs under Rosetta
+    (
+        cd "$build_dir"
+        CC="cc -arch $arch" \
+            CFLAGS="-mmacosx-version-min=$MACOSX_DEPLOYMENT_TARGET -Werror=unguarded-availability-new -O2" \
+            LDFLAGS="-mmacosx-version-min=$MACOSX_DEPLOYMENT_TARGET" \
+            LIBS="-framework Kerberos" \
+            "$KRB5_SRC/src/configure" --prefix="$RUNTIME_PREFIX" \
+            --enable-static --disable-shared --disable-rpath --disable-nls --disable-pkinit --with-krb5-config=no \
+            --with-crypto-impl=builtin --with-tls-impl=no --without-keyutils --without-libedit --without-lmdb \
+            --without-ldap >/dev/null
+        # Only the libraries, their headers and pkg-config files: the tools and servers of Kerberos are not needed,
+        # and linked statically its admin tools define the same symbol as the admin library
+        for part in util include lib build-tools; do
+            make -C "$part" -j"$JOBS" >/dev/null
+        done
+        # The top level makes the install folders that a full install would have made
+        make install-mkdirs DESTDIR="$stage_dir" >/dev/null
+        for part in util include lib build-tools; do
+            make -C "$part" install DESTDIR="$stage_dir" >/dev/null
+        done
+    )
+    # The pkg-config file of Kerberos names only libkrb5support as private, as if it were never static
+    # A static link also needs the system libraries that krb5-config records: -lkrb5support $LIBS $DL_LIB, as its
+    # comment says; a framework goes as one linker flag, since CMake de-duplicates link options word by word
+    grep -qx 'Libs.private: -lkrb5support' "$krb5_root/lib/pkgconfig/mit-krb5.pc" ||
+        die "the private libraries of mit-krb5.pc changed: check the completion below"
+    deps=$(sed -n -e "s/^LIBS='\(.*\)'\$/\1/p" -e "s/^DL_LIB='\(.*\)'\$/\1/p" "$krb5_root/bin/krb5-config" |
+        tr '\n' ' ' | sed -E 's/-framework ([^ ]+)/-Wl,-framework,\1/g; s/ +/ /g; s/^ //; s/ $//')
+    sed -i '' "s|^Libs.private: .*|& $deps|" "$krb5_root/lib/pkgconfig/mit-krb5.pc"
+    echo "$signature" >"$stamp"
 }
 
 build_openssl() {
@@ -96,7 +168,7 @@ build_freerdp() {
     local arch=$1
     local build_dir="$BUILD/freerdp-$arch"
     local stage_dir="$STAGE/freerdp-$arch"
-    local no_pkgconfig="$BUILD/no-pkgconfig"
+    local krb5_root="$STAGE/krb5-$arch$RUNTIME_PREFIX"
     local channel upper
     local options=()
 
@@ -110,14 +182,16 @@ build_freerdp() {
     done
 
     log "Configuring FreeRDP ($arch)"
-    mkdir -p "$no_pkgconfig"
-    # pkg-config sees an empty directory for the same reason as HOST_PREFIXES
+    # pkg-config sees only the staged Kerberos, for the same reason as HOST_PREFIXES: Homebrew stays out
+    # Its files name the runtime prefix, and the sysroot puts the staging folder in front of it
+    # --static adds the private libraries, which the exported packages of FreeRDP then carry to every program
     # LTO stays off: the archives must hold machine code, not LLVM bitcode tied to one compiler version
     # The configure checks see the SDK, not the deployment target, and adopt APIs the oldest supported macOS lacks
     # Using such an API is a compile error here, since its weak reference would be NULL on that macOS
     # pipe2 arrived in macOS 27 and its check only takes the function address, which passes: the result is preset
     # --fresh drops cached check results, so they always follow the current flags
-    PKG_CONFIG_LIBDIR="$no_pkgconfig" "$CMAKE" --fresh -G "$GENERATOR" -S "$FREERDP_SRC" -B "$build_dir" \
+    PKG_CONFIG_LIBDIR="$krb5_root/lib/pkgconfig" PKG_CONFIG_SYSROOT_DIR="$STAGE/krb5-$arch" \
+        "$CMAKE" --fresh -G "$GENERATOR" -S "$FREERDP_SRC" -B "$build_dir" \
         -DCMAKE_C_FLAGS="-Werror=unguarded-availability-new" \
         -DWINPR_HAVE_PIPE2=OFF \
         -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
@@ -147,6 +221,9 @@ build_freerdp() {
         -DWITH_URIPARSER=OFF \
         -DWITH_JSON_DISABLED=ON \
         -DWITH_AAD=OFF \
+        -DWITH_KRB5=ON \
+        -DKRB5_ROOT_FLAVOUR=MIT \
+        -DPKG_CONFIG_ARGN=--static \
         -DWITH_INTERNAL_RC4=ON \
         -DWITH_INTERNAL_MD4=ON \
         -DWITH_INTERNAL_MD5=ON \
@@ -175,13 +252,17 @@ assemble_prefix() {
     local arch=$1
     local dir="$PREFIX/$arch"
     local openssl_root="$STAGE/openssl-$arch$RUNTIME_PREFIX"
+    local krb5_root="$STAGE/krb5-$arch$RUNTIME_PREFIX"
     local freerdp_root="$STAGE/freerdp-$arch$RUNTIME_PREFIX"
 
     rm -rf "$dir"
-    mkdir -p "$dir"
+    mkdir -p "$dir/lib"
     cp -R "$openssl_root/." "$dir/"
+    # Of Kerberos the prefix takes the libraries and their headers; its tools and servers stay behind
+    cp -R "$krb5_root/include" "$dir/"
+    cp "$krb5_root"/lib/*.a "$dir/lib/"
     cp -R "$freerdp_root/." "$dir/"
-    relocate "$dir" "$openssl_root" "$freerdp_root"
+    relocate "$dir" "$openssl_root" "$krb5_root" "$freerdp_root"
 }
 
 make_universal() {
@@ -262,10 +343,12 @@ main() {
 
     check_prerequisites
     log "FreeRDP $(git -C "$FREERDP_SRC" describe --tags --always), OpenSSL $OPENSSL_VERSION," \
-        "macOS $MACOSX_DEPLOYMENT_TARGET+, $ARCHS -> $PREFIX"
+        "MIT Kerberos $KRB5_VERSION, macOS $MACOSX_DEPLOYMENT_TARGET+, $ARCHS -> $PREFIX"
     fetch_openssl
+    fetch_krb5
     for arch in $ARCHS; do
         build_openssl "$arch"
+        build_krb5 "$arch"
         build_freerdp "$arch"
         assemble_prefix "$arch"
     done

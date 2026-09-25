@@ -10,6 +10,7 @@
 #include "decision.h"
 #include "frame.h"
 #include "input.h"
+#include "kerberos.h"
 #include "pointer.h"
 
 #include <pthread.h>
@@ -829,6 +830,8 @@ static void clientFree(freerdp* instance, rdpContext* context)
     /* A session that connected released its surface in PostDisconnect; one that never did has none */
     replaceFrame(session, NULL);
     pthread_mutex_destroy(&session->frameMutex);
+    /* A session that never connected named no cache */
+    vrcKerberosCacheDestroy(freerdp_settings_get_string(context->settings, FreeRDP_KerberosCache));
 }
 
 static int clientStart(rdpContext* context)
@@ -909,6 +912,18 @@ static BOOL applySecurity(rdpSettings* settings)
 }
 
 /*
+ * Kerberos keeps the tickets of the session in a cache of its own, destroyed in ClientFree
+ * Left to itself the engine switches to the default cache of the user once any cache holds the principal,
+ * and when the default cache belongs to another principal, the new tickets overwrite it
+ */
+static BOOL applyKerberos(rdpSettings* settings)
+{
+    char name[VRC_KERBEROS_CACHE_NAME_SIZE];
+    return vrcKerberosCacheName(name, sizeof(name)) &&
+           freerdp_settings_set_string(settings, FreeRDP_KerberosCache, name);
+}
+
+/*
  * A dropped connection is restored: the client tells the server it can reconnect, and the server hands it
  * a cookie that brings it back to the same Windows session
  */
@@ -969,8 +984,8 @@ VRCResult VRCSessionConnect(VRCSession* session, const VRCConnectionParams* para
         return VRCResultInvalidState;
 
     rdpSettings* settings = session->common.context.settings;
-    if (!applyParams(settings, params) || !applySecurity(settings) || !applyReconnection(settings) ||
-        !applyGraphics(settings) ||
+    if (!applyParams(settings, params) || !applySecurity(settings) || !applyKerberos(settings) ||
+        !applyReconnection(settings) || !applyGraphics(settings) ||
         !disableFeaturesNeedingDeviceChannels(settings) || freerdp_client_start(&session->common.context) != 0)
         return VRCResultFailure;
     return VRCResultOK;

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Builds the sample RDP server of FreeRDP as a local test peer: the client tests replay a RemoteFX recording from it
-# A test tool only, for this Mac's architecture; it never ships and never touches the submodule
-# Needs the OpenSSL that build-freerdp.sh stages; how to run it: docs/manuals/devSetup.md
+# Builds the local test peers of the core and the client: the sample RDP server of FreeRDP, which replays a RemoteFX
+# recording, answers input and takes Kerberos logons, and a Kerberos KDC for those logons
+# Test tools only, for this Mac's architecture; they never ship and never touch the submodule
+# Needs the OpenSSL and the Kerberos sources that build-freerdp.sh stages; how to run it: docs/manuals/devSetup.md
 #
 # Environment: the same as build-freerdp.sh
 
@@ -16,6 +17,11 @@ PATCHES="$SCRIPT_DIR/test-server"
 OUT="$CACHE_DIR/test-server"
 HOST_ARCH=$(uname -m)
 OPENSSL_ROOT="$CACHE_DIR/stage/openssl-$HOST_ARCH$RUNTIME_PREFIX"
+KRB5_STAGE="$CACHE_DIR/stage/krb5-$HOST_ARCH"
+KRB5_ROOT="$KRB5_STAGE$RUNTIME_PREFIX"
+KRB5_SRC="$CACHE_DIR/src/krb5-$KRB5_VERSION"
+# The KDC, its database tools and their libraries: a shared build of the same release, installed where it is built
+KDC="$OUT/kdc"
 CERTIFICATE_DAYS=365
 
 # The sources are copied, so the patches never reach the submodule
@@ -32,11 +38,10 @@ prepare_sources() {
 }
 
 build_server() {
-    local no_pkgconfig="$BUILD/no-pkgconfig"
-
     log "Building the sample server ($HOST_ARCH)"
-    mkdir -p "$no_pkgconfig"
-    PKG_CONFIG_LIBDIR="$no_pkgconfig" "$CMAKE" --fresh -G "$GENERATOR" -S "$OUT/src" -B "$OUT/build" \
+    # pkg-config sees only the staged Kerberos, as in build-freerdp.sh
+    PKG_CONFIG_LIBDIR="$KRB5_ROOT/lib/pkgconfig" PKG_CONFIG_SYSROOT_DIR="$KRB5_STAGE" \
+        "$CMAKE" --fresh -G "$GENERATOR" -S "$OUT/src" -B "$OUT/build" \
         -DCMAKE_C_FLAGS="-Werror=unguarded-availability-new" \
         -DWINPR_HAVE_PIPE2=OFF \
         -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
@@ -68,9 +73,37 @@ build_server() {
         -DWITH_URIPARSER=OFF \
         -DWITH_JSON_DISABLED=ON \
         -DWITH_AAD=OFF \
-        -DWITH_KRB5=OFF \
+        -DWITH_KRB5=ON \
+        -DKRB5_ROOT_FLAVOUR=MIT \
+        -DPKG_CONFIG_ARGN=--static \
         -DCHANNEL_URBDRC=OFF >/dev/null
     "$CMAKE" --build "$OUT/build" --parallel "$JOBS" --target sfreerdp-server
+}
+
+# The KDC of the Kerberos test realm; build-core.sh makes the realm per run
+# A build of the release takes minutes, so it stays until build.env names another
+build_kdc() {
+    local build_dir="$OUT/kdc-build"
+    local stamp="$KDC/.stamp"
+
+    if [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$KRB5_VERSION" ]; then
+        log "Test KDC: MIT Kerberos $KRB5_VERSION ($HOST_ARCH) is up to date"
+        return 0
+    fi
+
+    log "Building the test KDC: MIT Kerberos $KRB5_VERSION ($HOST_ARCH)"
+    rm -rf "$build_dir" "$KDC"
+    mkdir -p "$build_dir"
+    (
+        cd "$build_dir"
+        "$KRB5_SRC/src/configure" --prefix="$KDC" --disable-nls --disable-pkinit --with-krb5-config=no \
+            --with-crypto-impl=builtin --with-tls-impl=no --without-keyutils --without-libedit --without-lmdb \
+            --without-ldap >/dev/null
+        make -j"$JOBS" >/dev/null
+        make install >/dev/null
+    )
+    rm -rf "$build_dir"
+    echo "$KRB5_VERSION" >"$stamp"
 }
 
 # A throwaway key and certificate for the TLS of the test peer: made per build, never committed
@@ -86,11 +119,15 @@ main() {
     command -v rsync >/dev/null || die "rsync not found"
     command -v patch >/dev/null || die "patch not found"
     [ -d "$OPENSSL_ROOT" ] || die "no OpenSSL in $OPENSSL_ROOT: run build-freerdp.sh first"
+    [ -d "$KRB5_ROOT" ] || die "no Kerberos in $KRB5_ROOT: run build-freerdp.sh first"
+    [ -f "$KRB5_SRC/src/configure" ] || die "no Kerberos sources in $KRB5_SRC: run build-freerdp.sh first"
 
     prepare_sources
     build_server
+    build_kdc
     make_certificate
     [ -x "$server" ] || die "the sample server was not built"
+    [ -x "$KDC/sbin/krb5kdc" ] || die "the test KDC was not built"
     log "Done: $OUT"
 }
 

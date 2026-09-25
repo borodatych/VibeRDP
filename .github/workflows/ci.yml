@@ -44,18 +44,20 @@ jobs:
           xcodebuild -version
           cmake --version
           ninja --version
+          pkg-config --version
           if arch -x86_64 /usr/bin/true 2>/dev/null; then
             echo "Rosetta: x86_64 code is built and tested"
           else
             echo "Rosetta: none, x86_64 code is built and linked but not run"
           fi
-      - name: OpenSSL and FreeRDP
+      - name: OpenSSL, MIT Kerberos and FreeRDP
         run: core/scripts/build-freerdp.sh
+      # The local test peers: the sample RDP server of the live client tests and the KDC and Kerberos server
+      # of the core tests; without them those tests skip themselves
+      - name: Test peers
+        run: core/scripts/build-test-server.sh
       - name: VibeRDPCore
         run: core/scripts/build-core.sh
-      # The local RDP peer of the live client test: without it that test skips itself
-      - name: Test server
-        run: core/scripts/build-test-server.sh
       # xcodebuild hands TEST_RUNNER_ variables to the app under test without the prefix:
       # the engine writes its debug log to a file, since the result bundles keep no console output of the app
       - name: Client
@@ -74,6 +76,7 @@ jobs:
         with:
           name: client-test-results
           path: |
+            ${{ runner.temp }}/viberdp/core-tests
             ${{ runner.temp }}/viberdp/client/results
             ${{ runner.temp }}/viberdp/client/logs
           if-no-files-found: ignore

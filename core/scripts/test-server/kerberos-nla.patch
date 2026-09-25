@@ -1,0 +1,77 @@
+--- a/server/Sample/sfreerdp.c
++++ b/server/Sample/sfreerdp.c
+@@ -69,6 +69,7 @@
+ 	const char* replay_dump;
+ 	const char* cert;
+ 	const char* key;
++	const char* kerberos_keytab;
+ };
+ 
+ static void test_peer_context_free(freerdp_peer* client, rdpContext* ctx)
+@@ -1175,6 +1176,16 @@
+ 		goto fail;
+ 	if (!freerdp_settings_set_bool(settings, FreeRDP_NlaSecurity, FALSE))
+ 		goto fail;
++	/* Test tool of VibeRDP: with a keytab the server takes Kerberos logons through NLA, and nothing else */
++	if (info->kerberos_keytab)
++	{
++		if (!freerdp_settings_set_bool(settings, FreeRDP_RdpSecurity, FALSE) ||
++		    !freerdp_settings_set_bool(settings, FreeRDP_TlsSecurity, FALSE) ||
++		    !freerdp_settings_set_bool(settings, FreeRDP_NlaSecurity, TRUE) ||
++		    !freerdp_settings_set_string(settings, FreeRDP_KerberosKeytab, info->kerberos_keytab) ||
++		    !freerdp_settings_set_string(settings, FreeRDP_AuthenticationPackageList, "!ntlm"))
++			goto fail;
++	}
+ 	if (!freerdp_settings_set_bool(settings, FreeRDP_ExtSecurity, FALSE))
+ 		goto fail;
+ 	if (!freerdp_settings_set_uint32(settings, FreeRDP_EncryptionLevel,
+@@ -1392,12 +1403,14 @@
+ 	const char slocal_only[13];
+ 	const char scert[7];
+ 	const char skey[6];
++	const char skerberos_keytab[18];
+ } options = { { '-', '-', 'p', 'c', 'a', 'p', '=' },
+ 	          { '-', '-', 'f', 'a', 's', 't' },
+ 	          { '-', '-', 'p', 'o', 'r', 't', '=' },
+ 	          { '-', '-', 'l', 'o', 'c', 'a', 'l', '-', 'o', 'n', 'l', 'y' },
+ 	          { '-', '-', 'c', 'e', 'r', 't', '=' },
+-	          { '-', '-', 'k', 'e', 'y', '=' } };
++	          { '-', '-', 'k', 'e', 'y', '=' },
++	          { '-', '-', 'k', 'e', 'r', 'b', 'e', 'r', 'o', 's', '-', 'k', 'e', 'y', 't', 'a', 'b', '=' } };
+ 
+ WINPR_PRAGMA_DIAG_PUSH
+ WINPR_PRAGMA_DIAG_IGNORED_FORMAT_NONLITERAL
+@@ -1424,6 +1437,7 @@
+ 	print_entry(fp, "\t%s\n", options.sfast, sizeof(options.sfast));
+ 	print_entry(fp, "\t%s<port>\n", options.sport, sizeof(options.sport));
+ 	print_entry(fp, "\t%s\n", options.slocal_only, sizeof(options.slocal_only));
++	print_entry(fp, "\t%s<keytab file>\n", options.skerberos_keytab, sizeof(options.skerberos_keytab));
+ 	return -1;
+ }
+ 
+@@ -1478,6 +1492,12 @@
+ 			if (!winpr_PathFileExists(info.key))
+ 				return usage(app, arg);
+ 		}
++		else if (strncmp(arg, options.skerberos_keytab, sizeof(options.skerberos_keytab)) == 0)
++		{
++			info.kerberos_keytab = &arg[sizeof(options.skerberos_keytab)];
++			if (!winpr_PathFileExists(info.kerberos_keytab))
++				return usage(app, arg);
++		}
+ 		else
+ 			return usage(app, arg);
+ 	}
+@@ -1519,7 +1539,11 @@
+ 	else
+ 	{
+ 		WINPR_ASSERT(instance->Open);
+-		started = instance->Open(instance, nullptr, (UINT16)port);
++		/*
++		 * Test tool of VibeRDP: Kerberos names the service after a host, and the path of a Unix socket is none,
++		 * so the Kerberos server listens on TCP, and only on the loopback
++		 */
++		started = instance->Open(instance, info.kerberos_keytab ? "localhost" : nullptr, (UINT16)port);
+ 	}
+ 
+ 	if (started)

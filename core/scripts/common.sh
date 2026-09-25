@@ -65,8 +65,10 @@ run_bounded() {
 # __availability_version_check is what those checks call, and compiler-rt reads the system version without it
 # Xcode 26.6 links _dispatch_once_f into the app weakly, and Xcode 27 strongly:
 # libdispatch has had it since macOS 10.6, so the reference resolves on every target
+# The Mach RPC stubs that mig generates for the KCM ticket cache of Kerberos call _voucher_mach_msg_set
+# only after checking that it is there; in a static library the line of nm ends with the name
 # shellcheck disable=SC2016 # the dollar sign belongs to the symbol names, nothing expands here
-TOOLCHAIN_WEAK_SYMBOLS=' __swift_FORCE_LOAD_\$_| ____chkstk_darwin | _\$s| __availability_version_check | _dispatch_once_f '
+TOOLCHAIN_WEAK_SYMBOLS=' __swift_FORCE_LOAD_\$_| ____chkstk_darwin | _\$s| __availability_version_check | _dispatch_once_f | _voucher_mach_msg_set( |$)'
 
 # Every slice is present, records the deployment target and uses no API newer than it
 # A weak reference to such an API resolves to NULL on an older macOS and crashes there
