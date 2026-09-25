@@ -103,11 +103,17 @@ struct KeyboardSettings: Codable, Equatable {
     }
 }
 
+/// Where a session reads its keyboard settings from, at every key, so a change applies at once
+@MainActor
+protocol KeyboardSettingsSource: AnyObject {
+    var settings: KeyboardSettings { get }
+}
+
 /// The keyboard settings of the app, kept in its defaults
 /// A change is announced for the menu to follow, and the settings view observes the store
 @MainActor
 @Observable
-final class KeyboardSettingsStore {
+final class KeyboardSettingsStore: KeyboardSettingsSource {
     static let defaultsKey = "keyboard"
     static let didChange = Notification.Name("tech.vibebrains.viberdp.keyboardSettingsDidChange")
 

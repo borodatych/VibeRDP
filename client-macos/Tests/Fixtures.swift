@@ -1,3 +1,8 @@
+import Foundation
+import Security
+
+@testable import VibeRDP
+
 /// A self-signed server certificate for vibe.test, like the one Windows makes for RDP; its private key was discarded
 /// A year of validity keeps it within the macOS limit for server certificates, and for an untrusted chain
 /// macOS names the missing trust first whatever the date, so the tests outlive the validity
@@ -26,4 +31,30 @@ enum Fixtures {
 
     static let certificateFingerprint =
         "F9:AA:8E:7C:99:6F:23:0B:93:E0:D6:74:12:DB:C2:D7:1C:97:A1:AC:E7:31:29:51:B9:AC:5C:B4:3B:4E:CE:67"
+}
+
+/// Passwords in memory, so tests of the profiles never touch the login keychain
+@MainActor
+final class MemoryPasswordStore: PasswordStore {
+    private(set) var passwords: [UUID: String] = [:]
+    private(set) var labels: [UUID: String] = [:]
+
+    func password(for id: UUID) -> String? {
+        passwords[id]
+    }
+
+    func hasPassword(for id: UUID) -> Bool {
+        passwords[id] != nil
+    }
+
+    func setPassword(_ password: String, for id: UUID, label: String) -> OSStatus {
+        passwords[id] = password
+        labels[id] = label
+        return errSecSuccess
+    }
+
+    func deletePassword(for id: UUID) {
+        passwords[id] = nil
+        labels[id] = nil
+    }
 }

@@ -44,6 +44,8 @@ final class LiveServerTests: XCTestCase {
 
         XCTAssertEqual(session.states, [.connecting, .connected])
         XCTAssertEqual(session.failures, [])
+        // The sample server speaks TLS, and without a name and a password the engine asks the app for them
+        XCTAssertEqual(session.credentialsQuestions, 1)
         XCTAssertTrue(session.resized)
         let surface = try XCTUnwrap(session.controller.frameSurface())
         XCTAssertEqual(IOSurfaceGetWidth(surface), Int(Self.desktop.width))
@@ -162,6 +164,7 @@ private final class LiveSession {
     private(set) var states: [VRCSessionStateName] = []
     private(set) var failures: [VRCErrorKind] = []
     private(set) var frames = 0
+    private(set) var credentialsQuestions = 0
     private(set) var resized = false
     /// The size of the last surface, in pixels
     private(set) var desktopSize: CGSize?
@@ -209,6 +212,10 @@ private final class LiveSession {
             states.append(VRCSessionStateName(state))
         case .certificateQuestion:
             controller.answerCertificate(accept: true, remember: false)
+        case .credentialsQuestion:
+            // An empty answer goes on without credentials: the sample server has no logon of its own
+            credentialsQuestions += 1
+            controller.answerCredentials(username: "", password: "")
         case .frameResized(let width, let height):
             resized = true
             desktopSize = CGSize(width: Int(width), height: Int(height))

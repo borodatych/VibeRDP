@@ -11,6 +11,8 @@ final class SessionController {
         case failed(VRCErrorKind, name: String)
         /// The certificate needs the user; answer with answerCertificate
         case certificateQuestion(ServerCertificate, CertificateVerdict)
+        /// The engine lacks a user name or a password; answer with answerCredentials or cancelCredentials
+        case credentialsQuestion(CredentialsRequest)
         /// The desktop got a new surface of this size in pixels: take it with frameSurface
         case frameResized(width: UInt32, height: UInt32)
         /// Pixels of the current surface changed
@@ -71,6 +73,20 @@ final class SessionController {
         handle.flatMap { VRCSessionCopyFrameSurface($0.session) }
     }
 
+    /// The user's answer to the credentials question: DOMAIN\user or user@domain, and the password
+    func answerCredentials(username: String, password: String) {
+        if let handle {
+            _ = VRCSessionProvideCredentials(handle.session, username, nil, password)
+        }
+    }
+
+    /// The user declined to sign in: the session ends without an error
+    func cancelCredentials() {
+        if let handle {
+            _ = VRCSessionCancelCredentials(handle.session)
+        }
+    }
+
     /// The user's answer to the last certificate question
     func answerCertificate(accept: Bool, remember: Bool) {
         guard let certificate = pendingCertificate, let handle else { return }
@@ -96,6 +112,8 @@ final class SessionController {
             onEvent(.frameUpdated)
         case .pointer(let pointer):
             onEvent(.pointer(pointer))
+        case .credentials(let request):
+            onEvent(.credentialsQuestion(request))
         case .certificate(let host, let port, let pem):
             Task { [weak self] in
                 let examined = await Task.detached(priority: .userInitiated) {
@@ -125,6 +143,13 @@ final class SessionController {
     }
 }
 
+/// Whose credentials the engine asks for, and the user name it already holds
+struct CredentialsRequest: Equatable, Sendable {
+    let target: VRCCredentialsTarget
+    /// DOMAIN\user when the engine has a domain; nil when it has no user name
+    let username: String?
+}
+
 /// What the C callbacks hand over, copied out of memory that is valid only during the call
 private enum CoreEvent: Sendable {
     case state(VRCSessionState)
@@ -133,6 +158,7 @@ private enum CoreEvent: Sendable {
     case frameResized(width: UInt32, height: UInt32)
     case frameUpdated
     case pointer(RemotePointer)
+    case credentials(CredentialsRequest)
 }
 
 /// The userData of the session: the callbacks run on the session thread and only enqueue, never block
@@ -166,6 +192,12 @@ private final class EventSink: Sendable {
             },
             pointerChanged: { userData, kind, image in
                 eventSink(userData).continuation.yield(.pointer(remotePointer(kind, image)))
+            },
+            credentialsNeeded: { userData, request in
+                guard let request = request?.pointee else { return }
+                let username = request.username.map { String(cString: $0) }
+                eventSink(userData).continuation.yield(
+                    .credentials(CredentialsRequest(target: request.target, username: username)))
             })
     }
 }

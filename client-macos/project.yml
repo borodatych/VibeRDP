@@ -29,6 +29,7 @@ targets:
     platform: macOS
     sources:
       - path: App
+      - path: Connections
       - path: Session
     dependencies:
       - framework: "${VIBERDP_CORE_FRAMEWORK}"

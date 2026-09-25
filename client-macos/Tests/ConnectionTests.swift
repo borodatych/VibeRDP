@@ -18,9 +18,15 @@ final class ConnectionTests: XCTestCase {
         defaults.removePersistentDomain(forName: suiteName)
     }
 
-    private func makeForm() -> ConnectionViewController {
-        ConnectionViewController(
-            trusted: TrustedCertificates(defaults: defaults), keyboard: KeyboardSettingsStore(defaults: defaults))
+    /// A window content with one saved profile of this address, selected
+    private func makeForm(address: String) -> ConnectionViewController {
+        let profiles = ProfileStore(defaults: defaults, passwords: MemoryPasswordStore())
+        profiles.add(ConnectionProfile(name: "Test", address: address))
+        let form = ConnectionViewController(
+            trusted: TrustedCertificates(defaults: defaults), keyboard: KeyboardSettingsStore(defaults: defaults),
+            profiles: profiles)
+        form.loadView()
+        return form
     }
 
     /// The whole path from the session thread to the main thread: a failed connection arrives in order
@@ -50,20 +56,18 @@ final class ConnectionTests: XCTestCase {
             controller.connect(to: address, username: "", password: "", desktop: desktop), "a controller connects once")
     }
 
-    func testFormRefusesAnEmptyHost() {
-        let form = makeForm()
-        form.loadView()
-        form.hostField.stringValue = "  "
-        form.toggleConnection()
-        XCTAssertEqual(form.statusLabel.stringValue, Localization.text(.connectionStatusInvalidHost))
-        XCTAssertEqual(form.connectButton.title, Localization.text(.connectionActionConnect))
-        XCTAssertTrue(form.hostField.isEnabled)
+    /// An address the client cannot read starts nothing: the list stays open and says why
+    func testConnectRefusesAnUnreadableAddress() throws {
+        let form = makeForm(address: "two words")
+        XCTAssertFalse(form.model.canConnect)
+        form.connect(try XCTUnwrap(form.model.selection))
+        XCTAssertEqual(form.model.status, Localization.text(.connectionStatusInvalidHost))
+        XCTAssertFalse(form.model.isBusy)
     }
 
     /// Without a session there is nothing to end: the menu item stays grey
     func testDisconnectCommandNeedsASession() {
-        let form = makeForm()
-        form.loadView()
+        let form = makeForm(address: "viberdp-test.invalid")
         XCTAssertFalse(form.validateMenuItem(Self.disconnectCommand))
     }
 
@@ -72,12 +76,10 @@ final class ConnectionTests: XCTestCase {
         guard FrameRenderer() != nil else {
             throw XCTSkip("no GPU that runs Metal Performance Shaders on this machine")
         }
-        let form = makeForm()
-        form.loadView()
-        form.hostField.stringValue = "viberdp-test.invalid"
-        form.toggleConnection()
+        let form = makeForm(address: "viberdp-test.invalid")
+        form.model.connect()
         XCTAssertTrue(form.validateMenuItem(Self.disconnectCommand))
-        XCTAssertFalse(form.hostField.isEnabled)
+        XCTAssertTrue(form.model.isBusy)
 
         form.disconnect(nil)
         // The session ends on its own thread, and Disconnected reaches the form through the main actor
@@ -86,7 +88,9 @@ final class ConnectionTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(20))
         }
         XCTAssertFalse(form.validateMenuItem(Self.disconnectCommand))
-        XCTAssertTrue(form.hostField.isEnabled)
+        XCTAssertFalse(form.model.isBusy)
+        XCTAssertEqual(
+            form.model.status, Localization.text(.connectionStatusDisconnected, ["host": "viberdp-test.invalid"]))
     }
 
     private static var disconnectCommand: NSMenuItem {

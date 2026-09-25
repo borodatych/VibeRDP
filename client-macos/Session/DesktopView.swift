@@ -25,7 +25,7 @@ final class DesktopView: NSView {
     weak var input: DesktopInput?
 
     /// How keys are translated; without settings the keyboard stays with the Mac
-    var keyboard: KeyboardSettingsStore? {
+    var keyboard: KeyboardSettingsSource? {
         didSet { updateKeyboard() }
     }
 
