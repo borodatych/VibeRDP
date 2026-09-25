@@ -12,6 +12,9 @@ final class ConnectionViewController: NSViewController {
     private var session: SessionController?
     private var connections: NSView?
     private var desktop: DesktopView?
+    /// Over the desktop while a dropped connection is being restored
+    private var reconnecting: ReconnectingOverlay?
+    private var wakeObserver: NSObjectProtocol?
     /// The profile of the running session and how it signs in
     private var attempt: LoginAttempt?
     private var host = ""
@@ -25,6 +28,12 @@ final class ConnectionViewController: NSViewController {
         super.init(nibName: nil, bundle: nil)
         model.onConnect = { [weak self] id in self?.connect(id) }
         model.onDisconnect = { [weak self] in self?.session?.disconnect() }
+        // After a sleep the connection may be long dead: asking for the desktop shows it at once
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: nil
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.session?.refresh() }
+        }
     }
 
     @available(*, unavailable)
@@ -150,10 +159,18 @@ final class ConnectionViewController: NSViewController {
         switch event {
         case .state(.connecting):
             model.status = Localization.text(.connectionStatusConnecting, ["host": host])
+        case .state(.connected) where reconnecting != nil:
+            model.status = Localization.text(.connectionStatusConnected, ["host": host])
+            hideReconnecting()
         case .state(.connected):
             model.status = Localization.text(.connectionStatusConnected, ["host": host])
             signedIn()
             showDesktop()
+        case .state(.reconnecting):
+            model.status = Localization.text(.connectionStatusReconnecting, ["host": host])
+            showReconnecting()
+        case .reconnecting(let attempt, let maxAttempts):
+            reconnecting?.show(attempt: attempt, of: maxAttempts)
         case .state(.disconnected):
             sessionEnded()
         case .state:
@@ -200,6 +217,7 @@ final class ConnectionViewController: NSViewController {
 
     private func sessionEnded() {
         closeSheet()
+        hideReconnecting()
         hideDesktop()
         session = nil
         model.isBusy = false
@@ -228,6 +246,20 @@ final class ConnectionViewController: NSViewController {
             view.window?.subtitle = profile.title
         }
         view.window?.makeFirstResponder(desktop)
+    }
+
+    private func showReconnecting() {
+        guard reconnecting == nil else { return }
+        let overlay = ReconnectingOverlay(host: host) { [weak self] in self?.session?.disconnect() }
+        overlay.frame = view.bounds
+        overlay.autoresizingMask = [.width, .height]
+        view.addSubview(overlay)
+        reconnecting = overlay
+    }
+
+    private func hideReconnecting() {
+        reconnecting?.removeFromSuperview()
+        reconnecting = nil
     }
 
     private func hideDesktop() {

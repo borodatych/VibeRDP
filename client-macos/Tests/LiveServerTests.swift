@@ -9,7 +9,8 @@ import XCTest
 /// Real RDP exchanges on this Mac with the sample server of FreeRDP, built by core/scripts/build-test-server.sh
 /// build-client.sh starts two of them and hands their sockets over:
 /// VIBERDP_TEST_SERVER_SOCKET replays a RemoteFX recording of Windows Server 2008 R2,
-/// VIBERDP_INTERACTIVE_SERVER_SOCKET draws its icon wherever a mouse event points and resizes its desktop on G
+/// VIBERDP_INTERACTIVE_SERVER_SOCKET draws its icon wherever a mouse event points, resizes its desktop on G
+/// and drops the connection on D
 /// The servers listen on Unix sockets: no network, so no Local Network alert either
 @MainActor
 final class LiveServerTests: XCTestCase {
@@ -109,6 +110,40 @@ final class LiveServerTests: XCTestCase {
         await endsCleanly(session)
     }
 
+    /// A connection that drops as a network does is restored: D makes the interactive server close the transport
+    /// with no error info, the session reconnects at once and serves input again
+    /// X would not do: the server ends that session by the rules, and a session ended so is not restored
+    func testDroppedConnectionIsRestored() async throws {
+        let session = try start(socketIn: "VIBERDP_INTERACTIVE_SERVER_SOCKET")
+        let first = await session.wait("the first frame", timeout: Self.timeout) { session.frames > 0 }
+        XCTAssertTrue(first)
+
+        let input: DesktopInput = session.controller
+        let d = try XCTUnwrap(KeyCodeMap.scanCode(of: UInt16(kVK_ANSI_D), iso: false))
+        input.key(d, pressed: true, repeat: false)
+        input.key(d, pressed: false, repeat: false)
+        let restored = await session.wait("the restored connection", timeout: Self.timeout) {
+            session.states == [.connecting, .connected, .reconnecting, .connected]
+        }
+        XCTAssertTrue(restored, "\(session.states)")
+        XCTAssertEqual(session.reconnectAttempts, 1)
+        XCTAssertEqual(session.failures, [])
+
+        // The restored connection takes input: the icon appears where the pointer went
+        let point = DesktopPoint(x: 300, y: 200)
+        input.mouseMoved(to: point)
+        let drawn = await session.wait("the icon after the reconnection", timeout: Self.timeout) {
+            session.pixel(x: Int(point.x) + Self.iconProbe.dx, y: Int(point.y) + Self.iconProbe.dy)
+                .map { Int($0.blue) > Int($0.red) + 40 } ?? false
+        }
+        XCTAssertTrue(drawn)
+
+        session.controller.disconnect()
+        let ended = await session.wait("Disconnected", timeout: Self.timeout) { session.states.last == .disconnected }
+        XCTAssertTrue(ended)
+        XCTAssertEqual(session.failures, [])
+    }
+
     /// Connects to the server whose socket the environment names, accepting its certificate
     private func start(socketIn variable: String) throws -> LiveSession {
         guard let socket = ProcessInfo.processInfo.environment[variable] else {
@@ -165,6 +200,7 @@ private final class LiveSession {
     private(set) var failures: [VRCErrorKind] = []
     private(set) var frames = 0
     private(set) var credentialsQuestions = 0
+    private(set) var reconnectAttempts = 0
     private(set) var resized = false
     /// The size of the last surface, in pixels
     private(set) var desktopSize: CGSize?
@@ -218,6 +254,8 @@ private final class LiveSession {
             controller.answerCredentials(username: "", password: "")
         case .gatewayMessage:
             break
+        case .reconnecting:
+            reconnectAttempts += 1
         case .frameResized(let width, let height):
             resized = true
             desktopSize = CGSize(width: Int(width), height: Int(height))
@@ -242,7 +280,7 @@ extension DesktopInput {
 
 /// Session states as plain values, so the sequence reads well in a failure message
 private enum VRCSessionStateName: Equatable {
-    case idle, connecting, connected, disconnected
+    case idle, connecting, connected, disconnected, reconnecting
 
     init(_ state: VRCSessionState) {
         switch state {
@@ -250,6 +288,7 @@ private enum VRCSessionStateName: Equatable {
         case .connecting: self = .connecting
         case .connected: self = .connected
         case .disconnected: self = .disconnected
+        case .reconnecting: self = .reconnecting
         }
     }
 }

@@ -15,6 +15,8 @@ final class SessionController {
         case credentialsQuestion(CredentialsRequest)
         /// The gateway has a message; one that needs consent waits for answerGatewayMessage
         case gatewayMessage(GatewayMessage)
+        /// While the connection is being restored: this attempt of the most there will be
+        case reconnecting(attempt: UInt32, of: UInt32)
         /// The desktop got a new surface of this size in pixels: take it with frameSurface
         case frameResized(width: UInt32, height: UInt32)
         /// Pixels of the current surface changed
@@ -101,6 +103,13 @@ final class SessionController {
         }
     }
 
+    /// The server sends the whole desktop again: after the Mac wakes, a connection that died shows it at once
+    func refresh() {
+        if let handle {
+            _ = VRCSessionRefresh(handle.session)
+        }
+    }
+
     /// The user's answer to a gateway message that needs consent
     func answerGatewayMessage(accept: Bool) {
         if let handle {
@@ -137,6 +146,8 @@ final class SessionController {
             onEvent(.credentialsQuestion(request))
         case .gatewayMessage(let message):
             onEvent(.gatewayMessage(message))
+        case .reconnecting(let attempt, let maxAttempts):
+            onEvent(.reconnecting(attempt: attempt, of: maxAttempts))
         case .certificate(let host, let port, let pem):
             Task { [weak self] in
                 let examined = await Task.detached(priority: .userInitiated) {
@@ -200,6 +211,7 @@ private enum CoreEvent: Sendable {
     case pointer(RemotePointer)
     case credentials(CredentialsRequest)
     case gatewayMessage(GatewayMessage)
+    case reconnecting(attempt: UInt32, of: UInt32)
 }
 
 /// The userData of the session: the callbacks run on the session thread and only enqueue, never block
@@ -246,6 +258,9 @@ private final class EventSink: Sendable {
                 eventSink(userData).continuation.yield(
                     .gatewayMessage(
                         GatewayMessage(kind: message.kind, needsConsent: message.needsConsent, text: text)))
+            },
+            reconnecting: { userData, attempt, maxAttempts in
+                eventSink(userData).continuation.yield(.reconnecting(attempt: attempt, of: maxAttempts))
             })
     }
 }
