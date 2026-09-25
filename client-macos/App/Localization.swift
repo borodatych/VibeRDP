@@ -126,7 +126,6 @@ enum TextKey: String, CaseIterable {
     case languageBaseName = "language.base.name"
     case settingsLanguageTab = "settings.language.tab"
     case settingsLanguageLabel = "settings.language.label"
-    case settingsLanguageSystem = "settings.language.system"
     case settingsLanguageRestart = "settings.language.restart"
     case settingsLanguageFolderHint = "settings.language.folderHint"
     case settingsLanguageOpenFolder = "settings.language.openFolder"
@@ -273,7 +272,6 @@ extension TextKey {
         case .languageBaseName: "Русский"
         case .settingsLanguageTab: "Язык"
         case .settingsLanguageLabel: "Язык интерфейса"
-        case .settingsLanguageSystem: "Как в системе"
         case .settingsLanguageRestart: "Другой язык заговорит после перезапуска VibeRDP."
         case .settingsLanguageFolderHint:
             "Языки — файлы в папке {folder}: положите туда перевод, и он появится в списке после перезапуска."

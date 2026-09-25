@@ -79,20 +79,13 @@ struct LanguageFolder {
 
 /// Which language a launch speaks, and the catalog it takes
 enum LanguageChoice {
-    /// The saved choice when its file is still there, else the first system language that has one, else the base
-    /// nil saved means as the system says; a language code of the system matches its region-less file as well
-    static func resolve(saved: String?, system: [String], available: Set<String>) -> String {
-        let known = available.union([LanguageFolder.baseCode])
-        if let saved, known.contains(saved) {
-            return saved
+    /// The saved choice when its file is still there, else the base: the interface speaks Russian until the user
+    /// picks another language, whatever the language of the system
+    static func resolve(saved: String?, available: Set<String>) -> String {
+        guard let saved, saved == LanguageFolder.baseCode || available.contains(saved) else {
+            return LanguageFolder.baseCode
         }
-        for preferred in system {
-            let language = preferred.split(separator: "-").first.map(String.init) ?? preferred
-            if let match = [preferred, language].first(where: known.contains) {
-                return match
-            }
-        }
-        return LanguageFolder.baseCode
+        return saved
     }
 
     /// The strings of the language over the corrections of the base file: a key the language leaves out
@@ -129,20 +122,20 @@ final class LanguageSettings {
     /// Its strings over the base ones, for Localization
     let catalog: [String: String]
 
-    /// nil follows the system
-    var chosen: String? {
+    /// The language for the next launch; a saved one whose file is gone shows as the base it fell back to
+    var chosen: String {
         didSet { defaults.set(chosen, forKey: Self.defaultsKey) }
     }
 
     /// Seeds and reads the folder and resolves the language and its catalog
-    init(folder: LanguageFolder, defaults: UserDefaults = .standard, system: [String] = Locale.preferredLanguages) {
+    init(folder: LanguageFolder, defaults: UserDefaults = .standard) {
         self.folder = folder
         self.defaults = defaults
         folder.seed(from: .main)
         let files = folder.read()
-        let saved = defaults.string(forKey: Self.defaultsKey)
-        current = LanguageChoice.resolve(saved: saved, system: system, available: Set(files.map(\.code)))
-        chosen = saved
+        current = LanguageChoice.resolve(
+            saved: defaults.string(forKey: Self.defaultsKey), available: Set(files.map(\.code)))
+        chosen = current
         // The base language keeps its own name whatever the interface speaks
         languages =
             [Option(code: LanguageFolder.baseCode, name: TextKey.languageBaseName.baseText)]

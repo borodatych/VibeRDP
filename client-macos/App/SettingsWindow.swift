@@ -147,9 +147,8 @@ struct LanguageSettingsView: View {
         Form {
             Section {
                 Picker(Localization.text(.settingsLanguageLabel), selection: $settings.chosen) {
-                    Text(Localization.text(.settingsLanguageSystem)).tag(String?.none)
                     ForEach(settings.languages) { language in
-                        Text(language.name).tag(String?.some(language.code))
+                        Text(language.name).tag(language.code)
                     }
                 }
             } footer: {

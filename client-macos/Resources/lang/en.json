@@ -124,7 +124,6 @@
   "language.base.name": "Русский",
   "settings.language.tab": "Language",
   "settings.language.label": "Interface language",
-  "settings.language.system": "As in the system",
   "settings.language.restart": "Another language speaks after VibeRDP restarts.",
   "settings.language.folderHint": "Languages are files in the folder {folder}: put a translation there, and it joins the list after a restart.",
   "settings.language.openFolder": "Open Languages Folder",

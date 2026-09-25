@@ -66,15 +66,13 @@ final class LanguagesTests: XCTestCase {
         XCTAssertEqual(LanguageFolder.language(at: file)?.strings, ["menu.file": "Файлы"])
     }
 
-    /// The saved choice while its file is there, else the system languages in order, else the base
-    func testChoiceFallsBackWhenTheLanguageIsGone() {
+    /// The saved choice while its file is there, else Russian: the language of the system plays no part
+    func testChoiceFallsBackToRussian() {
         let available: Set = ["en", "de"]
-        XCTAssertEqual(LanguageChoice.resolve(saved: "de", system: ["en-US"], available: available), "de")
-        XCTAssertEqual(LanguageChoice.resolve(saved: "elvish", system: ["en-US"], available: available), "en")
-        XCTAssertEqual(LanguageChoice.resolve(saved: nil, system: ["fr-FR", "de-AT"], available: available), "de")
-        XCTAssertEqual(LanguageChoice.resolve(saved: nil, system: ["fr-FR"], available: available), "ru")
-        XCTAssertEqual(LanguageChoice.resolve(saved: "ru", system: ["en-US"], available: available), "ru")
-        XCTAssertEqual(LanguageChoice.resolve(saved: nil, system: ["ru-RU"], available: []), "ru")
+        XCTAssertEqual(LanguageChoice.resolve(saved: "de", available: available), "de")
+        XCTAssertEqual(LanguageChoice.resolve(saved: "elvish", available: available), "ru")
+        XCTAssertEqual(LanguageChoice.resolve(saved: nil, available: available), "ru")
+        XCTAssertEqual(LanguageChoice.resolve(saved: "ru", available: []), "ru")
     }
 
     /// A language over the corrected base: its own strings win, the corrections fill what it leaves out
@@ -91,16 +89,23 @@ final class LanguagesTests: XCTestCase {
     /// The settings read the folder once: the list, the language of this launch and the choice for the next one
     func testSettingsListAndRememberTheChoice() throws {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        defaults.set("elvish", forKey: LanguageSettings.defaultsKey)
-        let settings = LanguageSettings(folder: folder, defaults: defaults, system: ["en-GB"])
+        let fresh = LanguageSettings(folder: folder, defaults: defaults)
+        XCTAssertEqual(fresh.current, "ru")
+        XCTAssertEqual(fresh.chosen, "ru")
+        XCTAssertEqual(fresh.catalog, [:])
+
+        defaults.set("en", forKey: LanguageSettings.defaultsKey)
+        let settings = LanguageSettings(folder: folder, defaults: defaults)
         XCTAssertEqual(settings.current, "en")
         XCTAssertEqual(settings.languages.map(\.code), ["ru", "en"])
         XCTAssertEqual(settings.catalog[TextKey.menuFile.rawValue], "File")
 
+        // A language whose file is gone falls back to Russian and shows so in the choice
+        defaults.set("elvish", forKey: LanguageSettings.defaultsKey)
+        XCTAssertEqual(LanguageSettings(folder: folder, defaults: defaults).chosen, "ru")
+
         settings.chosen = "ru"
         XCTAssertEqual(defaults.string(forKey: LanguageSettings.defaultsKey), "ru")
-        settings.chosen = nil
-        XCTAssertNil(defaults.string(forKey: LanguageSettings.defaultsKey))
     }
 
     /// The bundle carries the seeded languages and the English strings macOS shows before the app runs
