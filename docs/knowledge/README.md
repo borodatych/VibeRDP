@@ -32,6 +32,7 @@
 
 ## rdp
 
+- [rdpFiles.md](rdp/rdpFiles.md) — файлы .rdp: строки `ключ:тип:значение`, UTF-16 с меткой от mstsc, ключи без регистра, `alternate full address` и `server port` сильнее; тип `com.microsoft.uti.rdpfile` экспортирует Windows App без соответствия `public.data`, и поиск по расширению его не находит
 - [railSession.md](rdp/railSession.md) — RemoteApp заказывается флагом `INFO_RAIL` при подключении: откат RAIL → Seam/Desktop только переподключением, RAIL пробуется лишь при включении в профиле
 
 ## windows
