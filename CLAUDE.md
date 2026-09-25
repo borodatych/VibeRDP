@@ -43,7 +43,13 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer VIBERDP_CACHE_DIR=/Volu
 cd helper-win && CARGO_TARGET_DIR=/Volumes/Storage/Caches/VibeRDP/cargo cargo fmt --check && CARGO_TARGET_DIR=/Volumes/Storage/Caches/VibeRDP/cargo cargo clippy -- -D warnings && CARGO_TARGET_DIR=/Volumes/Storage/Caches/VibeRDP/cargo cargo clippy --target x86_64-pc-windows-msvc -- -D warnings
 ```
 
-Клиент — генерация проекта, универсальное приложение, проверки бандла и тесты под обе архитектуры:
+Тестовый RDP-сервер для живого теста клиента — после зависимостей ядра; без него этот тест пропускается:
+
+```bash
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer VIBERDP_CACHE_DIR=/Volumes/Storage/Caches/VibeRDP CMAKE=/Volumes/Storage/Caches/VibeRDP/tools/cmake-4.4.3-macos-universal/CMake.app/Contents/bin/cmake core/scripts/build-test-server.sh
+```
+
+Клиент — генерация проекта, универсальное приложение, проверки бандла и тесты под обе архитектуры, живой тест — на тестовом сервере:
 
 ```bash
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer VIBERDP_CACHE_DIR=/Volumes/Storage/Caches/VibeRDP XCODEGEN=/Volumes/Storage/Caches/VibeRDP/tools/xcodegen-2.46.0/xcodegen/bin/xcodegen client-macos/scripts/build-client.sh
@@ -61,7 +67,8 @@ git log --all --format='%B' | grep -niE "co-authored-by|generated with|anthropic
 - Xcode 27.0 стоит в `/Applications/Xcode.app`, но `xcode-select` указывает на CommandLineTools: сборку вести с `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`, системную настройку не менять
 - CMake 4.4.3 лежит в `/Volumes/Storage/Caches/VibeRDP/tools/` и не стоит в `PATH` — скрипту его передаёт переменная `CMAKE`
 - XcodeGen 2.46.0 и actionlint 1.7.12 лежат в `/Volumes/Storage/Caches/VibeRDP/tools/` и не стоят в `PATH`: XcodeGen скрипту клиента передаёт переменная `XCODEGEN`
-- Не скачан компонент Metal Toolchain (нужен на 1.2) — установка по согласованию с владельцем
+- Не скачан компонент Metal Toolchain: вывод 1.2 обходится без своих шейдеров — решение 15; понадобится с первым своим `.metal`, установка — по согласованию с владельцем
+- Кэш лежит на `/Volumes/Storage`, а macOS считает этот том съёмным: процесс, запущенный из приложения, ждёт ответа на системный вопрос о доступе — внешние процессы для тестов запускают скрипты, [docs/knowledge/macos/removableVolumePrivacy.md](docs/knowledge/macos/removableVolumePrivacy.md)
 - Репозиторий — публичный https://github.com/borodatych/VibeRDP, CI — GitHub Actions на каждый push в `main` и `next`
 - Rust 1.97.1 через rustup; у тулчейна `1.97.1` уже есть `x86_64-pc-windows-msvc`, у `stable` — только `aarch64-apple-darwin`; хелпер закрепляет `1.97.1`
 - Сборочные кэши и скачанные зависимости — в `/Volumes/Storage/Caches/VibeRDP/` (`VIBERDP_CACHE_DIR`), не в репозиторий и не в `~`

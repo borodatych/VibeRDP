@@ -1,6 +1,6 @@
 # macOS: фреймворк ядра и сборка клиента
 
-Проверено 2026-09-24 сборкой на Xcode 27.0, CMake 4.4.3 и XcodeGen 2.46.0.
+Проверено 2026-09-24 сборкой на Xcode 27.0, CMake 4.4.3 и XcodeGen 2.46.0, предел на тест — 2026-09-25.
 Сборка — `core/scripts/build-core.sh` и `client-macos/scripts/build-client.sh`, решение о фреймворке — [decisions.md](../../decisions.md), раздел 11.
 
 ## CMake не ставит ссылку Modules в корень фреймворка
@@ -39,10 +39,23 @@
 - Сгенерированный проект содержит абсолютный путь к фреймворку ядра — поэтому он в `.gitignore` и генерируется заново при каждой сборке
 - Без `-destination` сборка печатает предупреждение о нескольких подходящих назначениях: на Apple Silicon это «My Mac» arm64 и x86_64; сборка приложения идёт с `generic/platform=macOS`
 - `-destination "platform=macOS,arch=x86_64"` гоняет тесты внутри приложения под Rosetta
-- С `-quiet` xcodebuild не печатает, сколько тестов прошло; число даёт `xcrun xcresulttool get test-results summary --path <бандл>` — JSON с `totalTestCount` и `passedTests`, его читает `plutil -extract … raw`
+- С `-quiet` xcodebuild не печатает, сколько тестов прошло; число даёт `xcrun xcresulttool get test-results summary --path <бандл>` — JSON с `totalTestCount`, `passedTests` и `skippedTests`, его читает `plutil -extract … raw`
 - Тестовый бандл линкует фреймворк ядра без встраивания: внутри приложения он получает копию из `Contents/Frameworks`, и тест `CoreFrameworkTests` это проверяет
 
-**Применение:** `build-client.sh` падает, если тестов ноль или прошли не все; тесты чужой архитектуры идут последними и с таймаутом, как у ядра.
+**Применение:** `build-client.sh` падает, если тестов ноль или какой-то не прошёл и не пропущен с причиной — например, без GPU; тесты чужой архитектуры идут последними и с таймаутом, как у ядра.
+
+## Предел на каждый тест
+
+**Суть:**
+- `-test-timeouts-enabled YES` с `-default-test-execution-time-allowance` и `-maximum-test-execution-time-allowance` дают каждому тесту свой предел; XCTest считает его в целых минутах
+- Проверено тестом, который спит 600 с, при пределе 60: через минуту он падает с `Test exceeded execution time allowance of 1 minute`, раннер перезапускается, следующий тест проходит, а xcresult финализирован
+- К такому провалу прикладывается спиндамп, но локально в нём только `No samples`: стеков он не даёт
+- Без предела повисший тест держит xcodebuild, пока его не убьют снаружи; такой бандл не финализирован — ни сводки, ни архива системного журнала, только журналы в `Staging`
+- Процесс теста при снятии убивается: `tearDown` не выполняется, и всё, что тест запустил сам, остаётся жить сиротой
+
+**Применение:**
+- `build-client.sh` передаёт предел `TEST_TIME_ALLOWANCE`, а `FOREIGN_RUN_TIMEOUT` у `run_bounded` остаётся последней страховкой — от зависшей Rosetta
+- Внешние процессы для тестов запускает и останавливает сам скрипт, по ловушке `EXIT` — [removableVolumePrivacy.md](removableVolumePrivacy.md)
 
 ## grep -q в конвейере под pipefail
 

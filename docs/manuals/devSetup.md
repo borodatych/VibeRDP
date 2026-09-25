@@ -12,7 +12,7 @@
 - **CMake** не ниже 3.24 — скрипты пользуются `--fresh` и `CMAKE_IGNORE_PREFIX_PATH`; проверено на 4.4.3
 - **ninja** — нужен для теста ядра на Swift: CMake собирает Swift только генераторами Ninja и Xcode; без ninja скрипты берут make, и Swift-тест пропускается
 - **XcodeGen** ровно той версии, что в `build.env` (`XCODEGEN_VERSION`) — `xcodegen.zip` из релиза на github.com/yonaskolb/XcodeGen, sha256 архива сверьте с `XCODEGEN_SHA256`; другую версию скрипт клиента не примет
-- **perl, make, curl, shasum, tar, lipo, otool, nm, strings, ditto, plutil** — есть в macOS и Xcode
+- **perl, make, curl, shasum, tar, lipo, otool, nm, strings, ditto, plutil, rsync, patch** — есть в macOS и Xcode
 - **Rosetta** — по желанию: без неё код x86_64 только собирается и линкуется, а не запускается
 - **shellcheck** и **actionlint** — для проверки скриптов и workflow; в CI — shellcheck 0.11.0 и actionlint 1.7.12
 - **Rust** через rustup — для хелпера; тулчейн скрипты берут из `helper-win/rust-toolchain.toml`
@@ -63,7 +63,7 @@ VIBERDP_CACHE_DIR=<папка кэша> core/scripts/build-core.sh
 4. Склеивает `<папка кэша>/core/VibeRDPCore.framework` — универсальный фреймворк для приложения — и проверяет, что наружу торчит только API `VRC*`
 5. Прогоняет тесты остальных архитектур — через Rosetta, поэтому последними
 
-Тесты ядра не требуют RDP-сервера: они подключаются к фейковым серверам на loopback и проверяют жизненный цикл сессии, отмену, уничтожение во время подключения, категории ошибок и импорт модуля фреймворка в Swift.
+Тесты ядра не требуют RDP-сервера: они подключаются к фейковым серверам на loopback и проверяют жизненный цикл сессии, отмену, уничтожение во время подключения, категории ошибок, поверхность кадра и импорт модуля фреймворка в Swift.
 Фейковый TLS-сервер (`core/tests/tlsServer.c`) отвечает на согласование X.224, выбирает TLS и предъявляет самоподписанный сертификат, созданный при старте теста: на нём проверяются вопрос о сертификате, отказ, согласие и отмена во время вопроса.
 Живое подключение к Windows проверяет оператор — [liveChecks.md](liveChecks.md).
 Заголовок API лежит в `core/include`, модуль и список экспорта фреймворка — в `core/framework`.
@@ -71,6 +71,20 @@ VIBERDP_CACHE_DIR=<папка кэша> core/scripts/build-core.sh
 ---
 
 ## 5. Клиент: client-macos
+
+Живой тест клиента подключается к sample-серверу FreeRDP, который проигрывает запись рабочего стола Windows.
+Сервер собирается один раз, после зависимостей из раздела 3; `CMAKE` — как там же:
+
+```bash
+VIBERDP_CACHE_DIR=<папка кэша> core/scripts/build-test-server.sh
+```
+
+- Сервер собирается из копии исходников подмодуля с патчами `core/scripts/test-server/*.patch`, только под архитектуру этого Mac: это инструмент тестов, в приложение он не попадает
+- Каждая сборка делает новый одноразовый сертификат для TLS сервера
+- Без сервера живой тест пропускается с причиной, остальные тесты идут как обычно
+- Как устроены сервер, запись и сам тест — [knowledge/freerdp/sampleServer.md](../knowledge/freerdp/sampleServer.md)
+
+Сам клиент:
 
 ```bash
 VIBERDP_CACHE_DIR=<папка кэша> XCODEGEN=<путь к xcodegen> client-macos/scripts/build-client.sh
@@ -83,7 +97,11 @@ VIBERDP_CACHE_DIR=<папка кэша> XCODEGEN=<путь к xcodegen> client-m
 1. Генерирует `client-macos/VibeRDP.xcodeproj` из `client-macos/project.yml` — версия, минимальная macOS, архитектуры и путь к фреймворку приходят из `build.env` и папки кэша
 2. Собирает универсальное `VibeRDP.app` в конфигурации Release
 3. Проверяет срезы и минимальную macOS приложения и встроенного фреймворка, ссылку на фреймворк и подпись
-4. Прогоняет тесты внутри запущенного приложения — на этом Mac, затем остальные архитектуры через Rosetta; падает, если тестов ноль или прошли не все
+4. Прогоняет тесты внутри запущенного приложения — на этом Mac, затем остальные архитектуры через Rosetta; падает, если тестов ноль или какой-то не прошёл и не пропущен с причиной
+   Перед каждым прогоном скрипт запускает тестовый сервер, если он собран, и останавливает его после — и при выходе с ошибкой тоже
+   У каждого теста предел в минуту: повисший падает один, а остальные идут дальше
+
+Сервер запускает скрипт, а не тест внутри приложения: иначе macOS после каждой пересборки спрашивает, можно ли приложению читать съёмный том, где может лежать кэш, и держит запуск до ответа — [knowledge/macos/removableVolumePrivacy.md](../knowledge/macos/removableVolumePrivacy.md).
 
 Проект генерируется при каждой сборке и в git не хранится.
 Открыть его в Xcode можно после первого прогона скрипта; правки проекта вносятся в `project.yml`, а не в Xcode.
@@ -125,9 +143,10 @@ cd helper-win && cargo fmt --check && cargo clippy -- -D warnings && cargo clipp
 │   └── universal/  # зависимости для ядра: заголовки, пакеты CMake, универсальные библиотеки и объекты каналов
 ├── core/
 │   └── VibeRDPCore.framework   # универсальный фреймворк ядра
+├── test-server/    # тестовый RDP-сервер: src/ — копия FreeRDP с патчами, build/, server.crt и server.key
 └── client/
     ├── DerivedData/  # сборка Xcode: Build/Products/Release/VibeRDP.app
-    └── results/      # результаты тестов по архитектурам (.xcresult)
+    └── results/      # результаты тестов по архитектурам (.xcresult) и журналы тестового сервера
 ```
 
 Подключение FreeRDP из CMake:
@@ -150,7 +169,8 @@ cd helper-win && cargo fmt --check && cargo clippy -- -D warnings && cargo clipp
 - Фреймворк ядра экспортирует только `_VRC*` и несёт модуль для Swift
 - Тесты ядра — на каждой архитектуре, которую Mac умеет исполнять, и отдельно под санитайзерами
 - Приложение ссылается на фреймворк через `@rpath`, находит его в `Contents/Frameworks` и проходит `codesign --verify --deep --strict`
-- xcodegen — ровно версии из `build.env`; тесты приложения — на каждой архитектуре, с подсчётом по xcresult
+- xcodegen — ровно версии из `build.env`; тесты приложения — на каждой архитектуре, с подсчётом по xcresult и пределом в минуту на каждый тест
+- Патчи тестового сервера накладываются на подмодуль: не наложился — сборка сервера падает с именем патча
 
 Любая проверка падает с сообщением `error:` и ненулевым кодом выхода.
 
@@ -159,7 +179,7 @@ cd helper-win && cargo fmt --check && cargo clippy -- -D warnings && cargo clipp
 ## 9. CI
 
 `.github/workflows/ci.yml` на каждый push в `main` и `next` и на pull request:
-- **macOS** (`macos-26`) — скачивает XcodeGen из `build.env` со сверкой sha256 и прогоняет разделы 3, 4 и 5; приложение уходит артефактом `VibeRDP-app`
+- **macOS** (`macos-26`) — скачивает XcodeGen из `build.env` со сверкой sha256 и прогоняет разделы 3, 4 и 5 вместе с тестовым сервером; приложение уходит артефактом `VibeRDP-app`, а результаты упавшего прогона с журналами — артефактом `client-test-results`
 - **Windows** (`windows-2025`) — rustfmt, clippy, сборка exe хелпера и его проверка из раздела 6; exe уходит артефактом `vibe-seam-helper`
 - **Линт** (`ubuntu-24.04`) — shellcheck и actionlint закреплённых версий со сверкой sha256
 
@@ -175,6 +195,7 @@ actionlint -color
 
 - **Запуск кода x86_64 оборвался по таймауту** — Rosetta перестала переводить новые программы; сперва проверьте её пробной программой с таймаутом: бывает, что отпускает само; нет — `sudo launchctl kickstart -k system/com.apple.oahd`, не помогло — перезагрузка; подробности в [knowledge/macos/toolingHangs.md](../knowledge/macos/toolingHangs.md)
 - **Тест под санитайзером упал с адресами вместо имён** — так задумано, `atos` не подключается к процессу; имена даёт офлайн `xcrun atos -o <бинарь> -arch arm64 -l 0x100000000 <адреса>`
+- **Тест клиента упал с «exceeded execution time allowance»** — он повис и снят через минуту; причину ищите в архиве системного журнала из результатов: `xcrun xcresulttool export diagnostics --path <бандл> --output-path <папка>`, затем `/usr/bin/log show <архив>` — именно с полным путём, в zsh `log` встроенная команда; разбор такого случая — [knowledge/macos/removableVolumePrivacy.md](../knowledge/macos/removableVolumePrivacy.md)
 
 ---
 
