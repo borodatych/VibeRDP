@@ -28,6 +28,9 @@ struct MainMenu {
         application.addItem(Self.item(.menuAppQuit, app, #selector(NSApplication.terminate(_:)), key: "q"))
 
         let file = NSMenu(title: Localization.text(.menuFile))
+        file.addItem(
+            Self.item(.menuFileImport, [:], #selector(ConnectionViewController.importConnectionFiles(_:)), key: "o"))
+        file.addItem(.separator())
         disconnectItem = Self.item(.menuFileDisconnect, [:], #selector(ConnectionViewController.disconnect(_:)))
         file.addItem(disconnectItem)
         file.addItem(.separator())

@@ -1,5 +1,8 @@
 /// Where to connect, as the user typed it: a host and an optional port
 struct ServerAddress: Equatable, Sendable {
+    /// The port RDP listens on unless the server is set up otherwise
+    static let defaultPort: UInt16 = 3389
+
     let host: String
     /// nil keeps the default RDP port
     let port: UInt16?

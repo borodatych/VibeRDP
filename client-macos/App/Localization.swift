@@ -7,6 +7,7 @@ enum TextKey: String, CaseIterable {
     case menuAppShowAll = "menu.app.showAll"
     case menuAppQuit = "menu.app.quit"
     case menuFile = "menu.file"
+    case menuFileImport = "menu.file.import"
     case menuFileDisconnect = "menu.file.disconnect"
     case menuFileClose = "menu.file.close"
     case menuWindow = "menu.window"
@@ -96,6 +97,9 @@ enum TextKey: String, CaseIterable {
     case credentialsActionCancel = "credentials.action.cancel"
     case connectionPasswordNotSaved = "connection.password.notSaved"
     case connectionPasswordLabelInKeychain = "connection.password.labelInKeychain"
+    case connectionsImported = "connections.imported"
+    case connectionsImportedExisting = "connections.importedExisting"
+    case connectionsImportFailed = "connections.importFailed"
 }
 
 extension TextKey {
@@ -110,6 +114,7 @@ extension TextKey {
         case .menuAppShowAll: "Показать все"
         case .menuAppQuit: "Завершить {app}"
         case .menuFile: "Файл"
+        case .menuFileImport: "Импортировать файл .rdp…"
         case .menuFileDisconnect: "Отключиться"
         case .menuFileClose: "Закрыть окно"
         case .menuWindow: "Окно"
@@ -201,6 +206,9 @@ extension TextKey {
         case .credentialsActionCancel: "Отмена"
         case .connectionPasswordNotSaved: "Пароль не сохранён: связка ключей ответила кодом {code}"
         case .connectionPasswordLabelInKeychain: "VibeRDP: {connection}"
+        case .connectionsImported: "Подключение «{name}» добавлено из файла"
+        case .connectionsImportedExisting: "Подключение «{name}» уже есть в списке"
+        case .connectionsImportFailed: "{file} — не файл подключения к удалённому рабочему столу"
         }
     }
 }

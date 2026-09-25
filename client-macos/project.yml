@@ -39,6 +39,8 @@ targets:
         PRODUCT_NAME: VibeRDP
         PRODUCT_BUNDLE_IDENTIFIER: tech.vibebrains.viberdp
         GENERATE_INFOPLIST_FILE: YES
+        # Keys the generated Info.plist has no build settings for, the .rdp document type among them; Xcode merges them
+        INFOPLIST_FILE: Info.plist
         INFOPLIST_KEY_NSPrincipalClass: NSApplication
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
         # macOS asks the user before an app reaches the local network, and the alert quotes this text

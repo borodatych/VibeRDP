@@ -54,6 +54,23 @@ final class ConnectionsModel {
         selection = profile.id
     }
 
+    /// A profile from a file: the one already in the list for the same computer and user, or a new one
+    /// Returns whether the list grew, and selects the profile either way
+    @discardableResult
+    func importProfile(_ profile: ConnectionProfile) -> Bool {
+        let existing = store.profiles.first {
+            $0.address.caseInsensitiveCompare(profile.address) == .orderedSame
+                && $0.username.caseInsensitiveCompare(profile.username) == .orderedSame
+        }
+        if let existing {
+            selection = existing.id
+            return false
+        }
+        store.add(profile)
+        selection = profile.id
+        return true
+    }
+
     /// The profile next to the deleted one takes the selection, so the list keeps one
     func deleteSelected() {
         guard let id = selection, let index = store.profiles.firstIndex(where: { $0.id == id }) else { return }

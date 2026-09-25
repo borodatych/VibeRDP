@@ -47,6 +47,47 @@ final class ConnectionViewController: NSViewController {
         session?.disconnect()
     }
 
+    /// The menu command: .rdp files chosen in an open panel join the list without connecting
+    @objc func importConnectionFiles(_ sender: Any?) {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.rdpFile]
+        panel.allowsMultipleSelection = true
+        guard let window = view.window else { return }
+        panel.beginSheetModal(for: window) { [weak self] response in
+            let urls = panel.urls
+            MainActor.assumeIsolated {
+                if response == .OK {
+                    self?.importFiles(urls, connecting: false)
+                }
+            }
+        }
+    }
+
+    /// .rdp files opened from the Finder: one file connects at once, as a double click in the Finder means
+    func open(_ urls: [URL]) {
+        importFiles(urls, connecting: urls.count == 1)
+    }
+
+    /// Adds the profiles the files describe; the status names the last file and what became of it
+    func importFiles(_ urls: [URL], connecting: Bool) {
+        var imported: ConnectionProfile?
+        for url in urls {
+            let name = url.deletingPathExtension().lastPathComponent
+            guard let data = try? Data(contentsOf: url), let profile = RdpFile(data: data)?.profile(named: name) else {
+                model.status = Localization.text(.connectionsImportFailed, ["file": url.lastPathComponent])
+                imported = nil
+                continue
+            }
+            let added = model.importProfile(profile)
+            imported = model.selectedProfile
+            model.status = Localization.text(
+                added ? .connectionsImported : .connectionsImportedExisting, ["name": imported?.title ?? name])
+        }
+        if connecting, let imported, session == nil {
+            connect(imported.id)
+        }
+    }
+
     /// Connects with the saved profile: the password typed in the editor, else the saved one, else none
     func connect(_ id: UUID) {
         guard session == nil, let profile = model.store.profile(id) else { return }

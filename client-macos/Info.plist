@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Merged into the Info.plist Xcode generates from the build settings of project.yml.
+  VibeRDP opens .rdp files. Windows App exports their type, com.microsoft.uti.rdpfile; importing the same
+  identifier lets VibeRDP know it on a Mac without Windows App. The rank is Alternate: VibeRDP shows in Open With
+  and does not take the files away from another app the user picked.
+-->
+<plist version="1.0">
+<dict>
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>Подключение к удалённому рабочему столу</string>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>com.microsoft.uti.rdpfile</string>
+            </array>
+        </dict>
+    </array>
+    <key>UTImportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>com.microsoft.uti.rdpfile</string>
+            <key>UTTypeDescription</key>
+            <string>Подключение к удалённому рабочему столу</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.data</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>rdp</string>
+                </array>
+                <key>public.mime-type</key>
+                <array>
+                    <string>application/x-rdp</string>
+                </array>
+            </dict>
+        </dict>
+    </array>
+</dict>
+</plist>

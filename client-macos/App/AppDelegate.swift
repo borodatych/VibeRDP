@@ -8,6 +8,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let keyboard = KeyboardSettingsStore()
     private var menu: MainMenu?
     private var keyboardObserver: NSObjectProtocol?
+    /// Files the Finder asked to open before the window existed: a double click on a .rdp file launches the app
+    private var pendingFiles: [URL] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let menu = MainMenu(appName: Self.appName)
@@ -31,6 +33,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.makeKeyAndOrderFront(nil)
         mainWindow = window
         NSApp.activate()
+        if !pendingFiles.isEmpty {
+            content.open(pendingFiles)
+            pendingFiles = []
+        }
+    }
+
+    /// .rdp files opened from the Finder or dropped on the Dock icon
+    func application(_ application: NSApplication, open urls: [URL]) {
+        guard let content = mainWindow?.contentViewController as? ConnectionViewController else {
+            pendingFiles += urls
+            return
+        }
+        mainWindow?.makeKeyAndOrderFront(nil)
+        content.open(urls)
     }
 
     /// The menu command: one settings window, made when first asked for
