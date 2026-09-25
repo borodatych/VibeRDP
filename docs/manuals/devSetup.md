@@ -86,7 +86,7 @@ VIBERDP_CACHE_DIR=<папка кэша> core/scripts/build-core.sh
 Тесты `h264Tests` кодируют кадры кодером VideoToolbox и декодируют их через API FreeRDP: AVC420, в том числе 1920×1080 с обрезкой, AVC444 v1 и v2, смена размера и испорченные потоки.
 Фейковый TLS-сервер (`core/tests/tlsServer.c`) отвечает на согласование X.224, выбирает TLS и предъявляет самоподписанный сертификат, созданный при старте теста: на нём проверяются вопрос о сертификате, отказ, согласие и отмена во время вопроса.
 Тесты `kerberosLogonTests` входят через NLA на Kerberos-сервер тестовой области: имя в виде `user@REALM` и `realm\user`, неверный пароль и кэш билетов, который уходит вместе с сессией.
-Тесты `clipboardTests` гоняют протокол буфера обмена на поддельном канале, `cliptextTests`, `cliphtmlTests` и `clipimageTests` — преобразования текста, HTML и картинок, а `clipboardEchoTests` отправляют текст, HTML, RTF и картинку через sample-сервер, который возвращает их.
+Тесты `clipboardTests` гоняют протокол буфера обмена на поддельном канале, `cliptextTests`, `cliphtmlTests`, `clipimageTests` и `clipfilesTests` — преобразования текста, HTML, картинок и списков файлов, а `clipboardEchoTests` отправляют текст, HTML, RTF, картинку и файлы через sample-сервер, который возвращает их.
 Живое подключение к Windows проверяет оператор — [liveChecks.md](liveChecks.md).
 Заголовок API лежит в `core/include`, модуль и список экспорта фреймворка — в `core/framework`.
 
