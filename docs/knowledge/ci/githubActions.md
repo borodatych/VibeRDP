@@ -5,7 +5,7 @@
 ## Образы раннеров
 
 **Суть:**
-- `macos-26` и `macos-latest` — macOS 26.6.2 на arm64, Xcode по умолчанию — 26.6; в образе есть CMake 4.4.3, Ninja 1.13.2 и rustup
+- `macos-26` и `macos-latest` — macOS 26.6.2 на arm64, Xcode по умолчанию — 26.6; в образе есть CMake 4.4.3, Ninja 1.13.2, pkgconf 3.0.7 и rustup; pkgconf сверен 2026-09-25 по образу 20260907.0351.1
 - Xcode 27 доступен только в отдельном образе `xcode-27`, со статусом preview: GitHub предупреждает о нестабильном софте и очередях; с 2026-09-16 его база — macOS 27
 - Образы macOS 14 устарели и перестают поддерживаться 2026-11-02
 - `windows-2025` и `windows-latest` — Windows Server 2025 с Visual Studio 2026

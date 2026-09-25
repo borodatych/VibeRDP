@@ -7,11 +7,13 @@
 
 **Суть:**
 - Сервер собирается из копии исходников подмодуля в `<кэш>/test-server/src`: патчи из `core/scripts/test-server/` накладываются на копию, подмодуль остаётся чистым
-- Собирается только `sfreerdp-server`, статически и под архитектуру этого Mac; сертификат и ключ для TLS делаются при каждой сборке и в git не попадают
+- Собирается только `sfreerdp-server`, статически и под архитектуру этого Mac, с Kerberos из той же сборки зависимостей; сертификат и ключ для TLS делаются при каждой сборке и в git не попадают
+- Сообщения уровня INFO, например «Listening on», сервер пишет в stdout, а он при выводе в файл буферизуется: готовность сервера на TCP скрипт узнаёт по слушающему сокету (`lsof -sTCP:LISTEN`), а не по журналу
 - Сервер FreeRDP запрашивает multitransport по своей настройке, не глядя на то, объявил ли его клиент (`libfreerdp/core/peer.c:956-961`), а настройка по умолчанию включена (`libfreerdp/core/settings.c:1057`); VibeRDP multitransport не объявляет — решение 9 в [decisions.md](../../decisions.md)
 
 **Применение:**
 - `multitransport.patch` выключает multitransport у sample-сервера
+- `kerberos-nla.patch` добавляет `--kerberos-keytab=<файл>`: с ним сервер пускает только через NLA и только по Kerberos (`AuthenticationPackageList` — `!ntlm`) и слушает TCP на `localhost` — [kerberos.md](kerberos.md)
 - `pcap-record-length.patch` чинит проигрыш записи — раздел ниже
 - Патч, который перестал накладываться на новый FreeRDP, роняет сборку с именем патча
 

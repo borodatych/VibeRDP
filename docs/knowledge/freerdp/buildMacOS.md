@@ -57,8 +57,8 @@
 - Включены по умолчанию: `WITH_FFMPEG` и `WITH_SWSCALE` (`cmake/ConfigOptions.cmake:145`, `:161`), `WITH_MACAUDIO` на Apple (`:66`), `WITH_SAMPLE`, `WITH_SERVER`, `WITH_CLIENT` с SDL-клиентом, `WITH_WINPR_TOOLS` (`winpr/CMakeLists.txt:109`), `WITH_SMARTCARD_EMULATE` (`CMakeLists.txt:139`)
 - LTO в Release включается по умолчанию, если компилятор умеет (`cmake/CommonConfigOptions.cmake:32`); в статических архивах это биткод LLVM, поэтому выключаем
 - По найденному включаются: `WITH_OPUS` (`libfreerdp/CMakeLists.txt:156`), `WITH_URIPARSER` (`winpr/libwinpr/CMakeLists.txt:129`), JSON (`cmake/JsonDetect.cmake`)
-- `WITH_KRB5` на Apple выключен по умолчанию (`winpr/libwinpr/sspi/CMakeLists.txt`)
-- Библиотеки Homebrew собраны под одну архитектуру: префиксы `/opt/homebrew`, `/usr/local`, `/opt/local` скрыты через `CMAKE_IGNORE_PREFIX_PATH`, как в апстримном скрипте, а pkg-config смотрит в пустую папку
+- `WITH_KRB5` на Apple выключен по умолчанию (`winpr/libwinpr/sspi/CMakeLists.txt`); скрипт включает его со своей MIT Kerberos — [kerberos.md](kerberos.md)
+- Библиотеки Homebrew собраны под одну архитектуру: префиксы `/opt/homebrew`, `/usr/local`, `/opt/local` скрыты через `CMAKE_IGNORE_PREFIX_PATH`, как в апстримном скрипте, а pkg-config видит только собранную Kerberos своей архитектуры
 
 **Применение:** все эти опции заданы в скрипте явно; ничего из найденного на машине в сборку не попадает.
 

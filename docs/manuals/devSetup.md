@@ -12,7 +12,9 @@
 - **CMake** не ниже 3.24 — скрипты пользуются `--fresh` и `CMAKE_IGNORE_PREFIX_PATH`; проверено на 4.4.3
 - **ninja** — нужен для теста ядра на Swift: CMake собирает Swift только генераторами Ninja и Xcode; без ninja скрипты берут make, и Swift-тест пропускается
 - **XcodeGen** ровно той версии, что в `build.env` (`XCODEGEN_VERSION`) — `xcodegen.zip` из релиза на github.com/yonaskolb/XcodeGen, sha256 архива сверьте с `XCODEGEN_SHA256`; другую версию скрипт клиента не примет
-- **perl, make, curl, shasum, tar, lipo, otool, nm, strings, ditto, plutil, rsync, patch** — есть в macOS и Xcode
+- **perl, make, curl, shasum, tar, lipo, otool, nm, strings, ditto, plutil, rsync, patch, lsof** — есть в macOS и Xcode
+- **pkg-config** — через него FreeRDP находит собранную MIT Kerberos: `brew install pkgconf`; в образе CI — pkgconf 3.0.7
+- **python3** — скрипт ядра ищет им свободные порты для тестового Kerberos, скрипт клиента проверяет строки интерфейса; есть в Command Line Tools
 - **Rosetta** — по желанию: без неё код x86_64 только собирается и линкуется, а не запускается
 - **shellcheck** и **actionlint** — для проверки скриптов и workflow; в CI — shellcheck 0.11.0 и actionlint 1.7.12
 - **Rust** через rustup — для хелпера; тулчейн скрипты берут из `helper-win/rust-toolchain.toml`
@@ -37,7 +39,7 @@ git submodule update --init
 
 ---
 
-## 3. Зависимости: OpenSSL и FreeRDP
+## 3. Зависимости: OpenSSL, MIT Kerberos и FreeRDP
 
 ```bash
 VIBERDP_CACHE_DIR=<папка кэша> core/scripts/build-freerdp.sh
@@ -45,26 +47,43 @@ VIBERDP_CACHE_DIR=<папка кэша> core/scripts/build-freerdp.sh
 
 - `VIBERDP_CACHE_DIR` — куда класть скачанное, деревья сборки и результат; по умолчанию `core/build/`, она в `.gitignore`
 - `CMAKE` — путь к cmake, если его нет в `PATH`; ctest берётся из той же папки
-- Полная сборка с нуля — около двух минут на Apple M4 (10 ядер) и около 350 МБ в папке кэша; повторная — меньше минуты: OpenSSL пропускается по метке, FreeRDP конфигурируется заново и собирается инкрементально
-- Сборка с нуля: удалите в папке кэша `build/`, `stage/`, `prefix/` и `src/` — скачанный архив останется в `downloads/`
+- Полная сборка с нуля — около трёх минут на Apple M4 (10 ядер) и около 560 МБ в папке кэша; повторная — меньше минуты: OpenSSL и Kerberos пропускаются по метке, FreeRDP конфигурируется заново и собирается инкрементально
+- Сборка с нуля: удалите в папке кэша `build/`, `stage/`, `prefix/` и `src/` — скачанные архивы останутся в `downloads/`
+- Kerberos собирается статически и без своих утилит: только библиотеки для NLA — [knowledge/freerdp/kerberos.md](../knowledge/freerdp/kerberos.md)
 
 ---
 
 ## 4. Ядро: VibeRDPCore
+
+Тестовые собеседники ядра и клиента — sample-сервер FreeRDP и KDC тестового Kerberos — собираются один раз, после зависимостей из раздела 3; `CMAKE` — как там же:
+
+```bash
+VIBERDP_CACHE_DIR=<папка кэша> core/scripts/build-test-server.sh
+```
+
+- Сервер собирается из копии исходников подмодуля с патчами `core/scripts/test-server/*.patch`, только под архитектуру этого Mac: это инструмент тестов, в приложение он не попадает
+- KDC — общая сборка того же релиза MIT Kerberos с сервером и утилитами базы, тоже под этот Mac; пересобирается, только когда `build.env` назовёт другой релиз
+- Каждая сборка делает новый одноразовый сертификат для TLS сервера
+- Без собеседников тесты, которым они нужны, пропускаются с причиной, остальные идут как обычно
+- Как устроены сервер, запись и живые тесты клиента — [knowledge/freerdp/sampleServer.md](../knowledge/freerdp/sampleServer.md), тестовый Kerberos — [knowledge/freerdp/kerberos.md](../knowledge/freerdp/kerberos.md)
+
+Само ядро:
 
 ```bash
 VIBERDP_CACHE_DIR=<папка кэша> core/scripts/build-core.sh
 ```
 
 Скрипт берёт префикс из раздела 3 и делает по порядку:
-1. Собирает фреймворк ядра и тесты под архитектуру этого Mac и прогоняет тесты
-2. Собирает и прогоняет вариант с AddressSanitizer и UndefinedBehaviorSanitizer
-3. Собирает остальные архитектуры из `build.env`
-4. Склеивает `<папка кэша>/core/VibeRDPCore.framework` — универсальный фреймворк для приложения — и проверяет, что наружу торчит только API `VRC*`
-5. Прогоняет тесты остальных архитектур — через Rosetta, поэтому последними
+1. Поднимает тестовый Kerberos, если собеседники собраны: область на этот прогон во временной папке, KDC и сервер, который пускает только по Kerberos, на свободных портах loopback; журналы — в `<папка кэша>/core-tests/`, при выходе всё останавливается — и при выходе с ошибкой тоже
+2. Собирает фреймворк ядра и тесты под архитектуру этого Mac и прогоняет тесты
+3. Собирает и прогоняет вариант с AddressSanitizer и UndefinedBehaviorSanitizer
+4. Собирает остальные архитектуры из `build.env`
+5. Склеивает `<папка кэша>/core/VibeRDPCore.framework` — универсальный фреймворк для приложения — и проверяет, что наружу торчит только API `VRC*`
+6. Прогоняет тесты остальных архитектур — через Rosetta, поэтому последними
 
-Тесты ядра не требуют RDP-сервера: они подключаются к фейковым серверам на loopback и проверяют жизненный цикл сессии, отмену, уничтожение во время подключения, категории ошибок, поверхность кадра, очередь ввода и кодирование событий мыши, картинку курсора из масок сервера и импорт модуля фреймворка в Swift.
+Тесты ядра подключаются к фейковым серверам на loopback и проверяют жизненный цикл сессии, отмену, уничтожение во время подключения, категории ошибок, поверхность кадра, очередь ввода и кодирование событий мыши, картинку курсора из масок сервера, кэш билетов Kerberos и импорт модуля фреймворка в Swift.
 Фейковый TLS-сервер (`core/tests/tlsServer.c`) отвечает на согласование X.224, выбирает TLS и предъявляет самоподписанный сертификат, созданный при старте теста: на нём проверяются вопрос о сертификате, отказ, согласие и отмена во время вопроса.
+Тесты `kerberosLogonTests` входят через NLA на Kerberos-сервер тестовой области: имя в виде `user@REALM` и `realm\user`, неверный пароль и кэш билетов, который уходит вместе с сессией.
 Живое подключение к Windows проверяет оператор — [liveChecks.md](liveChecks.md).
 Заголовок API лежит в `core/include`, модуль и список экспорта фреймворка — в `core/framework`.
 
@@ -72,17 +91,7 @@ VIBERDP_CACHE_DIR=<папка кэша> core/scripts/build-core.sh
 
 ## 5. Клиент: client-macos
 
-Живые тесты клиента подключаются к sample-серверу FreeRDP: один экземпляр проигрывает запись рабочего стола Windows, другой рисует иконку там, куда пришло событие мыши.
-Сервер собирается один раз, после зависимостей из раздела 3; `CMAKE` — как там же:
-
-```bash
-VIBERDP_CACHE_DIR=<папка кэша> core/scripts/build-test-server.sh
-```
-
-- Сервер собирается из копии исходников подмодуля с патчами `core/scripts/test-server/*.patch`, только под архитектуру этого Mac: это инструмент тестов, в приложение он не попадает
-- Каждая сборка делает новый одноразовый сертификат для TLS сервера
-- Без сервера живые тесты пропускаются с причиной, остальные идут как обычно
-- Как устроены сервер, запись и сам тест — [knowledge/freerdp/sampleServer.md](../knowledge/freerdp/sampleServer.md)
+Живые тесты клиента подключаются к sample-серверу FreeRDP из раздела 4: один экземпляр проигрывает запись рабочего стола Windows, другой рисует иконку там, куда пришло событие мыши.
 
 Сам клиент:
 
@@ -133,9 +142,9 @@ cd helper-win && cargo fmt --check && cargo clippy -- -D warnings && cargo clipp
 
 ```
 <папка кэша>/
-├── downloads/      # архив OpenSSL
-├── src/            # распакованный OpenSSL
-├── build/          # деревья сборки: openssl-*, freerdp-*, core-* и проверка линковки
+├── downloads/      # архивы OpenSSL и MIT Kerberos
+├── src/            # распакованные OpenSSL и MIT Kerberos
+├── build/          # деревья сборки: openssl-*, krb5-*, freerdp-*, core-* и проверка линковки
 ├── stage/          # установки через DESTDIR: внутри лежит зашитый префикс opt/viberdp
 ├── prefix/
 │   ├── arm64/      # полная установка зависимостей под одну архитектуру
@@ -143,7 +152,8 @@ cd helper-win && cargo fmt --check && cargo clippy -- -D warnings && cargo clipp
 │   └── universal/  # зависимости для ядра: заголовки, пакеты CMake, универсальные библиотеки и объекты каналов
 ├── core/
 │   └── VibeRDPCore.framework   # универсальный фреймворк ядра
-├── test-server/    # тестовый RDP-сервер: src/ — копия FreeRDP с патчами, build/, server.crt и server.key
+├── test-server/    # тестовые собеседники: src/ — копия FreeRDP с патчами, build/, kdc/ — тестовый KDC, server.crt и server.key
+├── core-tests/     # журналы тестового KDC и Kerberos-сервера последнего прогона ядра
 └── client/
     ├── DerivedData/  # сборка Xcode: Build/Products/Release/VibeRDP.app
     └── results/      # результаты тестов по архитектурам (.xcresult) и журналы тестовых серверов
@@ -153,6 +163,7 @@ cd helper-win && cargo fmt --check && cargo clippy -- -D warnings && cargo clipp
 - `CMAKE_PREFIX_PATH=<папка кэша>/prefix/universal`
 - `find_package(FreeRDP-Client 3 CONFIG REQUIRED)` и цель `freerdp-client`
 - Для прямых вызовов OpenSSL — `find_package(OpenSSL CONFIG REQUIRED)` и цель `OpenSSL::Crypto`
+- Для прямых вызовов Kerberos — заголовок `krb5/krb5.h` из `include/` префикса: пакета CMake у неё нет, ядро находит его `find_path`, а библиотеки приходят с целью `freerdp-client`
 
 Через pkg-config подключать нельзя: файлы FreeRDP не перечисляют фреймворки Apple.
 Префикс ссылается на фреймворки SDK той машины, где шла сборка, поэтому собирается он там же, где используется.
@@ -161,7 +172,8 @@ cd helper-win && cargo fmt --check && cargo clippy -- -D warnings && cargo clipp
 
 ## 8. Что проверяют скрипты
 
-- sha256 архива OpenSSL совпадает с `build.env`
+- sha256 архивов OpenSSL и MIT Kerberos совпадают с `build.env`
+- Приватные библиотеки в `mit-krb5.pc` — ровно `-lkrb5support`, как в выпуске, для которого скрипт дописывает системные; другой набор роняет сборку
 - У всех архитектур одинаковый набор объектов и одинаковые заголовки
 - В каждой библиотеке, объекте, фреймворке и в приложении есть все срезы, записана минимальная macOS из `build.env` и нет слабых ссылок — то есть API новее этой macOS; служебные слабые ссылки тулчейна перечислены в `TOOLCHAIN_WEAK_SYMBOLS` (`core/scripts/common.sh`)
 - В бинари зависимостей не попал ни один путь установки сборочной машины
@@ -179,7 +191,7 @@ cd helper-win && cargo fmt --check && cargo clippy -- -D warnings && cargo clipp
 ## 9. CI
 
 `.github/workflows/ci.yml` на каждый push в `main` и `next` и на pull request:
-- **macOS** (`macos-26`) — скачивает XcodeGen из `build.env` со сверкой sha256 и прогоняет разделы 3, 4 и 5 вместе с тестовым сервером; приложение уходит артефактом `VibeRDP-app`, а результаты упавшего прогона с журналами — артефактом `client-test-results`
+- **macOS** (`macos-26`) — скачивает XcodeGen из `build.env` со сверкой sha256 и прогоняет разделы 3, 4 и 5 вместе с тестовыми собеседниками; приложение уходит артефактом `VibeRDP-app`, а результаты упавшего прогона с журналами ядра и клиента — артефактом `client-test-results`
 - **Windows** (`windows-2025`) — rustfmt, clippy, сборка exe хелпера и его проверка из раздела 6; exe уходит артефактом `vibe-seam-helper`
 - **Линт** (`ubuntu-24.04`) — shellcheck и actionlint закреплённых версий со сверкой sha256
 
