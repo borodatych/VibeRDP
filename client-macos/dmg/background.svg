@@ -1,0 +1,55 @@
+<!--
+  The installer window: the windows of the icon going over to Applications, and under each caption
+  the light of a screen with its stand, the screen of the icon
+
+  Finder paints the captions dark over a picture, so the light is what makes them readable
+  Icon centres are at y=176 and the captions land near y=241: the screens stand there
+  These numbers and the icon positions in scripts/build-dmg.sh are two halves of one layout: move one, move the other
+
+  The version stays a placeholder: build-dmg.sh draws the image for every build with the version of the app it packs
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="400" viewBox="0 0 640 400">
+  <defs>
+    <filter id="soft" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="4.5"/>
+    </filter>
+  </defs>
+
+  <rect width="640" height="400" fill="#15181d"/>
+
+  <!-- Whose product and which build: apart, so the two do not read as one long name -->
+  <text x="22" y="30" font-family="-apple-system, Helvetica Neue, Helvetica" font-size="13" font-weight="600"
+        letter-spacing="0.6" fill="#79818c">VibeRDP</text>
+  <text x="618" y="30" text-anchor="end" font-family="-apple-system, Helvetica Neue, Helvetica" font-size="12"
+        letter-spacing="0.4" fill="#79818c">__VERSION__</text>
+
+  <!-- The arrow: windows growing on their way out, the last one with its title bar dots -->
+  <rect x="244" y="170" width="24" height="17" rx="4" fill="#9277ff" opacity="0.30"/>
+  <rect x="280" y="164" width="30" height="22" rx="5" fill="#9277ff" opacity="0.52"/>
+  <rect x="322" y="158" width="38" height="28" rx="6" fill="#9277ff" opacity="0.80"/>
+  <circle cx="329" cy="165" r="2" fill="#15181d"/>
+  <circle cx="334.2" cy="165" r="2" fill="#15181d"/>
+  <circle cx="339.4" cy="165" r="2" fill="#15181d"/>
+  <path d="M392 174 l-18 -12 v24 z" fill="#9277ff"/>
+
+  <!-- The caption screens: a bezel, the dense light under the letters, the neck and the stand -->
+  <g fill="#eee9ff">
+    <rect x="94" y="223" width="148" height="40" rx="11" fill="none" stroke="#eee9ff" stroke-width="1.5"
+          opacity="0.35"/>
+    <rect x="100" y="227" width="136" height="30" rx="8" opacity="0.92" filter="url(#soft)"/>
+    <rect x="165" y="263" width="6" height="6" opacity="0.35"/>
+    <rect x="150" y="269" width="36" height="4" rx="2" opacity="0.55"/>
+
+    <rect x="398" y="223" width="148" height="40" rx="11" fill="none" stroke="#eee9ff" stroke-width="1.5"
+          opacity="0.35"/>
+    <rect x="404" y="227" width="136" height="30" rx="8" opacity="0.92" filter="url(#soft)"/>
+    <rect x="469" y="263" width="6" height="6" opacity="0.35"/>
+    <rect x="454" y="269" width="36" height="4" rx="2" opacity="0.55"/>
+  </g>
+
+  <!-- What to do, and the first launch of a build without an Apple signature -->
+  <text x="320" y="322" text-anchor="middle" font-family="-apple-system, Helvetica Neue, Helvetica" font-size="14"
+        fill="#aeb6c0">Перетащите VibeRDP в «Программы»</text>
+  <text x="320" y="348" text-anchor="middle" font-family="-apple-system, Helvetica Neue, Helvetica" font-size="11.5"
+        fill="#79818c">Первый запуск — правой кнопкой → «Открыть»</text>
+</svg>

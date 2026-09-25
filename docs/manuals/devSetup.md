@@ -118,6 +118,23 @@ VIBERDP_CACHE_DIR=<папка кэша> XCODEGEN=<путь к xcodegen> client-m
 Проект генерируется при каждой сборке и в git не хранится.
 Открыть его в Xcode можно после первого прогона скрипта; правки проекта вносятся в `project.yml`, а не в Xcode.
 
+**Иконка.** Исходник — `client-macos/Resources/icon/appIcon.svg`, все размеры каталога `AppIcon` рисует из него скрипт, а PNG коммитятся — сборке `rsvg-convert` не нужен.
+После правки SVG:
+```bash
+client-macos/scripts/render-icon.sh
+```
+Проверка бандла в `build-client.sh` падает, если в приложении нет `AppIcon.icns`.
+
+**Образ `.dmg`.** После `build-client.sh`:
+```bash
+VIBERDP_CACHE_DIR=<папка кэша> client-macos/scripts/build-dmg.sh
+```
+- Нужен `rsvg-convert` (`brew install librsvg`) и экран: окно раскладывается под высоту главного экрана
+- Библиотеки раскладки `ds-store` и `mac-alias` скрипт ставит один раз в `<папка кэша>/dmg-venv`, версии закреплены в нём
+- Фон `client-macos/dmg/background.svg` рисуется на каждую сборку с версией приложения, раскладку окна пишет `client-macos/dmg/layout.py`
+- В конце скрипт монтирует готовый образ и сверяет фон, версию, подпись приложения и раскладку
+- Итог — `dist/VibeRDP-<версия>.dmg`
+
 ---
 
 ## 6. Хелпер: helper-win
@@ -157,12 +174,13 @@ cd helper-win && cargo fmt --check && cargo clippy -- -D warnings && cargo clipp
 │   └── VibeRDPCore.framework   # универсальный фреймворк ядра
 ├── test-server/    # тестовые собеседники: src/ — копия FreeRDP с патчами, build/, kdc/ — тестовый KDC, server.crt и server.key
 ├── core-tests/     # журналы тестового KDC и Kerberos-сервера последнего прогона ядра
+├── dmg-venv/       # библиотеки раскладки окна .dmg
 └── client/
     ├── DerivedData/  # дерево сборки Xcode
     └── results/      # результаты тестов по архитектурам (.xcresult) и журналы тестовых серверов
 ```
 
-Готовое приложение — не в кэше, а в проекте: `dist/VibeRDP.app`.
+Готовое приложение и образ — не в кэше, а в проекте: `dist/VibeRDP.app` и `dist/VibeRDP-<версия>.dmg`.
 `build-client.sh` кладёт его туда только после проверок бандла и тестов, папка `dist/` исключена из git.
 
 Подключение FreeRDP из CMake:

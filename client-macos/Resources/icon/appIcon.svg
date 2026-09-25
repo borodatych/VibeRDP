@@ -1,0 +1,35 @@
+<!--
+  The VibeRDP icon: the screen and chevrons of the connection, and two windows coming out of it,
+  the windows of Windows apps living on the Mac as its own
+  scripts/render-icon.sh draws every size of the asset catalog from this file; the PNGs are committed beside it
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#232830"/><stop offset="1" stop-color="#101318"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#bba8ff"/><stop offset="1" stop-color="#9277ff"/>
+    </linearGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="14" stdDeviation="18" flood-color="#000" flood-opacity="0.55"/>
+    </filter>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#body)"/>
+  <rect x="101.5" y="101.5" width="821" height="821" rx="183.5" fill="none" stroke="#ffffff" stroke-opacity="0.07" stroke-width="3"/>
+  <rect x="190" y="300" width="560" height="400" rx="46" fill="none" stroke="url(#accent)" stroke-width="28" stroke-opacity="0.8"/>
+  <rect x="382" y="734" width="176" height="30" rx="15" fill="#9277ff" fill-opacity="0.8"/>
+  <g fill="none" stroke="url(#accent)" stroke-width="40" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.9">
+    <path d="M318 430 l76 72 l-76 72"/>
+    <path d="M622 430 l-76 72 l76 72"/>
+  </g>
+  <circle cx="470" cy="502" r="18" fill="#9277ff" fill-opacity="0.9"/>
+  <g filter="url(#shadow)">
+    <rect x="578" y="206" width="282" height="198" rx="30" fill="url(#accent)" fill-opacity="1.0"/>
+  </g>
+  <circle cx="614.0" cy="237.0" r="8" fill="#1a1233"/><circle cx="634.8" cy="237.0" r="8" fill="#1a1233"/><circle cx="655.6" cy="237.0" r="8" fill="#1a1233"/>
+  <g filter="url(#shadow)">
+    <rect x="676" y="520" width="212" height="152" rx="24" fill="url(#accent)" fill-opacity="0.88"/>
+  </g>
+  <circle cx="706.0" cy="545.6" r="8" fill="#1a1233"/><circle cx="726.8" cy="545.6" r="8" fill="#1a1233"/><circle cx="747.6" cy="545.6" r="8" fill="#1a1233"/>
+</svg>

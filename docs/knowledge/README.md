@@ -24,6 +24,7 @@
 ## macos
 
 - [keychain.md](macos/keychain.md) — пароли профилей: защищённой связке ключей нужен подписанный идентификатор приложения, ad-hoc сборке доступна файловая связка входа; другая сборка спрашивает доступ к записи; наличие записи проверяется без расшифровки
+- [dmgInstaller.md](macos/dmgInstaller.md) — образ `.dmg`: ссылку на `/Applications` Finder показывает по её имени, а не переведённым названием папки; иконка приложения из каталога ресурсов — `AppIcon.icns` и `CFBundleIconName` в бандле; общая механика окна — навык `dmg-installer`
 - [windowsAppStore.md](macos/windowsAppStore.md) — подключения Windows App: база Core Data с журналом WAL в контейнере `com.microsoft.rdc.macos`, читается с копии вместе с `-wal`; закладка хранит целый `.rdp`, пользователь и шлюз — в своих таблицах, пароли — в связке ключей Windows App
 - [localization.md](macos/localization.md) — языки: строки Info.plist macOS читает из `InfoPlist.strings` бандла, а не из папки языков; тестовый прогон говорит на языке системы и засевает папку; каталог под замком, а не на главном акторе; гейт — скрипт при сборке, не тест в приложении
 - [localNetworkPrivacy.md](macos/localNetworkPrivacy.md) — приложению нужен `NSLocalNetworkUsageDescription`, консольные программы из Terminal проверку не проходят; в CI `connect` приложения к `127.0.0.1` висел 35 с и не прерывался отменой — причина, вероятно, в этой проверке

@@ -84,6 +84,10 @@ check_app() {
     commands=$(otool -l "$binary")
     grep -qF "@rpath/VibeRDPCore.framework/" <<<"$libraries" || die "$binary does not link the core framework"
     grep -qF "@executable_path/../Frameworks" <<<"$commands" || die "$binary cannot find the embedded frameworks"
+    # Without the icon the app shows the generic one in the Finder, the Dock and the installer window
+    [ -f "$APP/Contents/Resources/AppIcon.icns" ] || die "$APP carries no AppIcon.icns"
+    [ "$(defaults read "$APP/Contents/Info" CFBundleIconName 2>/dev/null)" = AppIcon ] ||
+        die "$APP does not name its icon in Info.plist"
     # --deep checks the nested framework too: an embedded copy left unsigned fails here
     codesign --verify --deep --strict "$APP" || die "$APP fails signature verification"
 }
