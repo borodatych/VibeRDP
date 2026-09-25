@@ -24,6 +24,12 @@ final class MainWindowTests: XCTestCase {
         XCTAssertEqual(quit.keyEquivalent, "q")
         XCTAssertEqual(quit.title, Localization.text(.menuAppQuit, ["app": "VibeRDP"]))
 
+        let file = try XCTUnwrap(bar.items[1].submenu)
+        let disconnect = try XCTUnwrap(
+            file.items.first { $0.action == #selector(ConnectionViewController.disconnect(_:)) })
+        XCTAssertEqual(disconnect.title, Localization.text(.menuFileDisconnect))
+        XCTAssertEqual(disconnect.keyEquivalent, "")
+
         // The shortcut is the system's own, so only the item is checked
         XCTAssertNotNil(bar.items[2].submenu?.items.first { $0.action == #selector(NSWindow.toggleFullScreen(_:)) })
         let window = try XCTUnwrap((NSApp.delegate as? AppDelegate)?.mainWindow)

@@ -82,6 +82,11 @@ final class ConnectionViewController: NSViewController {
         }
     }
 
+    /// The menu command: while connected, the desktop covers the form together with its button
+    @objc func disconnect(_ sender: Any?) {
+        session?.disconnect()
+    }
+
     private func connect() {
         guard let address = ServerAddress(hostField.stringValue) else {
             statusLabel.stringValue = Localization.text(.connectionStatusInvalidHost)
@@ -207,5 +212,12 @@ final class ConnectionViewController: NSViewController {
             }
         let message = Localization.text(key, ["host": host])
         return name.isEmpty ? message : Localization.text(.connectionErrorDetails, ["message": message, "code": name])
+    }
+}
+
+extension ConnectionViewController: NSMenuItemValidation {
+    /// Disconnecting makes sense only while a session exists, from connecting until Disconnected
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        menuItem.action != #selector(disconnect(_:)) || session != nil
     }
 }

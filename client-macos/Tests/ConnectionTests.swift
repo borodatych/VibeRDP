@@ -55,6 +55,39 @@ final class ConnectionTests: XCTestCase {
         XCTAssertTrue(form.hostField.isEnabled)
     }
 
+    /// Without a session there is nothing to end: the menu item stays grey
+    func testDisconnectCommandNeedsASession() {
+        let form = ConnectionViewController(trusted: TrustedCertificates(defaults: defaults))
+        form.loadView()
+        XCTAssertFalse(form.validateMenuItem(Self.disconnectCommand))
+    }
+
+    /// From the start of a connection the menu item ends it, and once the session is over the item is grey again
+    func testDisconnectCommandEndsTheSession() async throws {
+        guard FrameRenderer() != nil else {
+            throw XCTSkip("no GPU that runs Metal Performance Shaders on this machine")
+        }
+        let form = ConnectionViewController(trusted: TrustedCertificates(defaults: defaults))
+        form.loadView()
+        form.hostField.stringValue = "viberdp-test.invalid"
+        form.toggleConnection()
+        XCTAssertTrue(form.validateMenuItem(Self.disconnectCommand))
+        XCTAssertFalse(form.hostField.isEnabled)
+
+        form.disconnect(nil)
+        // The session ends on its own thread, and Disconnected reaches the form through the main actor
+        let deadline = Date().addingTimeInterval(10)
+        while form.validateMenuItem(Self.disconnectCommand) && Date() < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertFalse(form.validateMenuItem(Self.disconnectCommand))
+        XCTAssertTrue(form.hostField.isEnabled)
+    }
+
+    private static var disconnectCommand: NSMenuItem {
+        NSMenuItem(title: "", action: #selector(ConnectionViewController.disconnect(_:)), keyEquivalent: "")
+    }
+
     func testErrorMessagesNameTheHostAndKeepTheEngineCode() {
         let code = "ERRCONNECT_CONNECT_FAILED"
         let reason = Localization.text(.connectionErrorUnreachable, ["host": "win"])

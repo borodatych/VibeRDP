@@ -24,6 +24,9 @@ struct MainMenu {
         application.addItem(Self.item(.menuAppQuit, app, #selector(NSApplication.terminate(_:)), key: "q"))
 
         let file = NSMenu(title: Localization.text(.menuFile))
+        // No shortcut: the Command combinations are to reach the remote desktop, and task 1.4 lays them out
+        file.addItem(Self.item(.menuFileDisconnect, [:], #selector(ConnectionViewController.disconnect(_:))))
+        file.addItem(.separator())
         file.addItem(Self.item(.menuFileClose, [:], #selector(NSWindow.performClose(_:)), key: "w"))
 
         windowMenu = NSMenu(title: Localization.text(.menuWindow))
