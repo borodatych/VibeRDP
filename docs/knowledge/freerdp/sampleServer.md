@@ -13,6 +13,7 @@
 
 **Применение:**
 - `multitransport.patch` выключает multitransport у sample-сервера
+- `sample-clipboard.patch` добавляет `--clipboard-echo`: сервер берёт текст из буфера клиента и возвращает его с приставкой `echo: ` — [rdp/clipboard.md](../rdp/clipboard.md); патч сделан поверх остальных и по имени идёт последним
 - `kerberos-nla.patch` добавляет `--kerberos-keytab=<файл>`: с ним сервер пускает только через NLA и только по Kerberos (`AuthenticationPackageList` — `!ntlm`) и слушает TCP на `localhost` — [kerberos.md](kerberos.md)
 - `pcap-record-length.patch` чинит проигрыш записи — раздел ниже
 - Патч, который перестал накладываться на новый FreeRDP, роняет сборку с именем патча
