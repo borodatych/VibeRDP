@@ -5,6 +5,8 @@
 
 #include "VibeRDPCore/VibeRDPCore.h"
 #include "frame.h"
+#include "input.h"
+#include "pointer.h"
 
 #include <pthread.h>
 #include <stdatomic.h>
@@ -17,6 +19,8 @@
 #include <freerdp/error.h>
 #include <freerdp/freerdp.h>
 #include <freerdp/gdi/gdi.h>
+#include <freerdp/graphics.h>
+#include <freerdp/input.h>
 #include <winpr/synch.h>
 #include <winpr/thread.h>
 
@@ -52,7 +56,18 @@ struct VRCSession {
     pthread_mutex_t frameMutex;
     /* The surface locked for CPU writes between BeginPaint and EndPaint */
     IOSurfaceRef lockedFrame;
+
+    /* Pointer input the app queued; inputReady wakes the session thread, which alone sends it */
+    VRCInputQueue input;
+    HANDLE inputReady;
 };
+
+/* The pointer FreeRDP allocates with the size the core registers: the converted image rides along */
+typedef struct VRCPointer {
+    /* Must stay first: FreeRDP allocates the whole object and hands it over as its own type */
+    rdpPointer pointer;
+    uint8_t* image;
+} VRCPointer;
 
 /* The session served by the current thread: VRCSessionDestroy must not wait for its own thread */
 static _Thread_local const VRCSession* threadSession = NULL;
@@ -203,6 +218,91 @@ static BOOL desktopResize(rdpContext* context)
     return resized;
 }
 
+static void notifyPointer(const VRCSession* session, VRCPointerKind kind, const VRCPointerImage* image)
+{
+    if (session->callbacks.pointerChanged)
+        session->callbacks.pointerChanged(session->userData, kind, image);
+}
+
+/*
+ * A new server pointer, converted once and kept for every time the server selects it again
+ * It always succeeds: FreeRDP drops the whole update on a failure, and a pointer without an image shows the arrow
+ */
+static BOOL pointerNew(rdpContext* context, rdpPointer* pointer)
+{
+    VRCPointer* own = (VRCPointer*)pointer;
+    own->image = vrcPointerImageCreate(pointer->width, pointer->height, pointer->xorBpp, pointer->xorMaskData,
+                                       pointer->lengthXorMask, pointer->andMaskData, pointer->lengthAndMask,
+                                       context->gdi ? &context->gdi->palette : NULL);
+    return TRUE;
+}
+
+static void pointerFree(rdpContext* context, rdpPointer* pointer)
+{
+    (void)context;
+    VRCPointer* own = (VRCPointer*)pointer;
+    free(own->image);
+    own->image = NULL;
+}
+
+/* An empty pointer hides it; one that did not convert falls back to the arrow rather than leaving a stale image */
+static BOOL pointerSet(rdpContext* context, rdpPointer* pointer)
+{
+    const VRCSession* session = (const VRCSession*)context;
+    const VRCPointer* own = (const VRCPointer*)pointer;
+
+    if (!own->image)
+    {
+        const bool empty = pointer->width == 0 || pointer->height == 0;
+        notifyPointer(session, empty ? VRCPointerKindHidden : VRCPointerKindSystem, NULL);
+        return TRUE;
+    }
+    const VRCPointerImage image = {
+        .width = pointer->width,
+        .height = pointer->height,
+        .hotspotX = pointer->xPos,
+        .hotspotY = pointer->yPos,
+        .pixels = own->image,
+    };
+    notifyPointer(session, VRCPointerKindImage, &image);
+    return TRUE;
+}
+
+static BOOL pointerSetNull(rdpContext* context)
+{
+    notifyPointer((const VRCSession*)context, VRCPointerKindHidden, NULL);
+    return TRUE;
+}
+
+static BOOL pointerSetDefault(rdpContext* context)
+{
+    notifyPointer((const VRCSession*)context, VRCPointerKindSystem, NULL);
+    return TRUE;
+}
+
+/* macOS does not move the cursor from under the user: the request is taken and dropped */
+static BOOL pointerSetPosition(rdpContext* context, UINT32 x, UINT32 y)
+{
+    (void)context;
+    (void)x;
+    (void)y;
+    return TRUE;
+}
+
+static void registerPointer(rdpContext* context)
+{
+    const rdpPointer prototype = {
+        .size = sizeof(VRCPointer),
+        .New = pointerNew,
+        .Free = pointerFree,
+        .Set = pointerSet,
+        .SetNull = pointerSetNull,
+        .SetDefault = pointerSetDefault,
+        .SetPosition = pointerSetPosition,
+    };
+    graphics_register_pointer(context->graphics, &prototype);
+}
+
 /* BGRX32 is B, G, R, X in memory: the byte order of a BGRA IOSurface and of MTLPixelFormatBGRA8Unorm */
 static BOOL postConnect(freerdp* instance)
 {
@@ -225,6 +325,7 @@ static BOOL postConnect(freerdp* instance)
     context->update->BeginPaint = beginPaint;
     context->update->EndPaint = endPaint;
     context->update->DesktopResize = desktopResize;
+    registerPointer(context);
     notifyFrameResized(session, width, height);
     return TRUE;
 }
@@ -245,14 +346,81 @@ static void postDisconnect(freerdp* instance)
     replaceFrame(session, NULL);
 }
 
-/* Runs until the session ends; a stop without a reason gets a generic one, so the caller always learns why */
-static void runEventLoop(rdpContext* context)
+/* The protocol carries 16-bit coordinates, and the server expects a point on its desktop */
+static UINT16 clampCoordinate(uint32_t value, UINT32 size)
 {
+    const uint32_t last = size == 0 ? 0 : (size > UINT16_MAX ? UINT16_MAX : size - 1);
+    return (UINT16)(value < last ? value : last);
+}
+
+/* Runs on the session thread only, so no input races the teardown of the connection */
+static void sendInput(VRCSession* session, const VRCInputEvent* event)
+{
+    rdpContext* context = &session->common.context;
+    rdpSettings* settings = context->settings;
+    const UINT16 x = clampCoordinate(event->x, freerdp_settings_get_uint32(settings, FreeRDP_DesktopWidth));
+    const UINT16 y = clampCoordinate(event->y, freerdp_settings_get_uint32(settings, FreeRDP_DesktopHeight));
+
+    switch (event->kind)
+    {
+        case VRCInputKindMove:
+            (void)freerdp_input_send_mouse_event(context->input, PTR_FLAGS_MOVE, x, y);
+            break;
+        case VRCInputKindButton:
+        {
+            uint16_t flags = 0;
+            bool extended = false;
+            (void)vrcButtonFlags(event->button, event->pressed, &flags, &extended);
+            if (!extended)
+                (void)freerdp_input_send_mouse_event(context->input, flags, x, y);
+            else if (freerdp_settings_get_bool(settings, FreeRDP_HasExtendedMouseEvent))
+                (void)freerdp_input_send_extended_mouse_event(context->input, flags, x, y);
+            break;
+        }
+        case VRCInputKindWheel:
+        {
+            /* FreeRDP itself drops an unsupported horizontal step, with a warning for each */
+            if (event->axis == VRCWheelAxisHorizontal &&
+                !freerdp_settings_get_bool(settings, FreeRDP_HasHorizontalWheel))
+                break;
+            uint16_t steps[VRC_WHEEL_MAX_STEPS];
+            const size_t count = vrcWheelFlags(event->axis, event->delta, steps, ARRAYSIZE(steps));
+            for (size_t i = 0; i < count; i++)
+                (void)freerdp_input_send_mouse_event(context->input, steps[i], x, y);
+            break;
+        }
+    }
+}
+
+/*
+ * The connect call returns during the finalization of the connection, and a reactivation passes through it again:
+ * until the state is active, the input waits in the queue in its order
+ */
+static void sendPendingInput(VRCSession* session)
+{
+    VRCInputEvent events[VRC_INPUT_QUEUE_CAPACITY];
+
+    /* Reset before taking: an event queued meanwhile is either taken now or sets the signal again */
+    (void)ResetEvent(session->inputReady);
+    if (freerdp_get_state(&session->common.context) != CONNECTION_STATE_ACTIVE)
+        return;
+    const size_t count = vrcInputQueueTake(&session->input, events, ARRAYSIZE(events));
+    for (size_t i = 0; i < count; i++)
+        sendInput(session, &events[i]);
+}
+
+/* Runs until the session ends; a stop without a reason gets a generic one, so the caller always learns why */
+static void runEventLoop(VRCSession* session)
+{
+    rdpContext* context = &session->common.context;
     HANDLE handles[MAXIMUM_WAIT_OBJECTS] = { 0 };
 
     while (!freerdp_shall_disconnect_context(context))
     {
-        const DWORD count = freerdp_get_event_handles(context, handles, ARRAYSIZE(handles));
+        /* The last slot is the input queue: queued input wakes the thread as the network does */
+        DWORD count = freerdp_get_event_handles(context, handles, ARRAYSIZE(handles) - 1);
+        if (count > 0)
+            handles[count++] = session->inputReady;
 
         if (count == 0 || WaitForMultipleObjects(count, handles, FALSE, INFINITE) == WAIT_FAILED ||
             !freerdp_check_event_handles(context))
@@ -260,6 +428,7 @@ static void runEventLoop(rdpContext* context)
             freerdp_set_last_error_if_not(context, FREERDP_ERROR_CONNECT_TRANSPORT_FAILED);
             break;
         }
+        sendPendingInput(session);
     }
 }
 
@@ -272,8 +441,10 @@ static DWORD WINAPI sessionThread(LPVOID arg)
     notifyState(session, VRCSessionStateConnecting);
     if (freerdp_connect(context->instance))
     {
+        vrcInputQueueOpen(&session->input);
         notifyState(session, VRCSessionStateConnected);
-        runEventLoop(context);
+        runEventLoop(session);
+        vrcInputQueueClose(&session->input);
     }
     else
     {
@@ -323,6 +494,8 @@ static BOOL clientNew(freerdp* instance, rdpContext* context)
     atomic_init(&session->certificateState, CertificateIdle);
     atomic_init(&session->certificateRejected, false);
     session->certificateAnswered = CreateEventA(NULL, TRUE, FALSE, NULL);
+    session->inputReady = CreateEventA(NULL, TRUE, FALSE, NULL);
+    vrcInputQueueInit(&session->input);
     session->frame = NULL;
     session->lockedFrame = NULL;
     /* A static initializer cannot fail, so ClientFree always meets a valid mutex */
@@ -343,7 +516,7 @@ static BOOL clientNew(freerdp* instance, rdpContext* context)
     instance->PresentGatewayMessage = NULL;
     instance->LogonErrorInfo = NULL;
     instance->GetAccessToken = NULL;
-    return session->certificateAnswered != NULL;
+    return session->certificateAnswered != NULL && session->inputReady != NULL;
 }
 
 static void clientFree(freerdp* instance, rdpContext* context)
@@ -353,6 +526,9 @@ static void clientFree(freerdp* instance, rdpContext* context)
 
     if (session->certificateAnswered)
         (void)CloseHandle(session->certificateAnswered);
+    if (session->inputReady)
+        (void)CloseHandle(session->inputReady);
+    vrcInputQueueDestroy(&session->input);
     /* A session that connected released its surface in PostDisconnect; one that never did has none */
     replaceFrame(session, NULL);
     pthread_mutex_destroy(&session->frameMutex);
@@ -501,4 +677,43 @@ IOSurfaceRef VRCSessionCopyFrameSurface(VRCSession* session)
         CFRetain(surface);
     pthread_mutex_unlock(&session->frameMutex);
     return surface;
+}
+
+/* Queues the event and wakes the session thread; the caller never waits for the network */
+static VRCResult queueInput(VRCSession* session, const VRCInputEvent* event)
+{
+    const VRCResult result = vrcInputQueuePush(&session->input, event);
+    if (result == VRCResultOK)
+        (void)SetEvent(session->inputReady);
+    return result;
+}
+
+VRCResult VRCSessionSendMouseMove(VRCSession* session, uint32_t x, uint32_t y)
+{
+    if (!session)
+        return VRCResultInvalidArgument;
+
+    const VRCInputEvent event = { .kind = VRCInputKindMove, .x = x, .y = y };
+    return queueInput(session, &event);
+}
+
+VRCResult VRCSessionSendMouseButton(VRCSession* session, VRCMouseButton button, bool pressed, uint32_t x,
+                                    uint32_t y)
+{
+    uint16_t flags = 0;
+    bool extended = false;
+    if (!session || !vrcButtonFlags(button, pressed, &flags, &extended))
+        return VRCResultInvalidArgument;
+
+    const VRCInputEvent event = { .kind = VRCInputKindButton, .x = x, .y = y, .button = button, .pressed = pressed };
+    return queueInput(session, &event);
+}
+
+VRCResult VRCSessionSendMouseWheel(VRCSession* session, VRCWheelAxis axis, int32_t delta, uint32_t x, uint32_t y)
+{
+    if (!session || (axis != VRCWheelAxisVertical && axis != VRCWheelAxisHorizontal))
+        return VRCResultInvalidArgument;
+
+    const VRCInputEvent event = { .kind = VRCInputKindWheel, .x = x, .y = y, .axis = axis, .delta = delta };
+    return queueInput(session, &event);
 }

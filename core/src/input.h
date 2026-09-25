@@ -1,0 +1,76 @@
+/*
+ * Pointer input of a session: the app queues it from any thread, and the session thread sends it
+ * A slow link never blocks the caller, and nothing is sent while the session is set up or torn down
+ */
+
+#ifndef VRC_INPUT_H
+#define VRC_INPUT_H
+
+#include "VibeRDPCore/VibeRDPCore.h"
+
+#include <pthread.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+/* Moves merge, so only clicks and wheel steps fill the queue: a full one means the session stopped sending */
+#define VRC_INPUT_QUEUE_CAPACITY 256u
+
+/* The most wheel steps one rotation may need: RDP carries at most 255 units in one event */
+#define VRC_WHEEL_MAX_STEPS 32u
+
+typedef enum VRCInputKind {
+    VRCInputKindMove,
+    VRCInputKindButton,
+    VRCInputKindWheel,
+} VRCInputKind;
+
+typedef struct VRCInputEvent {
+    VRCInputKind kind;
+    uint32_t x;
+    uint32_t y;
+    VRCMouseButton button;
+    bool pressed;
+    VRCWheelAxis axis;
+    int32_t delta;
+} VRCInputEvent;
+
+typedef struct VRCInputQueue {
+    pthread_mutex_t mutex;
+    /* Closed until the connection is up and again once it ends: pushes then get InvalidState */
+    bool open;
+    size_t count;
+    VRCInputEvent events[VRC_INPUT_QUEUE_CAPACITY];
+} VRCInputQueue;
+
+/* An empty, closed queue; the static mutex cannot fail */
+void vrcInputQueueInit(VRCInputQueue* queue);
+void vrcInputQueueDestroy(VRCInputQueue* queue);
+
+void vrcInputQueueOpen(VRCInputQueue* queue);
+
+/* Refuses further events and drops the pending ones */
+void vrcInputQueueClose(VRCInputQueue* queue);
+
+/*
+ * Adds an event after the pending ones; a move right after a move replaces it
+ * InvalidState while the queue is closed, Failure when it is full
+ */
+VRCResult vrcInputQueuePush(VRCInputQueue* queue, const VRCInputEvent* event);
+
+/* Moves the pending events into events, oldest first, and returns their count */
+size_t vrcInputQueueTake(VRCInputQueue* queue, VRCInputEvent* events, size_t capacity);
+
+/*
+ * The pointer flags of a press or release; extended is set for the buttons that need the extended mouse event
+ * False for a value outside VRCMouseButton
+ */
+bool vrcButtonFlags(VRCMouseButton button, bool pressed, uint16_t* flags, bool* extended);
+
+/*
+ * Splits a rotation into the steps of RDP pointer events: a 9-bit signed value each, at most 255 units
+ * Returns the number of steps written to flags; a zero delta has none
+ */
+size_t vrcWheelFlags(VRCWheelAxis axis, int32_t delta, uint16_t* flags, size_t capacity);
+
+#endif

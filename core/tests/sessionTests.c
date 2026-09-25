@@ -101,6 +101,32 @@ static bool testInvalidArguments(void)
     return true;
 }
 
+/* Input reaches only a connected session: refused before Connected, after a failed connection and with bad values */
+static bool testInputNeedsAConnection(void)
+{
+    Recorder* recorder = recorderNew();
+    const VRCCallbacks callbacks = recorderCallbacks();
+    VRCSession* session = VRCSessionCreate(&callbacks, recorder);
+    CHECK(session != NULL);
+
+    CHECK(VRCSessionSendMouseMove(NULL, 1, 1) == VRCResultInvalidArgument);
+    CHECK(VRCSessionSendMouseButton(NULL, VRCMouseButtonLeft, true, 1, 1) == VRCResultInvalidArgument);
+    CHECK(VRCSessionSendMouseWheel(NULL, VRCWheelAxisVertical, 120, 1, 1) == VRCResultInvalidArgument);
+    CHECK(VRCSessionSendMouseButton(session, (VRCMouseButton)5, true, 1, 1) == VRCResultInvalidArgument);
+    CHECK(VRCSessionSendMouseWheel(session, (VRCWheelAxis)2, 120, 1, 1) == VRCResultInvalidArgument);
+
+    CHECK(VRCSessionSendMouseMove(session, 1, 1) == VRCResultInvalidState);
+    const VRCConnectionParams params = loopbackParams(unusedPort());
+    CHECK(VRCSessionConnect(session, &params) == VRCResultOK);
+    CHECK(recorderWaitForState(recorder, VRCSessionStateDisconnected, STATE_TIMEOUT_MS));
+    CHECK(VRCSessionSendMouseButton(session, VRCMouseButtonLeft, true, 1, 1) == VRCResultInvalidState);
+    CHECK(VRCSessionSendMouseWheel(session, VRCWheelAxisVertical, 120, 1, 1) == VRCResultInvalidState);
+
+    VRCSessionDestroy(session);
+    recorderFree(recorder);
+    return true;
+}
+
 static bool testConnectRefused(void)
 {
     Recorder* recorder = recorderNew();
@@ -403,6 +429,7 @@ typedef struct TestCase {
 static const TestCase tests[] = {
     { "lifecycle", testLifecycle },
     { "invalidArguments", testInvalidArguments },
+    { "inputNeedsAConnection", testInputNeedsAConnection },
     { "connectRefused", testConnectRefused },
     { "serverClosesConnection", testServerClosesConnection },
     { "disconnectWhileConnecting", testDisconnectWhileConnecting },

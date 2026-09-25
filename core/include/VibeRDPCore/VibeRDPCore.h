@@ -14,6 +14,11 @@
  * The remote desktop:
  * The engine draws into an IOSurface of the desktop size, BGRA in memory; the app shows it without a copy
  * frameResized gives the size of a new surface, frameUpdated the rectangle that changed in it
+ *
+ * Pointer input:
+ * The app queues mouse events from any thread and never waits for the network; the session thread sends them
+ * The queue holds them until the connection is active, also while the server reactivates it, and keeps their order
+ * pointerChanged brings the pointer the server draws with, so the app can show it as its cursor
  */
 
 #ifndef VIBERDPCORE_H
@@ -51,6 +56,37 @@ typedef VRC_ENUM(VRCSessionState) {
     VRCSessionStateConnected = 2,
     VRCSessionStateDisconnected = 3,
 } VRCSessionState;
+
+/* The buttons of a mouse; Back and Forward are the side buttons that Windows calls X1 and X2 */
+typedef VRC_ENUM(VRCMouseButton) {
+    VRCMouseButtonLeft = 0,
+    VRCMouseButtonRight = 1,
+    VRCMouseButtonMiddle = 2,
+    VRCMouseButtonBack = 3,
+    VRCMouseButtonForward = 4,
+} VRCMouseButton;
+
+/* A positive rotation scrolls up, as a wheel turned away from the user, or right */
+typedef VRC_ENUM(VRCWheelAxis) {
+    VRCWheelAxisVertical = 0,
+    VRCWheelAxisHorizontal = 1,
+} VRCWheelAxis;
+
+/* What the pointer over the desktop looks like */
+typedef VRC_ENUM(VRCPointerKind) {
+    VRCPointerKindImage = 0,  /* An image of the server: the request carries it */
+    VRCPointerKindHidden = 1, /* The server hides the pointer, as over a playing video */
+    VRCPointerKindSystem = 2, /* The client's own arrow */
+} VRCPointerKind;
+
+/* The image of a server pointer: BGRA in memory with straight alpha, rows top to bottom */
+typedef struct VRCPointerImage {
+    uint32_t width; /* Pixels of the remote desktop */
+    uint32_t height;
+    uint32_t hotspotX; /* The point that clicks, from the top left corner */
+    uint32_t hotspotY;
+    const uint8_t* pixels; /* width * 4 bytes per row */
+} VRCPointerImage;
 
 /* Why a session ended: the app words the message itself, the engine code stays for diagnostics */
 typedef VRC_ENUM(VRCErrorKind) {
@@ -98,6 +134,12 @@ typedef struct VRCCallbacks {
 
     /* Pixels changed inside this rectangle of the current surface */
     void (*frameUpdated)(void* userData, uint32_t x, uint32_t y, uint32_t width, uint32_t height);
+
+    /*
+     * The server changed its pointer; image is set only for VRCPointerKindImage and stays valid only during the call
+     * A server request to move the pointer is not passed on: macOS does not move the cursor from under the user
+     */
+    void (*pointerChanged)(void* userData, VRCPointerKind kind, const VRCPointerImage* image);
 } VRCCallbacks;
 
 /*
@@ -147,6 +189,27 @@ VRCResult VRCSessionResolveCertificate(VRCSession* session, bool accept);
  * After frameResized the engine draws into a new surface, and the old one stays valid until released
  */
 CF_RETURNS_RETAINED IOSurfaceRef VRCSessionCopyFrameSurface(VRCSession* session);
+
+/*
+ * Pointer input from any thread, in desktop pixels: the core clamps the point to the desktop
+ * A move right after a move replaces it, so a slow link gets the latest position, not a backlog
+ * InvalidState before Connected and after the session ends; Failure when the queue is full
+ */
+VRCResult VRCSessionSendMouseMove(VRCSession* session, uint32_t x, uint32_t y);
+
+/*
+ * A press or a release; Back and Forward go only to a server that announced them, and to others not at all
+ * InvalidArgument for a value outside VRCMouseButton
+ */
+VRCResult VRCSessionSendMouseButton(VRCSession* session, VRCMouseButton button, bool pressed, uint32_t x,
+                                    uint32_t y);
+
+/*
+ * A wheel rotation in the units of Windows: 120 is one notch, a smaller delta is a finer scroll
+ * The core splits it into steps the protocol carries; a horizontal one goes only to a server that announced it
+ * InvalidArgument for a value outside VRCWheelAxis
+ */
+VRCResult VRCSessionSendMouseWheel(VRCSession* session, VRCWheelAxis axis, int32_t delta, uint32_t x, uint32_t y);
 
 #ifdef __cplusplus
 }

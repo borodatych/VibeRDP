@@ -19,6 +19,7 @@ target_compile_options(sessionTests PRIVATE -Wall -Wextra -Werror)
 set(VRC_SESSION_TESTS
     lifecycle
     invalidArguments
+    inputNeedsAConnection
     connectRefused
     serverClosesConnection
     disconnectWhileConnecting
@@ -41,6 +42,26 @@ target_link_libraries(frameTests PRIVATE "-framework IOSurface" "-framework Core
 target_compile_options(frameTests PRIVATE -Wall -Wextra -Werror)
 foreach(test IN ITEMS surfaceMatchesTheDesktop emptySizeHasNoSurface)
   add_test(NAME ${test} COMMAND frameTests ${test})
+  set_tests_properties(${test} PROPERTIES TIMEOUT 60 ENVIRONMENT "${VRC_TEST_ENVIRONMENT}")
+endforeach()
+
+# The input and pointer modules link FreeRDP themselves: the framework keeps its copy private
+add_executable(inputTests inputTests.c ${PROJECT_SOURCE_DIR}/src/input.c)
+target_include_directories(inputTests PRIVATE ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/include)
+target_link_libraries(inputTests PRIVATE freerdp-client)
+target_compile_options(inputTests PRIVATE -Wall -Wextra -Werror)
+foreach(test IN ITEMS queueKeepsOrder movesMerge closedQueueRefuses fullQueueFails takeWithLessRoom buttonFlags
+                      wheelSteps)
+  add_test(NAME ${test} COMMAND inputTests ${test})
+  set_tests_properties(${test} PROPERTIES TIMEOUT 60 ENVIRONMENT "${VRC_TEST_ENVIRONMENT}")
+endforeach()
+
+add_executable(pointerTests pointerTests.c ${PROJECT_SOURCE_DIR}/src/pointer.c)
+target_include_directories(pointerTests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(pointerTests PRIVATE freerdp-client)
+target_compile_options(pointerTests PRIVATE -Wall -Wextra -Werror)
+foreach(test IN ITEMS monochromePointer colorPointerKeepsStraightAlpha noImageWithoutWhatItNeeds)
+  add_test(NAME ${test} COMMAND pointerTests ${test})
   set_tests_properties(${test} PROPERTIES TIMEOUT 60 ENVIRONMENT "${VRC_TEST_ENVIRONMENT}")
 endforeach()
 
