@@ -17,7 +17,7 @@ import re
 import sys
 
 CATALOG = pathlib.Path("App/Localization.swift")
-CODE = ("App", "Connections", "Session")
+CODE = ("App", "Clipboard", "Connections", "Session")
 LANGUAGES = pathlib.Path("Resources/lang")
 SEEDED = ("en",)
 SAMPLE = "example.jsonc"

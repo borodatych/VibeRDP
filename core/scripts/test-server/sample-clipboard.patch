@@ -1,0 +1,254 @@
+--- a/server/Sample/CMakeLists.txt
++++ b/server/Sample/CMakeLists.txt
+@@ -27,6 +27,8 @@
+     sf_rdpsnd.h
+     sf_encomsp.c
+     sf_encomsp.h
++    sf_cliprdr.c
++    sf_cliprdr.h
+ )
+ 
+ if(CHANNEL_AINPUT_SERVER)
+--- /dev/null
++++ b/server/Sample/sf_cliprdr.c
+@@ -0,0 +1,125 @@
++/**
++ * Test tool of VibeRDP: an echo of the clipboard of the client
++ * The server asks for every text the client offers and offers it back behind a prefix
++ * A client test so sees its text make the round trip through both directions of the channel
++ */
++
++#include <freerdp/config.h>
++
++#include <stdlib.h>
++#include <string.h>
++
++#include <winpr/assert.h>
++#include <winpr/user.h>
++
++#include "sf_cliprdr.h"
++
++#define ECHO_PREFIX "echo: "
++
++WINPR_ATTR_NODISCARD
++static UINT sf_cliprdr_client_format_list(CliprdrServerContext* context,
++                                          const CLIPRDR_FORMAT_LIST* formatList)
++{
++	const CLIPRDR_FORMAT_LIST_RESPONSE response = {
++		.common = { .msgType = CB_FORMAT_LIST_RESPONSE, .msgFlags = CB_RESPONSE_OK }
++	};
++	const UINT rc = context->ServerFormatListResponse(context, &response);
++	if (rc != CHANNEL_RC_OK)
++		return rc;
++
++	for (UINT32 i = 0; i < formatList->numFormats; i++)
++	{
++		if (formatList->formats[i].formatId == CF_UNICODETEXT)
++		{
++			const CLIPRDR_FORMAT_DATA_REQUEST request = {
++				.common = { .msgType = CB_FORMAT_DATA_REQUEST }, .requestedFormatId = CF_UNICODETEXT
++			};
++			return context->ServerFormatDataRequest(context, &request);
++		}
++	}
++	return CHANNEL_RC_OK;
++}
++
++/* The text of the client comes back as the clipboard of the server, behind the prefix */
++WINPR_ATTR_NODISCARD
++static UINT sf_cliprdr_client_format_data_response(CliprdrServerContext* context,
++                                                   const CLIPRDR_FORMAT_DATA_RESPONSE* response)
++{
++	testPeerContext* peer = context->custom;
++	WINPR_ASSERT(peer);
++
++	if ((response->common.msgFlags & CB_RESPONSE_OK) == 0)
++		return CHANNEL_RC_OK;
++
++	const size_t prefixLength = strlen(ECHO_PREFIX);
++	const size_t length = 2 * prefixLength + response->common.dataLen;
++	BYTE* clipboard = malloc(length);
++	if (!clipboard)
++		return CHANNEL_RC_NO_MEMORY;
++	for (size_t i = 0; i < prefixLength; i++)
++	{
++		clipboard[2 * i] = (BYTE)ECHO_PREFIX[i];
++		clipboard[2 * i + 1] = 0;
++	}
++	memcpy(clipboard + 2 * prefixLength, response->requestedFormatData, response->common.dataLen);
++	free(peer->clipboard);
++	peer->clipboard = clipboard;
++	peer->clipboardLength = (UINT32)length;
++
++	CLIPRDR_FORMAT format = { .formatId = CF_UNICODETEXT };
++	const CLIPRDR_FORMAT_LIST list = { .common = { .msgType = CB_FORMAT_LIST },
++		                               .numFormats = 1,
++		                               .formats = &format };
++	return context->ServerFormatList(context, &list);
++}
++
++WINPR_ATTR_NODISCARD
++static UINT sf_cliprdr_client_format_data_request(CliprdrServerContext* context,
++                                                  const CLIPRDR_FORMAT_DATA_REQUEST* request)
++{
++	testPeerContext* peer = context->custom;
++	WINPR_ASSERT(peer);
++
++	const BOOL have = (request->requestedFormatId == CF_UNICODETEXT) && peer->clipboard;
++	const CLIPRDR_FORMAT_DATA_RESPONSE response = {
++		.common = { .msgType = CB_FORMAT_DATA_RESPONSE,
++		            .msgFlags = have ? CB_RESPONSE_OK : CB_RESPONSE_FAIL,
++		            .dataLen = have ? peer->clipboardLength : 0 },
++		.requestedFormatData = have ? peer->clipboard : nullptr
++	};
++	return context->ServerFormatDataResponse(context, &response);
++}
++
++BOOL sf_peer_cliprdr_init(testPeerContext* context)
++{
++	WINPR_ASSERT(context);
++
++	context->cliprdr = cliprdr_server_context_new(context->vcm);
++	if (!context->cliprdr)
++		return FALSE;
++
++	context->cliprdr->rdpcontext = &context->_p;
++	context->cliprdr->custom = context;
++	context->cliprdr->useLongFormatNames = TRUE;
++	context->cliprdr->ClientFormatList = sf_cliprdr_client_format_list;
++	context->cliprdr->ClientFormatDataRequest = sf_cliprdr_client_format_data_request;
++	context->cliprdr->ClientFormatDataResponse = sf_cliprdr_client_format_data_response;
++
++	WINPR_ASSERT(context->cliprdr->Start);
++	return (context->cliprdr->Start(context->cliprdr) == CHANNEL_RC_OK);
++}
++
++void sf_peer_cliprdr_uninit(testPeerContext* context)
++{
++	WINPR_ASSERT(context);
++
++	if (context->cliprdr)
++	{
++		WINPR_ASSERT(context->cliprdr->Stop);
++		(void)context->cliprdr->Stop(context->cliprdr);
++		cliprdr_server_context_free(context->cliprdr);
++		context->cliprdr = nullptr;
++	}
++	free(context->clipboard);
++	context->clipboard = nullptr;
++}
+--- /dev/null
++++ b/server/Sample/sf_cliprdr.h
+@@ -0,0 +1,13 @@
++/**
++ * Test tool of VibeRDP: an echo of the clipboard of the client for the sample server
++ */
++
++#ifndef FREERDP_SERVER_SAMPLE_SF_CLIPRDR_H
++#define FREERDP_SERVER_SAMPLE_SF_CLIPRDR_H
++
++#include "sfreerdp.h"
++
++WINPR_ATTR_NODISCARD BOOL sf_peer_cliprdr_init(testPeerContext* context);
++void sf_peer_cliprdr_uninit(testPeerContext* context);
++
++#endif /* FREERDP_SERVER_SAMPLE_SF_CLIPRDR_H */
+--- a/server/Sample/sfreerdp.c
++++ b/server/Sample/sfreerdp.c
+@@ -52,6 +52,7 @@
+ #include "sf_audin.h"
+ #include "sf_rdpsnd.h"
+ #include "sf_encomsp.h"
++#include "sf_cliprdr.h"
+ 
+ #include "sfreerdp.h"
+ 
+@@ -70,6 +71,7 @@
+ 	const char* cert;
+ 	const char* key;
+ 	const char* kerberos_keytab;
++	BOOL clipboard_echo;
+ };
+ 
+ static void test_peer_context_free(freerdp_peer* client, rdpContext* ctx)
+@@ -105,6 +107,7 @@
+ 
+ 		rdpsnd_server_context_free(context->rdpsnd);
+ 		encomsp_server_context_free(context->encomsp);
++		sf_peer_cliprdr_uninit(context);
+ 
+ 		WTSCloseServer(context->vcm);
+ 	}
+@@ -785,6 +788,17 @@
+ 			return FALSE;
+ 	}
+ 
++	/* Test tool of VibeRDP: the clipboard echo for the tests of the client */
++	{
++		const struct server_info* info = client->ContextExtra;
++		if (info && info->clipboard_echo &&
++		    WTSVirtualChannelManagerIsChannelJoined(context->vcm, CLIPRDR_SVC_CHANNEL_NAME))
++		{
++			if (!sf_peer_cliprdr_init(context))
++				return FALSE;
++		}
++	}
++
+ 	/* Dynamic Virtual Channels */
+ 	if (!sf_peer_audin_init(context)) /* Audio Input */
+ 		return FALSE;
+@@ -1415,13 +1429,15 @@
+ 	const char scert[7];
+ 	const char skey[6];
+ 	const char skerberos_keytab[18];
++	const char sclipboard_echo[16];
+ } options = { { '-', '-', 'p', 'c', 'a', 'p', '=' },
+ 	          { '-', '-', 'f', 'a', 's', 't' },
+ 	          { '-', '-', 'p', 'o', 'r', 't', '=' },
+ 	          { '-', '-', 'l', 'o', 'c', 'a', 'l', '-', 'o', 'n', 'l', 'y' },
+ 	          { '-', '-', 'c', 'e', 'r', 't', '=' },
+ 	          { '-', '-', 'k', 'e', 'y', '=' },
+-	          { '-', '-', 'k', 'e', 'r', 'b', 'e', 'r', 'o', 's', '-', 'k', 'e', 'y', 't', 'a', 'b', '=' } };
++	          { '-', '-', 'k', 'e', 'r', 'b', 'e', 'r', 'o', 's', '-', 'k', 'e', 'y', 't', 'a', 'b', '=' },
++	          { '-', '-', 'c', 'l', 'i', 'p', 'b', 'o', 'a', 'r', 'd', '-', 'e', 'c', 'h', 'o' } };
+ 
+ WINPR_PRAGMA_DIAG_PUSH
+ WINPR_PRAGMA_DIAG_IGNORED_FORMAT_NONLITERAL
+@@ -1449,6 +1465,7 @@
+ 	print_entry(fp, "\t%s<port>\n", options.sport, sizeof(options.sport));
+ 	print_entry(fp, "\t%s\n", options.slocal_only, sizeof(options.slocal_only));
+ 	print_entry(fp, "\t%s<keytab file>\n", options.skerberos_keytab, sizeof(options.skerberos_keytab));
++	print_entry(fp, "\t%s\n", options.sclipboard_echo, sizeof(options.sclipboard_echo));
+ 	return -1;
+ }
+ 
+@@ -1503,6 +1520,8 @@
+ 			if (!winpr_PathFileExists(info.key))
+ 				return usage(app, arg);
+ 		}
++		else if (strncmp(arg, options.sclipboard_echo, sizeof(options.sclipboard_echo)) == 0)
++			info.clipboard_echo = TRUE;
+ 		else if (strncmp(arg, options.skerberos_keytab, sizeof(options.skerberos_keytab)) == 0)
+ 		{
+ 			info.kerberos_keytab = &arg[sizeof(options.skerberos_keytab)];
+--- a/server/Sample/sfreerdp.h
++++ b/server/Sample/sfreerdp.h
+@@ -33,6 +33,7 @@
+ #endif
+ #include <freerdp/server/rdpsnd.h>
+ #include <freerdp/server/encomsp.h>
++#include <freerdp/server/cliprdr.h>
+ #include <freerdp/transport_io.h>
+ 
+ #include <winpr/crt.h>
+@@ -67,6 +68,10 @@
+ 	UINT32 frame_id;
+ 	RdpsndServerContext* rdpsnd;
+ 	EncomspServerContext* encomsp;
++	/* Test tool of VibeRDP: the clipboard echo and the text it holds, CF_UNICODETEXT */
++	CliprdrServerContext* cliprdr;
++	BYTE* clipboard;
++	UINT32 clipboardLength;
+ 
+ 	rdpTransportIo io;
+ 	wImage* image;

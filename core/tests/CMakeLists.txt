@@ -81,6 +81,33 @@ foreach(test IN ITEMS namesAreUnique destroyTakesTheCache destroyWithoutACache)
   set_tests_properties(${test} PROPERTIES TIMEOUT 60 ENVIRONMENT "${VRC_TEST_ENVIRONMENT}")
 endforeach()
 
+add_executable(cliptextTests cliptextTests.c ${PROJECT_SOURCE_DIR}/src/cliptext.c)
+target_include_directories(cliptextTests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_compile_options(cliptextTests PRIVATE -Wall -Wextra -Werror)
+foreach(test IN ITEMS lineEndsToWindows beyondAscii brokenUtf8 lineEndsFromWindows brokenUtf16)
+  add_test(NAME ${test} COMMAND cliptextTests ${test})
+  set_tests_properties(${test} PROPERTIES TIMEOUT 60 ENVIRONMENT "${VRC_TEST_ENVIRONMENT}")
+endforeach()
+
+# The clipboard module against a stand-in for the channel of the engine
+add_executable(clipboardTests clipboardTests.c ${PROJECT_SOURCE_DIR}/src/clipboard.c ${PROJECT_SOURCE_DIR}/src/cliptext.c)
+target_include_directories(clipboardTests PRIVATE ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/include)
+target_link_libraries(clipboardTests PRIVATE freerdp-client)
+target_compile_options(clipboardTests PRIVATE -Wall -Wextra -Werror)
+foreach(test IN ITEMS offerWaitsForMonitorReady serverPastesText serverAsksForWhatIsNotOffered serverOffersFormats
+                      copyFromServer lateAnswerIsDropped copyFailures detachEndsCopy)
+  add_test(NAME ${test} COMMAND clipboardTests ${test})
+  set_tests_properties(${test} PROPERTIES TIMEOUT 60 ENVIRONMENT "${VRC_TEST_ENVIRONMENT}")
+endforeach()
+
+# The clipboard channel against the echo server that build-core.sh starts; without it the test skips itself
+add_executable(clipboardEchoTests clipboardEchoTests.c support.c)
+target_link_libraries(clipboardEchoTests PRIVATE VibeRDPCore)
+target_compile_options(clipboardEchoTests PRIVATE -Wall -Wextra -Werror)
+add_test(NAME textRoundTrip COMMAND clipboardEchoTests textRoundTrip)
+set_tests_properties(textRoundTrip PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77
+                                              ENVIRONMENT "${VRC_TEST_ENVIRONMENT}")
+
 # Kerberos logons through NLA against the test peer that build-core.sh starts; without it they skip themselves
 add_executable(kerberosLogonTests kerberosLogonTests.c support.c)
 target_link_libraries(kerberosLogonTests PRIVATE VibeRDPCore)

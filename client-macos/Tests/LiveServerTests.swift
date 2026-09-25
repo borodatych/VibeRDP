@@ -7,10 +7,11 @@ import XCTest
 @testable import VibeRDP
 
 /// Real RDP exchanges on this Mac with the sample server of FreeRDP, built by core/scripts/build-test-server.sh
-/// build-client.sh starts two of them and hands their sockets over:
+/// build-client.sh starts three of them and hands their sockets over:
 /// VIBERDP_TEST_SERVER_SOCKET replays a RemoteFX recording of Windows Server 2008 R2,
 /// VIBERDP_INTERACTIVE_SERVER_SOCKET draws its icon wherever a mouse event points, resizes its desktop on G
-/// and drops the connection on D
+/// and drops the connection on D,
+/// VIBERDP_CLIPBOARD_SERVER_SOCKET takes the text the client offers and offers it back behind "echo: "
 /// The servers listen on Unix sockets: no network, so no Local Network alert either
 @MainActor
 final class LiveServerTests: XCTestCase {
@@ -144,6 +145,41 @@ final class LiveServerTests: XCTestCase {
         XCTAssertEqual(session.failures, [])
     }
 
+    /// The clipboard makes the round trip through the echo server: the text of a private pasteboard goes over,
+    /// comes back behind the prefix, and the paste on the Mac fetches it from the server while the paste waits
+    /// The general pasteboard of this Mac is never touched
+    func testClipboardRoundTrip() async throws {
+        guard let socket = ProcessInfo.processInfo.environment["VIBERDP_CLIPBOARD_SERVER_SOCKET"] else {
+            throw XCTSkip("no clipboard test server: build it with core/scripts/build-test-server.sh")
+        }
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("tech.vibebrains.viberdp.tests.\(UUID().uuidString)"))
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.clearContents()
+        pasteboard.setString("Привет\nмир 👋", forType: .string)
+
+        suiteName = "tech.vibebrains.viberdp.tests.\(UUID().uuidString)"
+        let trusted = TrustedCertificates(defaults: try XCTUnwrap(UserDefaults(suiteName: suiteName)))
+        let session = LiveSession(trusted: trusted)
+        let address = try XCTUnwrap(ServerAddress(socket))
+        // The sample server has no logon of its own: a name and a password spare the question
+        XCTAssertTrue(
+            session.controller.connect(to: address, username: "tester", password: "unused", desktop: Self.desktop))
+        let bridge = ClipboardBridge(pasteboard: pasteboard, channel: session.controller)
+        session.clipboard = bridge
+        bridge.start()
+
+        let echoed = await session.wait("the echo of the clipboard", timeout: Self.timeout) {
+            session.remoteClipboards > 0
+        }
+        XCTAssertTrue(echoed)
+        XCTAssertEqual(pasteboard.string(forType: .string), "echo: Привет\nмир 👋")
+        XCTAssertEqual(session.failures, [])
+
+        bridge.stop()
+        XCTAssertNil(pasteboard.string(forType: .string), "the item for the remote clipboard goes with the session")
+        await endsCleanly(session)
+    }
+
     /// Connects to the server whose socket the environment names, accepting its certificate
     private func start(socketIn variable: String) throws -> LiveSession {
         guard let socket = ProcessInfo.processInfo.environment[variable] else {
@@ -201,7 +237,10 @@ private final class LiveSession {
     private(set) var frames = 0
     private(set) var credentialsQuestions = 0
     private(set) var reconnectAttempts = 0
+    private(set) var remoteClipboards = 0
     private(set) var resized = false
+    /// The bridge a clipboard test gives the session, fed with the clipboard events
+    var clipboard: ClipboardBridge?
     /// The size of the last surface, in pixels
     private(set) var desktopSize: CGSize?
     private(set) var controller: SessionController!
@@ -265,6 +304,11 @@ private final class LiveSession {
             failures.append(kind)
         case .pointer:
             break
+        case .remoteClipboard(let formats):
+            remoteClipboards += 1
+            clipboard?.remoteClipboardChanged(formats)
+        case .clipboardDataRequested(let format):
+            clipboard?.dataRequested(format)
         }
         check?()
     }

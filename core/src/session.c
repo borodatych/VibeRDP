@@ -7,6 +7,7 @@
 #define __STDC_WANT_LIB_EXT1__ 1
 
 #include "VibeRDPCore/VibeRDPCore.h"
+#include "clipboard.h"
 #include "decision.h"
 #include "frame.h"
 #include "input.h"
@@ -21,6 +22,7 @@
 #include <string.h>
 
 #include <freerdp/client.h>
+#include <freerdp/client/cliprdr.h>
 #include <freerdp/client/cmdline.h>
 #include <freerdp/error.h>
 #include <freerdp/freerdp.h>
@@ -92,6 +94,9 @@ struct VRCSession {
     HANDLE inputReady;
     /* The keys the server holds down: only the session thread touches it */
     VRCKeyState keys;
+
+    /* The clipboard channel and what each side offers */
+    VRCClipboard clipboard;
 };
 
 /* The pointer FreeRDP allocates with the size the core registers: the converted image rides along */
@@ -157,13 +162,30 @@ static void notifyError(const VRCSession* session, UINT32 code)
                                  freerdp_get_last_error_string(code));
 }
 
+/* The common handlers leave the clipboard to the client: the core takes its channel here */
+static void onChannelConnected(void* context, const ChannelConnectedEventArgs* event)
+{
+    VRCSession* session = (VRCSession*)context;
+    if (strcmp(event->name, CLIPRDR_SVC_CHANNEL_NAME) == 0)
+        vrcClipboardAttach(&session->clipboard, (CliprdrClientContext*)event->pInterface);
+}
+
+static void onChannelDisconnected(void* context, const ChannelDisconnectedEventArgs* event)
+{
+    VRCSession* session = (VRCSession*)context;
+    if (strcmp(event->name, CLIPRDR_SVC_CHANNEL_NAME) == 0)
+        vrcClipboardDetach(&session->clipboard, (CliprdrClientContext*)event->pInterface);
+}
+
 static BOOL preConnect(freerdp* instance)
 {
     wPubSub* pubSub = instance->context->pubSub;
 
     /* The common handlers set up the channels the client uses, the graphics pipeline among them */
     return PubSub_SubscribeChannelConnected(pubSub, freerdp_client_OnChannelConnectedEventHandler) >= 0 &&
-           PubSub_SubscribeChannelDisconnected(pubSub, freerdp_client_OnChannelDisconnectedEventHandler) >= 0;
+           PubSub_SubscribeChannelDisconnected(pubSub, freerdp_client_OnChannelDisconnectedEventHandler) >= 0 &&
+           PubSub_SubscribeChannelConnected(pubSub, onChannelConnected) >= 0 &&
+           PubSub_SubscribeChannelDisconnected(pubSub, onChannelDisconnected) >= 0;
 }
 
 /* Swaps the surface the app reads; the caller holds the update lock, so no paint sees the change halfway */
@@ -775,9 +797,10 @@ static BOOL clientNew(freerdp* instance, rdpContext* context)
 {
     VRCSession* session = (VRCSession*)context;
 
-    /* Both are made even if one fails, so ClientFree meets two initialized decisions */
+    /* All are made even if one fails, so ClientFree meets them initialized */
     const bool certificate = vrcDecisionInit(&session->certificate);
     const bool gatewayConsent = vrcDecisionInit(&session->gatewayConsent);
+    const bool clipboard = vrcClipboardInit(&session->clipboard, &session->callbacks, &session->userData);
     atomic_init(&session->certificateRejected, false);
     /* A static initializer cannot fail, so ClientFree always meets a valid mutex */
     session->credentialsMutex = (pthread_mutex_t)PTHREAD_MUTEX_INITIALIZER;
@@ -810,7 +833,8 @@ static BOOL clientNew(freerdp* instance, rdpContext* context)
     instance->VerifyChangedCertificateEx = NULL;
     instance->LogonErrorInfo = NULL;
     instance->GetAccessToken = NULL;
-    return certificate && gatewayConsent && session->credentialsAnswered != NULL && session->inputReady != NULL;
+    return certificate && gatewayConsent && clipboard && session->credentialsAnswered != NULL &&
+           session->inputReady != NULL;
 }
 
 static void clientFree(freerdp* instance, rdpContext* context)
@@ -832,6 +856,7 @@ static void clientFree(freerdp* instance, rdpContext* context)
     pthread_mutex_destroy(&session->frameMutex);
     /* A session that never connected named no cache */
     vrcKerberosCacheDestroy(freerdp_settings_get_string(context->settings, FreeRDP_KerberosCache));
+    vrcClipboardDestroy(&session->clipboard);
 }
 
 static int clientStart(rdpContext* context)
@@ -1133,6 +1158,30 @@ VRCResult VRCSessionReleaseKeys(VRCSession* session)
 
     const VRCInputEvent event = { .kind = VRCInputKindReleaseKeys };
     return queueInput(session, &event);
+}
+
+VRCResult VRCSessionOfferClipboard(VRCSession* session, const VRCClipboardFormat* formats, size_t count)
+{
+    if (!session)
+        return VRCResultInvalidArgument;
+    return vrcClipboardOffer(&session->clipboard, formats, count);
+}
+
+VRCResult VRCSessionProvideClipboardData(VRCSession* session, VRCClipboardFormat format, const void* data,
+                                         size_t length)
+{
+    if (!session)
+        return VRCResultInvalidArgument;
+    return vrcClipboardProvide(&session->clipboard, format, data, length);
+}
+
+VRCResult VRCSessionCopyRemoteClipboard(VRCSession* session, VRCClipboardFormat format, uint32_t timeoutMs,
+                                        void** data, size_t* length)
+{
+    if (!session)
+        return VRCResultInvalidArgument;
+    return vrcClipboardCopyRemote(&session->clipboard, format, timeoutMs,
+                                  freerdp_abort_event(&session->common.context), data, length);
 }
 
 VRCResult VRCSessionRefresh(VRCSession* session)

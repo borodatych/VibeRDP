@@ -10,6 +10,8 @@ final class ConnectionViewController: NSViewController {
     private let trusted: TrustedCertificates
     private let keyboard: KeyboardSettingsStore
     private var session: SessionController?
+    /// Keeps the Mac clipboard and the remote one in step while the session lasts
+    private var clipboard: ClipboardBridge?
     private var connections: NSView?
     private var desktop: DesktopView?
     /// Over the desktop while a dropped connection is being restored
@@ -152,7 +154,12 @@ final class ConnectionViewController: NSViewController {
             self.attempt = nil
             model.isBusy = false
             model.status = Localization.text(.connectionStatusStartFailed, ["host": host])
+            return
         }
+        // The core keeps the offer until the clipboard channel starts
+        let bridge = ClipboardBridge(channel: controller)
+        bridge.start()
+        clipboard = bridge
     }
 
     private func handle(_ event: SessionController.Event) {
@@ -189,6 +196,10 @@ final class ConnectionViewController: NSViewController {
             desktop?.frameChanged()
         case .pointer(let pointer):
             desktop?.pointer = pointer
+        case .remoteClipboard(let formats):
+            clipboard?.remoteClipboardChanged(formats)
+        case .clipboardDataRequested(let format):
+            clipboard?.dataRequested(format)
         }
     }
 
@@ -219,6 +230,8 @@ final class ConnectionViewController: NSViewController {
         closeSheet()
         hideReconnecting()
         hideDesktop()
+        clipboard?.stop()
+        clipboard = nil
         session = nil
         model.isBusy = false
         let ended = attempt

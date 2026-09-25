@@ -29,6 +29,7 @@ targets:
     platform: macOS
     sources:
       - path: App
+      - path: Clipboard
       - path: Connections
       - path: Session
       # The languages the app seeds into the user's folder, and the Info.plist strings macOS itself shows

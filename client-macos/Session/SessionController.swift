@@ -23,6 +23,10 @@ final class SessionController {
         case frameUpdated
         /// The server changed its pointer
         case pointer(RemotePointer)
+        /// The clipboard of the remote computer offers these formats now, none when it holds nothing the Mac takes
+        case remoteClipboard([VRCClipboardFormat])
+        /// Something on the remote computer pastes the Mac clipboard: answer with provideClipboardData
+        case clipboardDataRequested(VRCClipboardFormat)
     }
 
     private let trusted: TrustedCertificates
@@ -148,6 +152,10 @@ final class SessionController {
             onEvent(.gatewayMessage(message))
         case .reconnecting(let attempt, let maxAttempts):
             onEvent(.reconnecting(attempt: attempt, of: maxAttempts))
+        case .remoteClipboard(let formats):
+            onEvent(.remoteClipboard(formats))
+        case .clipboardDataRequested(let format):
+            onEvent(.clipboardDataRequested(format))
         case .certificate(let host, let port, let pem):
             Task { [weak self] in
                 let examined = await Task.detached(priority: .userInitiated) {
@@ -212,6 +220,8 @@ private enum CoreEvent: Sendable {
     case credentials(CredentialsRequest)
     case gatewayMessage(GatewayMessage)
     case reconnecting(attempt: UInt32, of: UInt32)
+    case remoteClipboard([VRCClipboardFormat])
+    case clipboardDataRequested(VRCClipboardFormat)
 }
 
 /// The userData of the session: the callbacks run on the session thread and only enqueue, never block
@@ -261,6 +271,13 @@ private final class EventSink: Sendable {
             },
             reconnecting: { userData, attempt, maxAttempts in
                 eventSink(userData).continuation.yield(.reconnecting(attempt: attempt, of: maxAttempts))
+            },
+            remoteClipboardChanged: { userData, formats, count in
+                let offered = formats.map { Array(UnsafeBufferPointer(start: $0, count: count)) } ?? []
+                eventSink(userData).continuation.yield(.remoteClipboard(offered))
+            },
+            clipboardDataRequested: { userData, format in
+                eventSink(userData).continuation.yield(.clipboardDataRequested(format))
             })
     }
 }
@@ -340,6 +357,36 @@ extension SessionController: DesktopInput {
         if let handle {
             _ = VRCSessionReleaseKeys(handle.session)
         }
+    }
+}
+
+/// The clipboard goes to the core directly: an offer and an answer return at once,
+/// and a copy waits for the server on the calling thread, as a paste on the Mac waits for its data
+extension SessionController: ClipboardChannel {
+    func offerClipboard(_ formats: [VRCClipboardFormat]) {
+        guard let handle else { return }
+        formats.withUnsafeBufferPointer { _ = VRCSessionOfferClipboard(handle.session, $0.baseAddress, $0.count) }
+    }
+
+    func provideClipboardData(_ format: VRCClipboardFormat, data: Data?) {
+        guard let handle else { return }
+        guard let data else {
+            _ = VRCSessionProvideClipboardData(handle.session, format, nil, 0)
+            return
+        }
+        data.withUnsafeBytes { _ = VRCSessionProvideClipboardData(handle.session, format, $0.baseAddress, $0.count) }
+    }
+
+    func copyRemoteClipboard(_ format: VRCClipboardFormat, timeout: Duration) -> Data? {
+        guard let handle else { return nil }
+        let milliseconds = timeout.components.seconds * 1000 + timeout.components.attoseconds / 1_000_000_000_000_000
+        var bytes: UnsafeMutableRawPointer?
+        var length = 0
+        let result = VRCSessionCopyRemoteClipboard(
+            handle.session, format, UInt32(clamping: milliseconds), &bytes, &length)
+        guard result == .OK, let bytes else { return nil }
+        defer { free(bytes) }
+        return Data(bytes: bytes, count: length)
     }
 }
 

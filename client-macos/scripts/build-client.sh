@@ -22,9 +22,11 @@ RESULTS="$CACHE_DIR/client/results"
 TEST_SERVER="$CACHE_DIR/test-server"
 TEST_SERVER_SAMPLE="$TEST_SERVER/build/server/Sample"
 # With --local-only the port only names the socket file: the server opens no TCP port
-# One server replays a recording, the other answers the mouse: the sample server does either, not both
+# One server replays a recording, another answers the mouse: the sample server does either, not both
+# The third echoes the clipboard
 TEST_SERVER_REPLAY_PORT=3389
 TEST_SERVER_INTERACTIVE_PORT=3390
+TEST_SERVER_CLIPBOARD_PORT=3391
 # The server opens its socket within milliseconds; the margin is for a machine busy with something else
 TEST_SERVER_START_TIMEOUT=10
 # Set while test servers run: their processes and the folder of their sockets
@@ -95,10 +97,13 @@ start_test_servers() {
     launch_test_server "$arch" replay "$TEST_SERVER_REPLAY_PORT" \
         "--pcap=$TEST_SERVER/src/server/Sample/rfx_test.pcap"
     launch_test_server "$arch" interactive "$TEST_SERVER_INTERACTIVE_PORT"
+    launch_test_server "$arch" clipboard "$TEST_SERVER_CLIPBOARD_PORT" --clipboard-echo
     # xcodebuild hands TEST_RUNNER_ variables to the app under test without the prefix
     TEST_RUNNER_VIBERDP_TEST_SERVER_SOCKET=$(test_server_socket "$TEST_SERVER_REPLAY_PORT")
     TEST_RUNNER_VIBERDP_INTERACTIVE_SERVER_SOCKET=$(test_server_socket "$TEST_SERVER_INTERACTIVE_PORT")
-    export TEST_RUNNER_VIBERDP_TEST_SERVER_SOCKET TEST_RUNNER_VIBERDP_INTERACTIVE_SERVER_SOCKET
+    TEST_RUNNER_VIBERDP_CLIPBOARD_SERVER_SOCKET=$(test_server_socket "$TEST_SERVER_CLIPBOARD_PORT")
+    export TEST_RUNNER_VIBERDP_TEST_SERVER_SOCKET TEST_RUNNER_VIBERDP_INTERACTIVE_SERVER_SOCKET \
+        TEST_RUNNER_VIBERDP_CLIPBOARD_SERVER_SOCKET
 }
 
 # The sample server names its socket after the port, in the folder that TMPDIR gives it
@@ -134,7 +139,8 @@ launch_test_server() {
 stop_test_servers() {
     local pid
 
-    unset TEST_RUNNER_VIBERDP_TEST_SERVER_SOCKET TEST_RUNNER_VIBERDP_INTERACTIVE_SERVER_SOCKET
+    unset TEST_RUNNER_VIBERDP_TEST_SERVER_SOCKET TEST_RUNNER_VIBERDP_INTERACTIVE_SERVER_SOCKET \
+        TEST_RUNNER_VIBERDP_CLIPBOARD_SERVER_SOCKET
     for pid in $TEST_SERVER_PIDS; do
         kill "$pid" 2>/dev/null || true
         wait "$pid" 2>/dev/null || true

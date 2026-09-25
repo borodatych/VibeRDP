@@ -35,6 +35,13 @@
  * The queue holds them until the connection is active, also while the server reactivates it, and keeps their order
  * pointerChanged brings the pointer the server draws with, so the app can show it as its cursor
  * Keys go by scan code: the server turns them into characters with the keyboard layout of the remote session
+ *
+ * Clipboard:
+ * Each side announces what its clipboard offers, and the data moves only when the other side pastes it
+ * The app offers the formats of the Mac with VRCSessionOfferClipboard, even before Connected;
+ * clipboardDataRequested asks for the data when Windows pastes, VRCSessionProvideClipboardData answers
+ * remoteClipboardChanged announces what the clipboard of Windows offers,
+ * and VRCSessionCopyRemoteClipboard fetches it when the Mac pastes, waiting for the server
  */
 
 #ifndef VIBERDPCORE_H
@@ -63,6 +70,7 @@ typedef VRC_ENUM(VRCResult) {
     VRCResultInvalidArgument = 1,
     VRCResultInvalidState = 2,
     VRCResultFailure = 3,
+    VRCResultTimeout = 4,
 } VRCResult;
 
 /*
@@ -98,6 +106,11 @@ typedef VRC_ENUM(VRCPointerKind) {
     VRCPointerKindHidden = 1, /* The server hides the pointer, as over a playing video */
     VRCPointerKindSystem = 2, /* The client's own arrow */
 } VRCPointerKind;
+
+/* What a clipboard holds, in the form the app works with; the core converts to and from the formats of Windows */
+typedef VRC_ENUM(VRCClipboardFormat) {
+    VRCClipboardFormatText = 1, /* UTF-8, lines end in LF */
+} VRCClipboardFormat;
 
 /* The image of a server pointer: BGRA in memory with straight alpha, rows top to bottom */
 typedef struct VRCPointerImage {
@@ -209,6 +222,18 @@ typedef struct VRCCallbacks {
 
     /* While Reconnecting: attempt of maxAttempts is about to start, the first one at once, the next ones after a pause */
     void (*reconnecting)(void* userData, uint32_t attempt, uint32_t maxAttempts);
+
+    /*
+     * The clipboard of the remote computer changed and offers these formats
+     * None when it holds nothing the app takes; the array stays valid only during the call
+     */
+    void (*remoteClipboardChanged)(void* userData, const VRCClipboardFormat* formats, size_t count);
+
+    /*
+     * Something on the remote computer pastes the clipboard of the Mac: it waits for the data in this format
+     * Answer with VRCSessionProvideClipboardData; without this callback the remote side gets no data
+     */
+    void (*clipboardDataRequested)(void* userData, VRCClipboardFormat format);
 } VRCCallbacks;
 
 /*
@@ -319,6 +344,31 @@ VRCResult VRCSessionSendFocusIn(VRCSession* session, bool capsLock, bool numLock
 
 /* The desktop lost the keyboard: every key the server holds down is released, so none sticks there */
 VRCResult VRCSessionReleaseKeys(VRCSession* session);
+
+/*
+ * The clipboard of the Mac changed: the formats it offers now, none when it holds nothing the remote side takes
+ * The offer is kept and goes out again whenever the clipboard channel starts, so it may come before Connected
+ * InvalidArgument for a value outside VRCClipboardFormat
+ */
+VRCResult VRCSessionOfferClipboard(VRCSession* session, const VRCClipboardFormat* formats, size_t count);
+
+/*
+ * The answer to clipboardDataRequested from any thread; the core copies the data
+ * NULL data answers that the clipboard no longer holds the format
+ * InvalidState when the remote side waits for no data in this format
+ */
+VRCResult VRCSessionProvideClipboardData(VRCSession* session, VRCClipboardFormat format, const void* data,
+                                         size_t length);
+
+/*
+ * Fetches the data of the remote clipboard in a format it offers, waiting up to timeoutMs for the server
+ * On OK *data holds a copy the caller frees with free: text is zero-terminated, *length does not count the zero
+ * One fetch runs at a time, a second waits for the first; the end of the session ends the wait with Failure
+ * InvalidState when the clipboard of the remote side does not offer the format or the channel is down,
+ * Failure when the server could not give the data, Timeout when it did not answer in time
+ */
+VRCResult VRCSessionCopyRemoteClipboard(VRCSession* session, VRCClipboardFormat format, uint32_t timeoutMs,
+                                        void** data, size_t* length);
 
 /*
  * Asks the server to send the whole desktop again, as after the Mac wakes:
