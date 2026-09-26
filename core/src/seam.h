@@ -45,15 +45,19 @@ typedef struct VRCSeam {
 void vrcSeamInit(VRCSeam* seam, const VRCCallbacks* callbacks, void* const* userData);
 void vrcSeamDestroy(VRCSeam* seam);
 
-/* The helper opened the channel, or it closed; the app hears of both */
+/*
+ * The helper opened the channel, or it closed; the app hears of both
+ * Several may open at once: a session that attaches brings every open the helper tried while it was away
+ * The newest is the channel; one that is not closes or speaks without the app hearing of it
+ */
 void vrcSeamOpened(VRCSeam* seam, IWTSVirtualChannel* channel);
-void vrcSeamClosed(VRCSeam* seam);
+void vrcSeamClosed(VRCSeam* seam, IWTSVirtualChannel* channel);
 
 /*
  * A chunk of the stream: every body it completes goes to the app, in order
  * A length above VRC_SEAM_MAX_BODY is a protocol error: the app hears the channel closed, the rest is dropped
  */
-void vrcSeamReceived(VRCSeam* seam, const uint8_t* chunk, size_t length);
+void vrcSeamReceived(VRCSeam* seam, IWTSVirtualChannel* channel, const uint8_t* chunk, size_t length);
 
 /* Sends one body with its length in front; InvalidState while the channel is not open */
 VRCResult vrcSeamSend(VRCSeam* seam, const uint8_t* body, size_t length);

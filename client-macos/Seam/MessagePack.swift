@@ -178,8 +178,12 @@ enum MessagePack {
         }
     }
 
+    /// Most significant byte first; shifts rather than withUnsafeBytes, which some toolchains compile to a runtime
+    /// call newer than macOS 14
     private static func append<T: FixedWidthInteger>(_ number: T, into out: inout Data) {
-        withUnsafeBytes(of: number.bigEndian) { out.append(contentsOf: $0) }
+        for shift in stride(from: T.bitWidth - 8, through: 0, by: -8) {
+            out.append(UInt8(truncatingIfNeeded: number >> shift))
+        }
     }
 
     private struct Reader {

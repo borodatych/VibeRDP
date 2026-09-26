@@ -161,7 +161,7 @@ target_include_directories(seamTests PRIVATE ${PROJECT_SOURCE_DIR}/src ${PROJECT
 target_link_libraries(seamTests PRIVATE freerdp-client)
 target_compile_options(seamTests PRIVATE -Wall -Wextra -Werror)
 foreach(test IN ITEMS frameSplitAcrossChunks framesInOneChunk longFrameBreaksOnce sendPutsLengthInFront
-                      closedChannelRefusesSends reopenDropsHalfAFrame)
+                      closedChannelRefusesSends reopenDropsHalfAFrame olderChannelsGoQuietly)
   add_test(NAME ${test} COMMAND seamTests ${test})
   set_tests_properties(${test} PROPERTIES TIMEOUT 60 ENVIRONMENT "${VRC_TEST_ENVIRONMENT}")
 endforeach()

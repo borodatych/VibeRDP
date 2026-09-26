@@ -19,7 +19,8 @@ enum IconFile {
         return Data("icns".utf8) + bigEndian(UInt32(8 + body.count)) + body
     }
 
+    /// Shifts rather than withUnsafeBytes: that one compiles on some toolchains to a runtime call newer than macOS 14
     private static func bigEndian(_ number: UInt32) -> Data {
-        withUnsafeBytes(of: number.bigEndian) { Data($0) }
+        Data([24, 16, 8, 0].map { UInt8(truncatingIfNeeded: number >> $0) })
     }
 }

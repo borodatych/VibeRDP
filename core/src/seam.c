@@ -48,16 +48,26 @@ void vrcSeamOpened(VRCSeam* seam, IWTSVirtualChannel* channel)
         seam->callbacks->seamOpened(*seam->userData);
 }
 
-void vrcSeamClosed(VRCSeam* seam)
+/* Whether this is the channel the app talks over; the channel thread alone changes it, so it may read it bare */
+static bool isCurrent(const VRCSeam* seam, const IWTSVirtualChannel* channel)
 {
+    return channel != NULL && channel == seam->channel;
+}
+
+void vrcSeamClosed(VRCSeam* seam, IWTSVirtualChannel* channel)
+{
+    if (!isCurrent(seam, channel))
+    {
+        WLog_INFO(TAG, "an older channel closed");
+        return;
+    }
     pthread_mutex_lock(&seam->mutex);
-    const bool open = seam->channel != NULL;
     seam->channel = NULL;
     pthread_mutex_unlock(&seam->mutex);
     seam->pendingLength = 0;
     WLog_INFO(TAG, "channel closed");
     /* A broken channel was reported closed already */
-    if (open && !seam->broken && seam->callbacks->seamClosed)
+    if (!seam->broken && seam->callbacks->seamClosed)
         seam->callbacks->seamClosed(*seam->userData);
 }
 
@@ -88,8 +98,10 @@ static void breakChannel(VRCSeam* seam, const char* reason)
         seam->callbacks->seamClosed(*seam->userData);
 }
 
-void vrcSeamReceived(VRCSeam* seam, const uint8_t* chunk, size_t length)
+void vrcSeamReceived(VRCSeam* seam, IWTSVirtualChannel* channel, const uint8_t* chunk, size_t length)
 {
+    if (!isCurrent(seam, channel))
+        return;
     while (!seam->broken)
     {
         /* A whole frame goes to the app, and gathering starts over; a frame may carry an empty body */
@@ -178,13 +190,14 @@ static UINT onOpen(IWTSVirtualChannelCallback* callback)
 
 static UINT onDataReceived(IWTSVirtualChannelCallback* callback, wStream* data)
 {
-    vrcSeamReceived(seamOf(callback), Stream_ConstPointer(data), Stream_GetRemainingLength(data));
+    vrcSeamReceived(seamOf(callback), ((GENERIC_CHANNEL_CALLBACK*)callback)->channel, Stream_ConstPointer(data),
+                    Stream_GetRemainingLength(data));
     return CHANNEL_RC_OK;
 }
 
 static UINT onClose(IWTSVirtualChannelCallback* callback)
 {
-    vrcSeamClosed(seamOf(callback));
+    vrcSeamClosed(seamOf(callback), ((GENERIC_CHANNEL_CALLBACK*)callback)->channel);
     /* The generic listener allocated the callback for this channel and leaves freeing it to the close */
     free(callback);
     return CHANNEL_RC_OK;

@@ -91,7 +91,7 @@ static bool testFrameSplitAcrossChunks(void)
     setUp(&seam);
     const uint8_t frame[] = { 3, 0, 0, 0, 0x81, 0xa1, 0x78 };
     for (size_t i = 0; i < sizeof(frame); i++)
-        vrcSeamReceived(&seam, &frame[i], 1);
+        vrcSeamReceived(&seam, &channel, &frame[i], 1);
     CHECK(opened == 1 && bodies == 1 && lastLength == 3);
     CHECK(memcmp(lastBody, frame + 4, 3) == 0);
     vrcSeamDestroy(&seam);
@@ -103,7 +103,7 @@ static bool testFramesInOneChunk(void)
     VRCSeam seam;
     setUp(&seam);
     const uint8_t chunk[] = { 1, 0, 0, 0, 0xc0, 0, 0, 0, 0, 2, 0, 0, 0, 0x92, 0xc3 };
-    vrcSeamReceived(&seam, chunk, sizeof(chunk));
+    vrcSeamReceived(&seam, &channel, chunk, sizeof(chunk));
     CHECK(bodies == 3 && lastLength == 2 && lastBody[0] == 0x92 && lastBody[1] == 0xc3);
     vrcSeamDestroy(&seam);
     return true;
@@ -116,13 +116,13 @@ static bool testLongFrameBreaksOnce(void)
     const uint32_t tooLong = VRC_SEAM_MAX_BODY + 1;
     const uint8_t header[] = { (uint8_t)tooLong, (uint8_t)(tooLong >> 8), (uint8_t)(tooLong >> 16),
                                (uint8_t)(tooLong >> 24) };
-    vrcSeamReceived(&seam, header, sizeof(header));
+    vrcSeamReceived(&seam, &channel, header, sizeof(header));
     CHECK(closed == 1 && bodies == 0);
     const uint8_t next[] = { 1, 0, 0, 0, 0xc0 };
-    vrcSeamReceived(&seam, next, sizeof(next));
+    vrcSeamReceived(&seam, &channel, next, sizeof(next));
     CHECK(bodies == 0);
     CHECK(vrcSeamSend(&seam, next, 1) == VRCResultInvalidState);
-    vrcSeamClosed(&seam);
+    vrcSeamClosed(&seam, &channel);
     CHECK(closed == 1);
     vrcSeamDestroy(&seam);
     return true;
@@ -146,7 +146,7 @@ static bool testClosedChannelRefusesSends(void)
 {
     VRCSeam seam;
     setUp(&seam);
-    vrcSeamClosed(&seam);
+    vrcSeamClosed(&seam, &channel);
     CHECK(closed == 1);
     const uint8_t body[] = { 0xc0 };
     CHECK(vrcSeamSend(&seam, body, sizeof(body)) == VRCResultInvalidState && writtenLength == 0);
@@ -161,12 +161,36 @@ static bool testReopenDropsHalfAFrame(void)
     VRCSeam seam;
     setUp(&seam);
     const uint8_t half[] = { 3, 0, 0, 0, 0x81 };
-    vrcSeamReceived(&seam, half, sizeof(half));
-    vrcSeamClosed(&seam);
+    vrcSeamReceived(&seam, &channel, half, sizeof(half));
+    vrcSeamClosed(&seam, &channel);
     vrcSeamOpened(&seam, &channel);
     const uint8_t whole[] = { 1, 0, 0, 0, 0xc2 };
-    vrcSeamReceived(&seam, whole, sizeof(whole));
+    vrcSeamReceived(&seam, &channel, whole, sizeof(whole));
     CHECK(bodies == 1 && lastLength == 1 && lastBody[0] == 0xc2);
+    vrcSeamDestroy(&seam);
+    return true;
+}
+
+/* A session that attaches brings several opens at once: the newest is the channel, the older ones go quietly */
+static bool testOlderChannelsGoQuietly(void)
+{
+    VRCSeam seam;
+    setUp(&seam);
+    IWTSVirtualChannel newer = channel;
+    vrcSeamOpened(&seam, &newer);
+    CHECK(opened == 2);
+    vrcSeamClosed(&seam, &channel);
+    CHECK(closed == 0);
+    const uint8_t stray[] = { 1, 0, 0, 0, 0xc0 };
+    vrcSeamReceived(&seam, &channel, stray, sizeof(stray));
+    CHECK(bodies == 0);
+    const uint8_t spoken[] = { 1, 0, 0, 0, 0xc3 };
+    vrcSeamReceived(&seam, &newer, spoken, sizeof(spoken));
+    CHECK(bodies == 1 && lastBody[0] == 0xc3);
+    const uint8_t body[] = { 0xc0 };
+    CHECK(vrcSeamSend(&seam, body, sizeof(body)) == VRCResultOK);
+    vrcSeamClosed(&seam, &newer);
+    CHECK(closed == 1);
     vrcSeamDestroy(&seam);
     return true;
 }
@@ -183,6 +207,7 @@ static const TestCase tests[] = {
     { "sendPutsLengthInFront", testSendPutsLengthInFront },
     { "closedChannelRefusesSends", testClosedChannelRefusesSends },
     { "reopenDropsHalfAFrame", testReopenDropsHalfAFrame },
+    { "olderChannelsGoQuietly", testOlderChannelsGoQuietly },
 };
 
 int main(int argc, char* argv[])
