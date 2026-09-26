@@ -51,6 +51,7 @@
   - [x] **Версия в заголовке окна и номер патча на каждую сборку для проверки** — ✅ (2026-09-26, `next`) заголовок окна подключений — «VibeRDP 0.1.1»; каждая сборка, которая уходит владельцу на проверку, поднимает патч `VERSION` в `build.env` — просьба владельца; тест `testMainWindowIsShown`
   - [x] **«Строка 1» вместо «строки 2»** — ✅ (2026-09-26, `next`, 0.1.2) две копии подряд на Маке — в Windows вставлялась первая: живая Windows отклоняет следующий список Мака ответом `CB_RESPONSE_FAIL`, пока в её буфере прежний; ядро повторяет отклонённый список через 0,5, 2 и 5 с, Windows принимает его с первого повтора; след канала буфера FreeRDP — в журнале целиком — [решение 38](decisions.md), [clipboard.md](knowledge/rdp/clipboard.md); тест `turnedDownListGoesAgain`; **подтвердил владелец** на Windows в домене — [liveChecks.md](manuals/liveChecks.md), раздел 12, шаг 8
   - [ ] Переподключение после ошибки канала: живая Windows отвечает `ERRINFO_RPC_INITIATED_DISCONNECT`, сессия не восстанавливается — разобрать — [channelChunks.md](knowledge/freerdp/channelChunks.md)
+  - [x] **«Cannot find KDC for realm RTMIS.RU»** — ✅ (2026-09-26) разобрано: DNS Мака владельца не знает домена, записей SRV KDC не найти, откат на NTLM правильный — [kerberos.md](knowledge/freerdp/kerberos.md)
   - [ ] Снять патч `channel-total-length.patch` при переходе на релиз FreeRDP с коммитом `190167212`
 
 ## Этап 3 — Удобство Desktop-режима

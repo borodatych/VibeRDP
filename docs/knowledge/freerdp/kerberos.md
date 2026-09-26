@@ -95,3 +95,14 @@
 - `core/third_party/FreeRDP/winpr/libwinpr/sspi/Kerberos/kerberos.c`, `krb5glue_mit.c`, `winpr/libwinpr/sspi/Negotiate/negotiate.c`, `cmake/FindKRB5.cmake`
 - Исходники MIT krb5 1.22.2: `src/configure.ac`, `src/include/osconf.hin`, `src/lib/krb5/os/locate_kdc.c`, `src/lib/krb5/ccache/cc_memory.c`
 - https://kerberos.org/dist/index.html — страница релизов MIT
+
+## «Cannot find KDC for realm» у владельца
+
+**Суть:**
+- Журнал каждого подключения к Windows владельца (домен `RTMIS.RU`): `krb5_init_creds_get (Cannot find KDC for realm "RTMIS.RU")`, затем вход по NTLM проходит
+- MIT Kerberos ищет KDC записями DNS SRV `_kerberos._udp` и `_kerberos._tcp` домена; с Мака владельца 2026-09-26 все они пусты, как и `_ldap._tcp` и `_kerberos._tcp.dc._msdcs`
+- Мак владельца спрашивает DNS Tailscale (`100.100.100.100`) и домашнего роутера, корпоративного DNS у него нет — `dig +short SRV _kerberos._tcp.rtmis.ru` пуст
+- Это окружение, а не дефект: без DNS домена KDC не найти, и откат на NTLM — правильное поведение
+
+**Применение:** пункт закрыт; поле «адрес KDC» у подключения — если встретится домен с запретом NTLM и без корпоративного DNS; с RD Gateway — прокси KDC, задача 1.12.
+
