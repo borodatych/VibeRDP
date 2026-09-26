@@ -82,8 +82,9 @@ report_weak_sources() {
 
     for arch in $ARCHS; do
         [ -d "$objects/$arch" ] || continue
-        nm -arch "$arch" -m "$file" 2>/dev/null | grep '(undefined) weak external' |
-            grep -vE "$TOOLCHAIN_WEAK_SYMBOLS" | awk '{ if ($(NF - 1) == "(from") print $(NF - 2); else print $NF }' |
+        # Most builds have no such symbol: grep then finds nothing, which under pipefail must not end the script
+        { nm -arch "$arch" -m "$file" 2>/dev/null | grep '(undefined) weak external' || true; } |
+            { grep -vE "$TOOLCHAIN_WEAK_SYMBOLS" || true; } | awk '{ if ($(NF - 1) == "(from") print $(NF - 2); else print $NF }' |
             while read -r symbol; do
                 for object in "$objects/$arch"/*.o; do
                     if nm -u "$object" 2>/dev/null | grep -qxF "$symbol"; then

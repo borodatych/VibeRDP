@@ -1,4 +1,4 @@
-import os
+import Foundation
 
 /// Keys of the interface strings: flat and dotted, the same in every language
 enum TextKey: String, CaseIterable {
@@ -469,17 +469,25 @@ extension TextKey {
 
 enum Localization {
     /// The strings of the language this launch speaks, over the base ones; set once, before the first window
-    private static let strings = OSAllocatedUnfairLock(initialState: [String: String]())
+    /// NSLock rather than OSAllocatedUnfairLock: the Xcode 26 SDK inlines the latter with a typed-throws path
+    /// that calls into a runtime newer than macOS 14
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var strings: [String: String] = [:]
 
     /// The catalog of this launch, from Languages: the base keeps every key a language does not translate
     static func use(_ catalog: [String: String]) {
-        strings.withLock { $0 = catalog }
+        lock.lock()
+        defer { lock.unlock() }
+        strings = catalog
     }
 
     /// The string of a key with its named placeholders filled in
     /// A placeholder without a value stays visible as {name}: a missing value shows up instead of vanishing
     static func text(_ key: TextKey, _ values: [String: String] = [:]) -> String {
-        let template = strings.withLock { $0[key.rawValue] } ?? key.baseText
+        lock.lock()
+        let translated = strings[key.rawValue]
+        lock.unlock()
+        let template = translated ?? key.baseText
         return fill(template, values)
     }
 
