@@ -8,6 +8,8 @@ struct MainMenu {
     let windowMenu: NSMenu
     /// Its shortcut is a keyboard setting
     let disconnectItem: NSMenuItem
+    /// The desktop in place of the windows of Windows, in a session of that mode; the app sets its target
+    let windowsDesktopItem: NSMenuItem
 
     init(appName: String) {
         let app = ["app": appName]
@@ -43,6 +45,10 @@ struct MainMenu {
         windowMenu.addItem(Self.item(.menuWindowMinimize, [:], #selector(NSWindow.performMiniaturize(_:)), key: "m"))
         // AppKit gives this item the system shortcut itself, fn-F, and replaces any other
         windowMenu.addItem(Self.item(.menuWindowFullScreen, [:], #selector(NSWindow.toggleFullScreen(_:))))
+        windowMenu.addItem(.separator())
+        windowsDesktopItem = Self.item(
+            .menuWindowWindowsDesktop, [:], #selector(ConnectionViewController.toggleWindowsDesktop(_:)))
+        windowMenu.addItem(windowsDesktopItem)
 
         for submenu in [application, file, windowMenu] {
             let holder = NSMenuItem()

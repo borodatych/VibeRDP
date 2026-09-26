@@ -50,6 +50,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let content = ConnectionViewController(
             trusted: TrustedCertificates(), keyboard: keyboard, profiles: profiles,
             sessionFrameName: SessionWindowController.frameName)
+        // The switch works from any window of the session, and the windows of Windows are not in a responder chain
+        // that reaches the list of connections
+        menu.windowsDesktopItem.target = content
         let window = MainWindow.make(title: Self.mainWindowTitle, content: content)
         mainWindowFrame = WindowFrameKeeper(
             window: window, name: MainWindow.frameName, fallback: WindowPlacement.primaryScreen)

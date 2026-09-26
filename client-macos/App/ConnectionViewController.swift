@@ -21,6 +21,9 @@ final class ConnectionViewController: NSViewController {
     private var sessionWindow: SessionWindowController?
     /// The windows of the host as windows of the Mac, in the Seam mode
     private var seamWindows: SeamWindows?
+    /// The state of the Seam link, and whether the user asked for the desktop in place of the windows
+    private var seamState = SeamLink.State.closed
+    private var prefersDesktop = false
     private var desktop: DesktopView? { sessionWindow?.desktop }
     private var wakeObserver: NSObjectProtocol?
     /// The profile of the running session and how it signs in
@@ -69,6 +72,12 @@ final class ConnectionViewController: NSViewController {
     /// The menu command while this window is key; the session window takes it while it is
     @objc func disconnect(_ sender: Any?) {
         session?.disconnect()
+    }
+
+    /// The menu command: the desktop in place of the windows of Windows and back, without reconnecting
+    @objc func toggleWindowsDesktop(_ sender: Any?) {
+        prefersDesktop.toggle()
+        applySeamMode()
     }
 
     /// The menu command: .rdp files chosen in an open panel join the list without connecting
@@ -284,19 +293,29 @@ final class ConnectionViewController: NSViewController {
         }
     }
 
-    /// A ready link of a helper that reports windows takes the desktop over with them; any other state gives it back
     /// Anything but a ready link has no windows: a new link sends them all again after its hello
     private func seamChanged(_ state: SeamLink.State) {
-        if case .ready(_, let capabilities) = state, capabilities.contains("windows"), let seamWindows {
-            sessionWindow?.setDesktopHidden(true)
-            seamWindows.activate(remoteWindows)
-            return
-        }
+        seamState = state
         if case .ready = state {} else {
             remoteWindows = RemoteWindows()
         }
-        if seamWindows?.isActive == true {
-            seamWindows?.deactivate()
+        applySeamMode()
+    }
+
+    /// A ready link of a helper that reports windows shows them in place of the desktop, unless the user asked
+    /// for the desktop; anything else gives the desktop back
+    /// The windows stay tracked while the desktop shows, so the switch back needs no word from the helper
+    private func applySeamMode() {
+        guard let seamWindows else { return }
+        var showsWindows = false
+        if case .ready(_, let capabilities) = seamState, capabilities.contains("windows") {
+            showsWindows = !prefersDesktop
+        }
+        if showsWindows && !seamWindows.isActive {
+            sessionWindow?.setDesktopHidden(true)
+            seamWindows.activate(remoteWindows)
+        } else if !showsWindows && seamWindows.isActive {
+            seamWindows.deactivate()
             sessionWindow?.setDesktopHidden(false)
         }
     }
@@ -379,6 +398,8 @@ final class ConnectionViewController: NSViewController {
         let wasShown = sessionWindow?.window?.isVisible == true
         seamWindows?.deactivate()
         seamWindows = nil
+        seamState = .closed
+        prefersDesktop = false
         sessionWindow?.end()
         sessionWindow = nil
         // The list comes forward with the reason the session ended in its status line
@@ -575,6 +596,11 @@ extension ConnectionViewController: NSMenuItemValidation {
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         switch menuItem.action {
         case #selector(disconnect(_:)): session != nil
+        case #selector(toggleWindowsDesktop(_:)):
+            {
+                menuItem.state = prefersDesktop ? .on : .off
+                return seamWindows != nil
+            }()
         case #selector(importWindowsAppConnections(_:)): model.windowsAppInstalled
         default: true
         }
