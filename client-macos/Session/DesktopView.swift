@@ -32,6 +32,17 @@ final class DesktopView: NSView {
     }
 
     /// The surface of the current desktop size; a resized desktop brings a new one
+    /// The part of the surface this view shows, in its pixels: one monitor of several; nil shows all of it
+    var region: CGRect? {
+        didSet { requestFrame() }
+    }
+
+    /// The size of what the view shows, in pixels of the surface
+    private var shownSize: CGSize? {
+        guard let texture else { return nil }
+        return FrameRenderer.part(of: texture, region: region).size
+    }
+
     var surface: IOSurfaceRef? {
         didSet {
             texture = surface.flatMap(renderer.makeTexture)
@@ -131,7 +142,7 @@ final class DesktopView: NSView {
         guard let drawable = layer.nextDrawable(), let commandBuffer = renderer.queue.makeCommandBuffer() else {
             return report("the layer gave no drawable")
         }
-        renderer.encode(texture, into: drawable.texture, commandBuffer: commandBuffer)
+        renderer.encode(texture, region: region, into: drawable.texture, commandBuffer: commandBuffer)
         commandBuffer.present(drawable)
         commandBuffer.commit()
         presentedFrames += 1
@@ -224,11 +235,12 @@ final class DesktopView: NSView {
         let scale = layer.contentsScale
         let drawablePoint = CGPoint(x: local.x * scale, y: (bounds.height - local.y) * scale)
         guard
-            let pixel = FrameGeometry.desktopPixel(
-                at: drawablePoint, source: CGSize(width: texture.width, height: texture.height),
-                into: layer.drawableSize)
+            let shown = shownSize,
+            let pixel = FrameGeometry.desktopPixel(at: drawablePoint, source: shown, into: layer.drawableSize)
         else { return nil }
-        return DesktopPoint(x: UInt32(pixel.x), y: UInt32(pixel.y))
+        // The part a view shows starts where its monitor starts in the desktop
+        let origin = FrameRenderer.part(of: texture, region: region).origin
+        return DesktopPoint(x: UInt32(pixel.x + origin.x), y: UInt32(pixel.y + origin.y))
     }
 
     // MARK: Keyboard
@@ -369,9 +381,8 @@ final class DesktopView: NSView {
 
     /// Points of the screen that one desktop pixel takes: the drawable scale divided by the pixels in a point
     private var pointsPerDesktopPixel: CGFloat {
-        guard let layer = layer as? CAMetalLayer, let texture, layer.contentsScale > 0 else { return 1 }
-        let geometry = FrameGeometry.fit(
-            source: CGSize(width: texture.width, height: texture.height), into: layer.drawableSize)
+        guard let layer = layer as? CAMetalLayer, let shown = shownSize, layer.contentsScale > 0 else { return 1 }
+        let geometry = FrameGeometry.fit(source: shown, into: layer.drawableSize)
         return geometry.scale / layer.contentsScale
     }
 

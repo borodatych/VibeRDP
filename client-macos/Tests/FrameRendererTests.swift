@@ -63,11 +63,28 @@ final class FrameRendererTests: XCTestCase {
         XCTAssertEqual(pixel(pixels, width: 4, x: 0, y: 4), Self.black)
     }
 
+    /// One monitor of several shows its part of the desktop: at its size a copy, larger a scale, both of that part only
+    func testRegionShowsItsPartOnly() throws {
+        let copy = try render(destinationWidth: 2, destinationHeight: 2, region: CGRect(x: 2, y: 2, width: 2, height: 2))
+        for y in 0..<2 {
+            for x in 0..<2 {
+                XCTAssertEqual(pixel(copy, width: 2, x: x, y: y), Self.quadrants[3], "copy (\(x), \(y))")
+            }
+        }
+        let scaled = try render(destinationWidth: 4, destinationHeight: 4, region: CGRect(x: 2, y: 0, width: 2, height: 2))
+        // Bilinear sampling at the edges of a part takes in the pixels beside it: the inside is the part alone
+        XCTAssertEqual(pixel(scaled, width: 4, x: 1, y: 1), Self.quadrants[1])
+        XCTAssertEqual(pixel(scaled, width: 4, x: 2, y: 2), Self.quadrants[1])
+        let right = try render(destinationWidth: 2, destinationHeight: 4, region: CGRect(x: 2, y: 0, width: 2, height: 4))
+        XCTAssertEqual(pixel(right, width: 2, x: 0, y: 0), Self.quadrants[1])
+        XCTAssertEqual(pixel(right, width: 2, x: 1, y: 3), Self.quadrants[3])
+    }
+
     private static func quadrant(x: Int, y: Int, size: Int) -> [UInt8] {
         quadrants[(y < size / 2 ? 0 : 2) + (x < size / 2 ? 0 : 1)]
     }
 
-    private func render(destinationWidth: Int, destinationHeight: Int) throws -> [UInt8] {
+    private func render(destinationWidth: Int, destinationHeight: Int, region: CGRect? = nil) throws -> [UInt8] {
         let surface = try makeSurface()
         let source = try XCTUnwrap(renderer.makeTexture(surface: surface))
 
@@ -78,7 +95,7 @@ final class FrameRendererTests: XCTestCase {
         let destination = try XCTUnwrap(renderer.device.makeTexture(descriptor: descriptor))
 
         let commandBuffer = try XCTUnwrap(renderer.queue.makeCommandBuffer())
-        renderer.encode(source, into: destination, commandBuffer: commandBuffer)
+        renderer.encode(source, region: region, into: destination, commandBuffer: commandBuffer)
         let sync = commandBuffer.makeBlitCommandEncoder()
         sync?.synchronize(resource: destination)
         sync?.endEncoding()
