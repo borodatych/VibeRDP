@@ -69,6 +69,12 @@ final class SessionController {
         params.width = UInt32(desktop.size.width)
         params.height = UInt32(desktop.size.height)
         params.scale = desktop.scale
+        let monitors = desktop.monitors
+        let monitorBuffer = UnsafeMutablePointer<VRCMonitor>.allocate(capacity: max(monitors.count, 1))
+        defer { monitorBuffer.deallocate() }
+        monitorBuffer.initialize(from: monitors, count: monitors.count)
+        params.monitors = monitors.count >= 2 ? UnsafePointer(monitorBuffer) : nil
+        params.monitorCount = monitors.count >= 2 ? monitors.count : 0
         params.audio = audio
         params.microphone = microphone
         params.sharedFolder = sharedFolder.isEmpty ? nil : strings.copy(sharedFolder)

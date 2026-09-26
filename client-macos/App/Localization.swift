@@ -136,6 +136,7 @@ enum TextKey: String, CaseIterable {
     case profileDisplaySize = "profile.display.size"
     case profileDisplayCustom = "profile.display.custom"
     case profileDisplaySharp = "profile.display.sharp"
+    case profileDisplayAllScreens = "profile.display.allScreens"
     case profileDisplayWidth = "profile.display.width"
     case profileDisplayHeight = "profile.display.height"
     case profileDisplayWindowHint = "profile.display.windowHint"
@@ -332,6 +333,7 @@ extension TextKey {
         case .profileDisplaySize: "Разрешение"
         case .profileDisplayCustom: "Свой"
         case .profileDisplaySharp: "Чёткость на Retina"
+        case .profileDisplayAllScreens: "На всех мониторах"
         case .profileDisplayWidth: "Ширина"
         case .profileDisplayHeight: "Высота"
         case .profileDisplayWindowHint:

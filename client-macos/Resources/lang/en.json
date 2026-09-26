@@ -134,6 +134,7 @@
   "profile.display.size": "Resolution",
   "profile.display.custom": "Custom",
   "profile.display.sharp": "Sharp on Retina",
+  "profile.display.allScreens": "On all monitors",
   "profile.display.width": "Width",
   "profile.display.height": "Height",
   "profile.display.windowHint": "The session window opens as it was last time. The Windows desktop fits the window as it is resized, zoomed or put in full screen.",

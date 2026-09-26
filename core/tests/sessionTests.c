@@ -88,11 +88,28 @@ static bool testInvalidArguments(void)
     emptyHost.host = "";
     VRCConnectionParams unknownAudio = params;
     unknownAudio.audio = (VRCAudioMode)3;
+    /* Monitors: none primary, a primary away from 0,0, two primaries, a monitor without a size */
+    const VRCMonitor noPrimary[] = { { 0, 0, 1920, 1080, 100, false }, { 1920, 0, 1920, 1080, 100, false } };
+    const VRCMonitor movedPrimary[] = { { 10, 0, 1920, 1080, 100, true }, { 1930, 0, 1920, 1080, 100, false } };
+    const VRCMonitor twoPrimaries[] = { { 0, 0, 1920, 1080, 100, true }, { 0, 0, 1920, 1080, 100, true } };
+    const VRCMonitor empty[] = { { 0, 0, 1920, 1080, 100, true }, { 1920, 0, 0, 1080, 100, false } };
+    const VRCMonitor* const wrong[] = { noPrimary, movedPrimary, twoPrimaries, empty };
     CHECK(VRCSessionConnect(NULL, &params) == VRCResultInvalidArgument);
     CHECK(VRCSessionConnect(session, NULL) == VRCResultInvalidArgument);
     CHECK(VRCSessionConnect(session, &noHost) == VRCResultInvalidArgument);
     CHECK(VRCSessionConnect(session, &emptyHost) == VRCResultInvalidArgument);
     CHECK(VRCSessionConnect(session, &unknownAudio) == VRCResultInvalidArgument);
+    for (size_t i = 0; i < sizeof(wrong) / sizeof(wrong[0]); i++)
+    {
+        VRCConnectionParams monitors = params;
+        monitors.monitors = wrong[i];
+        monitors.monitorCount = 2;
+        CHECK(VRCSessionConnect(session, &monitors) == VRCResultInvalidArgument);
+    }
+    VRCConnectionParams tooMany = params;
+    tooMany.monitors = noPrimary;
+    tooMany.monitorCount = VRC_MAX_MONITORS + 1;
+    CHECK(VRCSessionConnect(session, &tooMany) == VRCResultInvalidArgument);
 
     /* Rejected arguments leave the session idle, so the first valid connect still starts it */
     CHECK(VRCSessionConnect(session, &params) == VRCResultOK);

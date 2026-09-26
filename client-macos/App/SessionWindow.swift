@@ -11,6 +11,8 @@ import AppKit
 /// a fixed desktop keeps its size, the window opens as large as the screen lets, and the frame scales into it
 /// Every mode but the window one opens on the screen of the connections, where the user started the session
 /// On a Retina display a sharp desktop takes its pixels, and a move to a display of another density asks again
+/// In full screen on all monitors each screen of the Mac gets a window of its own, each showing its part of one
+/// desktop; the monitors stay as they were at the start of the session
 @MainActor
 final class SessionWindowController: NSWindowController, NSWindowDelegate {
     /// The name the window keeps its frame under, so the next session opens where and as large as the last one
@@ -36,6 +38,15 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
     /// Keeps where the user leaves the window, in the window mode
     private var frameKeeper: WindowFrameKeeper?
     private var resizeTimer: Timer?
+    /// The monitors of a session on all screens; nil for one window
+    let layout: MonitorLayout?
+    /// The windows of the other screens, each with the desktop view of its part
+    private var otherWindows: [(window: NSWindow, desktop: DesktopView)] = []
+
+    /// Every desktop view of the session: the one of this window first
+    var desktops: [DesktopView] {
+        [desktop] + otherWindows.map(\.desktop)
+    }
 
     /// screen is the screen of the connections; nil takes the main one
     /// frameName nil keeps no frame: the tests must not move the window of the app itself
@@ -43,8 +54,9 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
     /// and keeping theirs would replace what the window mode comes back with
     init(
         desktop: DesktopView, title: String, mode: ProfileDisplayMode, fixedSize: DesktopSize, sharp: Bool,
-        screen: NSScreen?, frameName: String?, frameDefaults: UserDefaults = .standard,
-        onDisconnect: @escaping () -> Void, onResize: @escaping (DesktopRequest) -> Void
+        screen: NSScreen?, frameName: String?, frameDefaults: UserDefaults = .standard, allScreens: Bool = false,
+        makeDesktop: (() -> DesktopView)? = nil, onDisconnect: @escaping () -> Void,
+        onResize: @escaping (DesktopRequest) -> Void
     ) {
         self.desktop = desktop
         self.mode = mode
@@ -53,6 +65,17 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
         self.screen = screen ?? NSScreen.main
         self.onDisconnect = onDisconnect
         self.onResize = onResize
+        let screens = NSScreen.screens
+        let primary = screens.firstIndex { $0 == (screen ?? NSScreen.main) } ?? 0
+        if mode == .fullScreen, allScreens, screens.count > 1, makeDesktop != nil {
+            let shown = screens.map { screen in
+                (frame: CGRect(origin: screen.frame.origin, size: Self.fullScreenSize(of: screen)),
+                 backing: screen.backingScaleFactor)
+            }
+            layout = MonitorLayout(screens: shown, primary: primary, sharp: sharp)
+        } else {
+            layout = nil
+        }
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: Self.defaultSize),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -101,9 +124,47 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
             frameKeeper = WindowFrameKeeper(
                 window: window, name: frameName, defaults: frameDefaults, fallback: self.screen)
         }
-        if mode != .fixed {
+        if let layout, let makeDesktop {
+            // This window is the primary monitor; every other screen gets a window with its part of the desktop
+            desktop.region = layout.region(of: primary)
+            for index in screens.indices where index != primary {
+                otherWindows.append(makeOtherWindow(on: screens[index], title: title, desktop: makeDesktop()))
+                otherWindows[otherWindows.count - 1].desktop.region = layout.region(of: index)
+            }
+        } else if mode != .fixed {
             desktop.onResize = { [weak self] size in self?.desktopResized(to: size) }
         }
+    }
+
+    /// A window of one more screen: full screen there, closing it ends the session as closing the first one does
+    private func makeOtherWindow(on screen: NSScreen, title: String, desktop: DesktopView) -> (NSWindow, DesktopView) {
+        let window = NSWindow(
+            contentRect: NSRect(origin: .zero, size: Self.defaultSize),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+        window.title = title
+        window.collectionBehavior.insert(.fullScreenPrimary)
+        window.isReleasedWhenClosed = false
+        let content = NSView(frame: NSRect(origin: .zero, size: Self.defaultSize))
+        desktop.frame = content.bounds
+        desktop.autoresizingMask = [.width, .height]
+        content.addSubview(desktop)
+        window.contentView = content
+        window.setFrame(WindowPlacement.centered(window.frame.size, in: screen.visibleFrame), display: false)
+        window.delegate = self
+        return (window, desktop)
+    }
+
+    /// A new surface of the engine goes to every view: each shows its part of it
+    func setSurface(_ surface: IOSurfaceRef?) {
+        desktops.forEach { $0.surface = surface }
+    }
+
+    func frameChanged() {
+        desktops.forEach { $0.frameChanged() }
+    }
+
+    func setPointer(_ pointer: RemotePointer) {
+        desktops.forEach { $0.pointer = pointer }
     }
 
     @available(*, unavailable)
@@ -116,6 +177,13 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
         let points = Self.desktopSize(
             mode: mode, fixed: fixedSize, content: window?.contentLayoutRect.size ?? Self.defaultSize,
             fullScreen: screen.map(Self.fullScreenSize(of:)) ?? Self.defaultSize)
+        // All monitors: the desktop is the rectangle around them, and each goes with its place and scale
+        if let layout {
+            let primary = layout.monitors.first(where: \.primary)
+            return DesktopRequest(
+                size: layout.bounds.size, scale: primary?.scale ?? DesktopRequest.standardScale,
+                monitors: layout.coreMonitors)
+        }
         // A fixed desktop is in pixels of Windows already, and the window stretches it as any other frame
         guard mode != .fixed else { return DesktopRequest(size: points) }
         let backing = (mode == .fullScreen ? screen : window?.screen ?? screen)?.backingScaleFactor ?? 1
@@ -154,6 +222,10 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
         if mode == .fullScreen && !window.styleMask.contains(.fullScreen) {
             window.toggleFullScreen(nil)
         }
+        for other in otherWindows {
+            other.window.orderFront(nil)
+            other.window.toggleFullScreen(nil)
+        }
         window.makeFirstResponder(desktop)
         showDisconnectButton()
         Diagnostics.info(
@@ -167,6 +239,11 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
         frameKeeper?.save()
         frameKeeper?.stop()
         hideReconnecting()
+        for other in otherWindows {
+            other.window.delegate = nil
+            other.window.close()
+        }
+        otherWindows = []
         close()
     }
 
@@ -197,7 +274,7 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
 
     /// A move to a display of another density asks for the desktop at its pixels
     func windowDidChangeBackingProperties(_ notification: Notification) {
-        if mode != .fixed {
+        if mode != .fixed && layout == nil {
             desktopResized(to: desktop.bounds.size)
         }
     }

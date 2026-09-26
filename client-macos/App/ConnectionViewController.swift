@@ -184,6 +184,13 @@ final class ConnectionViewController: NSViewController {
         let window = SessionWindowController(
             desktop: desktop, title: profile.title, mode: profile.displayMode, fixedSize: profile.fixedSize,
             sharp: profile.sharpOnRetina, screen: view.window?.screen, frameName: sessionFrameName,
+            allScreens: profile.allScreens,
+            makeDesktop: { [keyboard] in
+                let other = DesktopView(renderer: renderer)
+                other.input = controller
+                other.keyboard = ProfileKeyboardSettings(store: keyboard, keyboard: profile.keyboard)
+                return other
+            },
             onDisconnect: { [weak controller] in controller?.disconnect() },
             onResize: { [weak controller] desktop in controller?.resizeDesktop(to: desktop) })
         sessionWindow = window
@@ -244,11 +251,11 @@ final class ConnectionViewController: NSViewController {
         case .gatewayMessage(let message):
             show(message)
         case .frameResized:
-            desktop?.surface = session?.frameSurface()
+            sessionWindow?.setSurface(session?.frameSurface())
         case .frameUpdated:
-            desktop?.frameChanged()
+            sessionWindow?.frameChanged()
         case .pointer(let pointer):
-            desktop?.pointer = pointer
+            sessionWindow?.setPointer(pointer)
         case .remoteClipboard(let formats):
             clipboard?.remoteClipboardChanged(formats)
         case .clipboardDataRequested(let format):

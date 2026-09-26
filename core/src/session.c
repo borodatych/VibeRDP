@@ -954,6 +954,68 @@ static BOOL applyAudio(rdpSettings* settings, VRCAudioMode audio, bool microphon
            freerdp_settings_set_bool(settings, FreeRDP_AudioCapture, microphone);
 }
 
+/* Monitors that make a valid desktop: one primary at 0,0, every one of them with a size */
+static bool validMonitors(const VRCMonitor* monitors, size_t count)
+{
+    if (count < 2)
+        return true;
+    if (!monitors || count > VRC_MAX_MONITORS)
+        return false;
+    size_t primaries = 0;
+    for (size_t i = 0; i < count; i++)
+    {
+        if (monitors[i].width == 0 || monitors[i].height == 0 || monitors[i].width > INT32_MAX ||
+            monitors[i].height > INT32_MAX)
+            return false;
+        if (monitors[i].primary)
+        {
+            primaries++;
+            if (monitors[i].x != 0 || monitors[i].y != 0)
+                return false;
+        }
+    }
+    return primaries == 1;
+}
+
+/*
+ * The desktop over several monitors: the engine sends them with their scales in the client data, and the desktop
+ * is the rectangle around them; the scales are set here, not by freerdp_settings_enforce_monitor_exists,
+ * which swaps the desktop and the device scale
+ */
+static BOOL applyMonitors(rdpSettings* settings, const VRCConnectionParams* params)
+{
+    if (params->monitorCount < 2)
+        return TRUE;
+    rdpMonitor monitors[VRC_MAX_MONITORS] = { 0 };
+    int64_t left = 0;
+    int64_t top = 0;
+    int64_t right = 0;
+    int64_t bottom = 0;
+    for (size_t i = 0; i < params->monitorCount; i++)
+    {
+        const VRCMonitor* monitor = &params->monitors[i];
+        monitors[i].x = monitor->x;
+        monitors[i].y = monitor->y;
+        monitors[i].width = (INT32)monitor->width;
+        monitors[i].height = (INT32)monitor->height;
+        monitors[i].is_primary = monitor->primary;
+        monitors[i].orig_screen = (UINT32)i;
+        monitors[i].attributes.desktopScaleFactor = vrcDisplayDesktopScale(monitor->scale);
+        monitors[i].attributes.deviceScaleFactor = vrcDisplayDeviceScale(monitor->scale);
+        left = i == 0 || monitor->x < left ? monitor->x : left;
+        top = i == 0 || monitor->y < top ? monitor->y : top;
+        right = i == 0 || monitor->x + (int64_t)monitor->width > right ? monitor->x + (int64_t)monitor->width : right;
+        bottom =
+            i == 0 || monitor->y + (int64_t)monitor->height > bottom ? monitor->y + (int64_t)monitor->height : bottom;
+    }
+    return freerdp_settings_set_bool(settings, FreeRDP_UseMultimon, TRUE) &&
+           freerdp_settings_set_bool(settings, FreeRDP_SpanMonitors, FALSE) &&
+           freerdp_settings_set_bool(settings, FreeRDP_HasMonitorAttributes, TRUE) &&
+           freerdp_settings_set_monitor_def_array_sorted(settings, monitors, params->monitorCount) &&
+           freerdp_settings_set_uint32(settings, FreeRDP_DesktopWidth, (UINT32)(right - left)) &&
+           freerdp_settings_set_uint32(settings, FreeRDP_DesktopHeight, (UINT32)(bottom - top));
+}
+
 /* A shared folder is a drive of the device channel: Windows lists it under This PC by its name */
 static BOOL applySharedFolder(rdpSettings* settings, const VRCConnectionParams* params)
 {
@@ -979,7 +1041,8 @@ static BOOL applyParams(rdpSettings* settings, const VRCConnectionParams* params
            (params->height == 0 || freerdp_settings_set_uint32(settings, FreeRDP_DesktopHeight, params->height)) &&
            freerdp_settings_set_uint32(settings, FreeRDP_DesktopScaleFactor, vrcDisplayDesktopScale(params->scale)) &&
            freerdp_settings_set_uint32(settings, FreeRDP_DeviceScaleFactor, vrcDisplayDeviceScale(params->scale)) &&
-           applyAudio(settings, params->audio, params->microphone) && applySharedFolder(settings, params) &&
+           applyAudio(settings, params->audio, params->microphone) && applyMonitors(settings, params) &&
+           applySharedFolder(settings, params) &&
            applyCredentials(settings, params) && applyGateway(settings, params);
 }
 
@@ -1075,7 +1138,8 @@ void VRCSessionDestroy(VRCSession* session)
 
 VRCResult VRCSessionConnect(VRCSession* session, const VRCConnectionParams* params)
 {
-    if (!session || !params || !params->host || params->host[0] == '\0' || params->audio > VRCAudioModeRemote)
+    if (!session || !params || !params->host || params->host[0] == '\0' || params->audio > VRCAudioModeRemote ||
+        !validMonitors(params->monitors, params->monitorCount))
         return VRCResultInvalidArgument;
     if (atomic_exchange(&session->started, true))
         return VRCResultInvalidState;

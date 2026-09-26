@@ -625,6 +625,9 @@ private struct ProfileEditor: View {
                     Text(Localization.text(Self.title(of: mode))).tag(mode)
                 }
             }
+            if mode == .fullScreen {
+                Toggle(Localization.text(.profileDisplayAllScreens), isOn: flag(\.allScreens))
+            }
             if mode != .fixed {
                 Toggle(Localization.text(.profileDisplaySharp), isOn: flag(\.sharpOnRetina))
             }

@@ -171,6 +171,23 @@ final class SessionWindowTests: XCTestCase {
         controller = make(.window)
     }
 
+    /// On all monitors every screen gets a window and a view of its part, and the session asks for all of them
+    func testAllScreensOpenAWindowOnEach() throws {
+        guard NSScreen.screens.count > 1 else { throw XCTSkip("one screen on this Mac") }
+        controller.end()
+        let all = SessionWindowController(
+            desktop: DesktopView(renderer: renderer), title: "Test", mode: .fullScreen, fixedSize: .standard,
+            sharp: true, screen: NSScreen.screens[0], frameName: nil, allScreens: true,
+            makeDesktop: { [renderer] in DesktopView(renderer: renderer!) }, onDisconnect: {}, onResize: { _ in })
+        let layout = try XCTUnwrap(all.layout)
+        XCTAssertEqual(all.desktops.count, NSScreen.screens.count)
+        XCTAssertEqual(all.desktopRequest.monitors.count, NSScreen.screens.count)
+        XCTAssertEqual(all.desktopRequest.size, layout.bounds.size)
+        XCTAssertEqual(all.desktops[0].region, layout.region(of: 0))
+        all.end()
+        controller = make(.window)
+    }
+
     /// Points become pixels of a Retina display with its scale; without Retina or sharpness they stay points
     func testDesktopRequestOfPoints() {
         let points = CGSize(width: 1503.6, height: 971.2)

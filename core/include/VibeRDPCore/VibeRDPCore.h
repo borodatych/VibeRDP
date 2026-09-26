@@ -114,6 +114,22 @@ typedef VRC_ENUM(VRCPointerKind) {
     VRCPointerKindSystem = 2, /* The client's own arrow */
 } VRCPointerKind;
 
+/*
+ * One monitor of a desktop spread over several: where it stands in the desktop and how large, in pixels,
+ * and its scale in percent; the primary one, where Windows puts the taskbar, stands at 0,0
+ */
+typedef struct VRCMonitor {
+    int32_t x;
+    int32_t y;
+    uint32_t width;
+    uint32_t height;
+    uint32_t scale; /* 0 is 100 */
+    bool primary;
+} VRCMonitor;
+
+/* The most monitors a desktop may spread over, as the protocol allows */
+#define VRC_MAX_MONITORS 16
+
 /* Where the sound of the remote computer plays */
 typedef VRC_ENUM(VRCAudioMode) {
     VRCAudioModeOff = 0,    /* Nowhere: the server does not send it */
@@ -266,6 +282,12 @@ typedef struct VRCConnectionParams {
     uint32_t scale;       /* Scale of the desktop in percent, 200 on a Retina display at its pixels; 0 keeps 100 */
     VRCAudioMode audio;   /* Where the sound plays; 0 plays none */
     bool microphone;      /* The microphone of the Mac goes to Windows; macOS asks the user the first time */
+    /*
+     * Two or more spread the desktop over monitors: exactly one primary at 0,0, up to VRC_MAX_MONITORS; the width
+     * and the height above are then those of the rectangle around them all; fewer than two is one monitor
+     */
+    const VRCMonitor* monitors;
+    size_t monitorCount;
     /* A folder of the Mac Windows sees as a drive, under the name given; NULL or empty shares none */
     const char* sharedFolder;
     const char* sharedFolderName; /* NULL or empty takes the last part of the path */

@@ -26,6 +26,8 @@ struct ConnectionProfile: Codable, Equatable, Identifiable, Sendable {
     var displayMode: ProfileDisplayMode
     /// The desktop of the fixed mode; the other modes keep it for when the mode comes back
     var fixedSize: DesktopSize
+    /// In full screen the desktop spreads over every screen of the Mac, a window on each
+    var allScreens: Bool
     /// On a Retina display the desktop takes its pixels, so the text is sharp; off, the display stretches it,
     /// with four times fewer pixels to send
     var sharpOnRetina: Bool
@@ -44,7 +46,8 @@ struct ConnectionProfile: Codable, Equatable, Identifiable, Sendable {
         id: UUID = UUID(), name: String = "", address: String = "", username: String = "",
         remembersPassword: Bool = true, keyboard: ProfileKeyboard = .settings, gatewayAddress: String = "",
         gatewayUsesServerCredentials: Bool = true, gatewayUsername: String = "", gatewayBypassLocal: Bool = false,
-        displayMode: ProfileDisplayMode = .window, fixedSize: DesktopSize = .standard, sharpOnRetina: Bool = true,
+        displayMode: ProfileDisplayMode = .window, fixedSize: DesktopSize = .standard, allScreens: Bool = false,
+        sharpOnRetina: Bool = true,
         audio: ProfileAudio = .local, microphone: Bool = false, sharedFolder: String = "", isFavorite: Bool = false,
         lastConnected: Date? = nil
     ) {
@@ -61,6 +64,7 @@ struct ConnectionProfile: Codable, Equatable, Identifiable, Sendable {
         self.displayMode = displayMode
         self.fixedSize = fixedSize
         self.sharpOnRetina = sharpOnRetina
+        self.allScreens = allScreens
         self.audio = audio
         self.sharedFolder = sharedFolder
         self.microphone = microphone
@@ -91,6 +95,7 @@ struct ConnectionProfile: Codable, Equatable, Identifiable, Sendable {
             try container.decodeIfPresent(ProfileDisplayMode.self, forKey: .displayMode) ?? defaults.displayMode
         fixedSize = try container.decodeIfPresent(DesktopSize.self, forKey: .fixedSize) ?? defaults.fixedSize
         sharpOnRetina = try container.decodeIfPresent(Bool.self, forKey: .sharpOnRetina) ?? defaults.sharpOnRetina
+        allScreens = try container.decodeIfPresent(Bool.self, forKey: .allScreens) ?? defaults.allScreens
         audio = try container.decodeIfPresent(ProfileAudio.self, forKey: .audio) ?? defaults.audio
         sharedFolder = try container.decodeIfPresent(String.self, forKey: .sharedFolder) ?? defaults.sharedFolder
         microphone = try container.decodeIfPresent(Bool.self, forKey: .microphone) ?? defaults.microphone
