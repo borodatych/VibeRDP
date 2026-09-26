@@ -28,6 +28,8 @@ final class ConnectionViewController: NSViewController {
     private var failure: (kind: VRCErrorKind, message: String)?
     /// The first update after each change of size is logged, the rest are too many to read
     private var frameUpdateLogged = false
+    /// The windows of the host while the Seam link is ready; the window manager of the Seam mode shows them
+    private var remoteWindows = RemoteWindows()
 
     init(
         trusted: TrustedCertificates, keyboard: KeyboardSettingsStore, profiles: ProfileStore, sessionFrameName: String?
@@ -260,8 +262,29 @@ final class ConnectionViewController: NSViewController {
             clipboard?.remoteClipboardChanged(formats)
         case .clipboardDataRequested(let format):
             clipboard?.dataRequested(format)
-        // The window manager of the Seam mode takes these: until then the session stays a desktop
-        case .seam, .seamMessage:
+        // Anything but a ready link has no windows: a new link sends them all again after its hello
+        case .seam(let state):
+            if case .ready = state {} else {
+                remoteWindows = RemoteWindows()
+            }
+        case .seamMessage(let message):
+            track(message)
+        }
+    }
+
+    /// The windows of the host, and in the log what changed: ids and executables, never titles or icons
+    private func track(_ message: MessagePackValue) {
+        let outcome = remoteWindows.apply(message)
+        if let note = outcome.note {
+            Diagnostics.info("seam", note)
+        }
+        switch outcome.change {
+        case .created(let id):
+            let exe = remoteWindows.windows[id]?.exe ?? ""
+            Diagnostics.info("seam", "window \(id) \(exe) created, \(remoteWindows.windows.count) in all")
+        case .destroyed(let id):
+            Diagnostics.info("seam", "window \(id) destroyed, \(remoteWindows.windows.count) in all")
+        case .updated, .icon, .order, .focus, nil:
             break
         }
     }
