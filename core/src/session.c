@@ -1025,11 +1025,15 @@ static BOOL applyReconnection(rdpSettings* settings)
     return freerdp_settings_set_bool(settings, FreeRDP_AutoReconnectionEnabled, TRUE);
 }
 
-/* FreeRDP loads the rdpdr and rdpsnd channels for these features, and the build leaves both channels out */
-static BOOL disableFeaturesNeedingDeviceChannels(rdpSettings* settings)
+/*
+ * The server measures the link and checks it is alive: network auto-detection and heartbeat, which FreeRDP backs
+ * with the device and audio channels the build now has; the UDP transport stays off, its support in FreeRDP is
+ * partial and a lost UDP flow would end the session in ways the reconnection does not cover
+ */
+static BOOL applyNetwork(rdpSettings* settings)
 {
-    return freerdp_settings_set_bool(settings, FreeRDP_NetworkAutoDetect, FALSE) &&
-           freerdp_settings_set_bool(settings, FreeRDP_SupportHeartbeatPdu, FALSE) &&
+    return freerdp_settings_set_bool(settings, FreeRDP_NetworkAutoDetect, TRUE) &&
+           freerdp_settings_set_bool(settings, FreeRDP_SupportHeartbeatPdu, TRUE) &&
            freerdp_settings_set_bool(settings, FreeRDP_SupportMultitransport, FALSE);
 }
 
@@ -1079,7 +1083,7 @@ VRCResult VRCSessionConnect(VRCSession* session, const VRCConnectionParams* para
     rdpSettings* settings = session->common.context.settings;
     if (!applyParams(settings, params) || !applySecurity(settings) || !applyKerberos(settings) ||
         !applyReconnection(settings) || !applyGraphics(settings) ||
-        !disableFeaturesNeedingDeviceChannels(settings) || freerdp_client_start(&session->common.context) != 0)
+        !applyNetwork(settings) || freerdp_client_start(&session->common.context) != 0)
         return VRCResultFailure;
     return VRCResultOK;
 }

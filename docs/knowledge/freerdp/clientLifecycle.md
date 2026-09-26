@@ -27,7 +27,7 @@
 - Все три функции по умолчанию включены (`libfreerdp/core/settings.c`)
 - Проверено: без выключения этих функций сборка с пятью каналами падает ещё до TCP — `Failed to load channel rdpdr`, затем `ERRCONNECT_PRE_CONNECT_FAILED`
 
-**Применение:** VibeRDPCore выключает все три функции перед подключением; вернуть их можно, только добавив rdpdr и rdpsnd в сборку — развилка 9 в [decisions.md](../../decisions.md).
+**Применение:** до 0.1.17 VibeRDPCore выключал все три функции; с rdpdr и rdpsnd в сборке автоопределение сети и heartbeat включены (`applyNetwork`), UDP-транспорт — нет — развилка 9 в [decisions.md](../../decisions.md).
 
 **Звук (2026-09-26):** `AudioPlayback` добавляет rdpsnd в статические и динамические каналы, а тот включает `DeviceRedirection` с пометкой «rdpsnd requires rdpdr to be registered» — без rdpdr в сборке подключение со звуком падает так же; rdpsnd выбирает подсистему по порядку из доступных, на Маке — `mac` (`channels/rdpsnd/client/rdpsnd_main.c:1060-1085`), которая есть, только если собрано с `WITH_MACAUDIO=ON`; вывод — AudioQueue, форматы — только PCM (`channels/rdpsnd/client/mac/rdpsnd_mac.m:241-247`); `RemoteConsoleAudio` оставляет звук на сервере — [решение 45](../../decisions.md).
 

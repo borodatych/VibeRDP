@@ -65,7 +65,7 @@
 - [ ] 3.3 Синхронизация раскладки RU/EN: замер вариантов А и Б, выбор, реализация — см. [keyboardLayout.md](knowledge/windows/keyboardLayout.md)
 - [x] **3.4 Звук (rdpsnd)** — ✅ (2026-09-26, `next`, 0.1.12) каналы rdpsnd и rdpdr в сборке, вывод через подсистему `mac` FreeRDP (AudioQueue, PCM); у подключения «Звук Windows» — на Маке, на удалённом, не воспроизводить; импорт `audiomode`; журнал пишет подключённые каналы — [решение 45](decisions.md), [clientLifecycle.md](knowledge/freerdp/clientLifecycle.md); тесты: живое подключение со звуком `testSoundChannelsLoad`, неверный режим в ядре, `testAudioMode`; **звук на настоящем Windows проверяет оператор** — [liveChecks.md](manuals/liveChecks.md), раздел 20
   - [x] **Микрофон** — ✅ (2026-09-26, `next`, 0.1.16) канал `audin`, подсистема `mac`, переключатель у подключения, по умолчанию выключен, `audiocapturemode` из `.rdp` — [решение 47](decisions.md); **звонок или запись на Windows проверяет оператор** — [liveChecks.md](manuals/liveChecks.md), раздел 20, шаг 6
-  - [ ] Вернуть функции RDP8 из решения 9 — автоопределение сети и heartbeat — теперь, когда rdpdr и rdpsnd в сборке
+  - [x] **Функции RDP8 из решения 9** — ✅ (2026-09-26, `next`, 0.1.17) автоопределение сети и heartbeat включены, UDP-транспорт выключен — решение 9, итог 2026-09-26
 - [x] **3.5 Проброс папки Мака (drive redirection), опционально в профиле** — ✅ (2026-09-26, `next`, 0.1.15) канал `drive` поверх rdpdr; у подключения «Папка Мака» — выбор папки, в Windows диск с её именем, по умолчанию выключено — [решение 46](decisions.md); тест `testSharedFolderLoads`; **файлы в Проводнике проверяет оператор** — [liveChecks.md](manuals/liveChecks.md), раздел 21
 
 ## Этап 4 — Протокол Seam и хелпер
