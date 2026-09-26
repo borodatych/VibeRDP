@@ -10,6 +10,10 @@ final class SeamWindows: NSObject, NSWindowDelegate {
     private let onDisconnect: () -> Void
     /// The Mac moved or resized a window by itself, tiling or Mission Control: the host gets the new rect
     private let onMove: (UInt64, CGRect) -> Void
+    /// The user brought a window forward on the Mac: the host brings it forward too, and the keyboard goes there
+    private let onActivate: (UInt64) -> Void
+    /// The window with the focus on the host, as the helper last said
+    private var foreground: UInt64 = 0
     /// Set while this class places a window: its own moves must not go back to the host
     private var placing = false
     private var shown: [UInt64: (window: SeamWindow, desktop: DesktopView)] = [:]
@@ -20,19 +24,23 @@ final class SeamWindows: NSObject, NSWindowDelegate {
 
     init(
         geometry: SeamGeometry, makeDesktop: @escaping () -> DesktopView, onDisconnect: @escaping () -> Void,
-        onMove: @escaping (UInt64, CGRect) -> Void = { _, _ in }
+        onMove: @escaping (UInt64, CGRect) -> Void = { _, _ in },
+        onActivate: @escaping (UInt64) -> Void = { _ in }
     ) {
         self.geometry = geometry
         self.makeDesktop = makeDesktop
         self.onDisconnect = onDisconnect
         self.onMove = onMove
+        self.onActivate = onActivate
     }
 
     /// The link is ready: every window of the host comes up in its order
     func activate(_ windows: RemoteWindows) {
         isActive = true
+        foreground = windows.foreground
         windows.ordered.reversed().forEach { place($0) }
         restack(windows)
+        focus(foreground)
     }
 
     /// The link is gone: the windows go, and the desktop takes over
@@ -55,8 +63,11 @@ final class SeamWindows: NSObject, NSWindowDelegate {
             remove(id)
         case .order:
             restack(windows)
-        // Icons go to the Dock and the focus to the Mac with the integration of the later stages
-        case .icon, .focus:
+        case .focus:
+            foreground = windows.foreground
+            focus(foreground)
+        // Icons go to the Dock with the integration of the next stage
+        case .icon:
             break
         }
     }
@@ -133,6 +144,21 @@ final class SeamWindows: NSObject, NSWindowDelegate {
         for (upper, lower) in zip(stack, stack.dropFirst()) {
             lower.order(.below, relativeTo: upper.windowNumber)
         }
+    }
+
+    /// The focus of the host becomes the key window of the Mac, but only while VibeRDP is the active app:
+    /// Windows changing its focus must not take the keyboard from another app of the Mac
+    private func focus(_ id: UInt64) {
+        guard NSApp.isActive, let window = shown[id]?.window, !window.isKeyWindow else { return }
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    /// A window the user made key on the Mac goes forward on the host, unless it is there already
+    func windowDidBecomeKey(_ notification: Notification) {
+        guard isActive, let window = notification.object as? SeamWindow, let id = window.remoteID,
+            id != foreground
+        else { return }
+        onActivate(id)
     }
 
     func windowDidMove(_ notification: Notification) {

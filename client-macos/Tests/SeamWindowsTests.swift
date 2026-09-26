@@ -10,6 +10,7 @@ final class SeamWindowsTests: XCTestCase {
     private var seam: SeamWindows!
     private var remote = RemoteWindows()
     private var moves: [(UInt64, CGRect)] = []
+    private var activated: [UInt64] = []
 
     override func setUp() async throws {
         guard let renderer = FrameRenderer() else { throw XCTSkip("no Metal device") }
@@ -17,9 +18,11 @@ final class SeamWindowsTests: XCTestCase {
         seam = SeamWindows(
             geometry: SeamGeometry(layout: layout, screens: [screen]),
             makeDesktop: { DesktopView(renderer: renderer) }, onDisconnect: {},
-            onMove: { [weak self] id, rect in self?.moves.append((id, rect)) })
+            onMove: { [weak self] id, rect in self?.moves.append((id, rect)) },
+            onActivate: { [weak self] id in self?.activated.append(id) })
         remote = RemoteWindows()
         moves = []
+        activated = []
     }
 
     override func tearDown() async throws {
@@ -88,5 +91,24 @@ final class SeamWindowsTests: XCTestCase {
         seam.window(for: 1)?.setFrame(CGRect(x: 720, y: 0, width: 720, height: 900), display: false)
         XCTAssertEqual(moves.last?.0, 1)
         XCTAssertEqual(moves.last?.1, CGRect(x: 720, y: 0, width: 720, height: 900))
+    }
+
+    /// A window made key on the Mac goes forward on the host; the one the host has in front already does not
+    /// The app under test is not active, so AppKit makes no window key: the notification comes as AppKit sends it
+    func testKeyWindowOfTheMacActivatesTheHost() {
+        seam.activate(remote)
+        send(create(1, 0, 0))
+        send(create(2, 50, 50))
+        send(.map([("type", .string("foreground")), ("id", .uint(2))]))
+        becameKey(1)
+        XCTAssertEqual(activated, [1])
+        send(.map([("type", .string("foreground")), ("id", .uint(1))]))
+        becameKey(2)
+        becameKey(1)
+        XCTAssertEqual(activated, [1, 2], "the window the host has in front is not asked for again")
+    }
+
+    private func becameKey(_ id: UInt64) {
+        seam.windowDidBecomeKey(Notification(name: NSWindow.didBecomeKeyNotification, object: seam.window(for: id)))
     }
 }

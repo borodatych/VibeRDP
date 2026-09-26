@@ -202,7 +202,8 @@ final class ConnectionViewController: NSViewController {
             SeamWindows(
                 geometry: geometry, makeDesktop: makeDesktop,
                 onDisconnect: { [weak controller] in controller?.disconnect() },
-                onMove: { [weak controller] id, rect in controller?.sendSeam(.move(rect), window: id) })
+                onMove: { [weak controller] id, rect in controller?.sendSeam(.move(rect), window: id) },
+                onActivate: { [weak controller] id in controller?.sendSeam(.activate, window: id) })
         }
         model.isBusy = true
         model.activeProfile = attempt.profileID
