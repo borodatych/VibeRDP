@@ -70,8 +70,8 @@
 - [x] **3.5 Проброс папки Мака (drive redirection), опционально в профиле** — ✅ (2026-09-26, `next`, 0.1.15) канал `drive` поверх rdpdr; у подключения «Папка Мака» — выбор папки, в Windows диск с её именем, по умолчанию выключено — [решение 46](decisions.md); тест `testSharedFolderLoads`; **файлы в Проводнике проверяет оператор** — [liveChecks.md](manuals/liveChecks.md), раздел 21
 
 ## Этап 4 — Протокол Seam и хелпер
-- [ ] 4.1 `protocol/seam-protocol.md`: фрейминг, сообщения, версии, capability-флаги
-- [ ] 4.2 Хелпер: открытие DVC, `HELLO`, ping/pong, переподключение, single-instance
+- [x] **4.1 `protocol/seam-protocol.md`: фрейминг, сообщения, версии, capability-флаги** — ✅ (2026-09-26, `next`) версия 1: кадр u32 LE + карта MessagePack, предел тела 1 МиБ, приветствие с пересечением возможностей, окна, команды, ping/pong — [seam-protocol.md](../protocol/seam-protocol.md)
+- [x] **4.2 Хелпер: открытие DVC, `HELLO`, ping/pong, переподключение, single-instance** — ✅ (2026-09-26, `next`) канал `VibeSeam` через файловый дескриптор `WTSVirtualChannelQuery` с перекрытым вводом-выводом, заголовок `CHANNEL_PDU_HEADER` снимается; разговор — чистый `session.rs` с тестами (hello, версия, pong, `unsupported` на команды до 4.5); повторное открытие с ожиданием 1→30 с, мьютекс `Local\VibeSeamHelper`, журнал `%LOCALAPPDATA%\VibeRDP\seam-helper.log`; clippy под Windows чист, **exe собирает CI, живой запуск — у владельца**
 - [ ] 4.3 Хелпер: перечисление и трекинг окон, фильтрация, extended frame bounds — см. [windowTracking.md](knowledge/windows/windowTracking.md)
 - [ ] 4.4 Хелпер: иконки, заголовки, z-order, foreground
 - [ ] 4.5 Хелпер: исполнение команд (activate/move/resize/min/max/restore/close)

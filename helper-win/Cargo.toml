@@ -5,3 +5,14 @@ edition = "2024"
 license = "Apache-2.0"
 publish = false
 description = "Windows side of the VibeRDP Seam mode"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_RemoteDesktop",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+] }
