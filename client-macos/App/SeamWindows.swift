@@ -12,6 +12,8 @@ final class SeamWindows: NSObject, NSWindowDelegate {
     private let onMove: (UInt64, CGRect) -> Void
     /// The user brought a window forward on the Mac: the host brings it forward too, and the keyboard goes there
     private let onActivate: (UInt64) -> Void
+    /// The user minimized a window on the Mac, with Cmd-M or the Window menu: the host minimizes it
+    private let onMinimize: (UInt64) -> Void
     /// The window with the focus on the host, as the helper last said
     private var foreground: UInt64 = 0
     /// Set while this class places a window: its own moves must not go back to the host
@@ -25,13 +27,15 @@ final class SeamWindows: NSObject, NSWindowDelegate {
     init(
         geometry: SeamGeometry, makeDesktop: @escaping () -> DesktopView, onDisconnect: @escaping () -> Void,
         onMove: @escaping (UInt64, CGRect) -> Void = { _, _ in },
-        onActivate: @escaping (UInt64) -> Void = { _ in }
+        onActivate: @escaping (UInt64) -> Void = { _ in },
+        onMinimize: @escaping (UInt64) -> Void = { _ in }
     ) {
         self.geometry = geometry
         self.makeDesktop = makeDesktop
         self.onDisconnect = onDisconnect
         self.onMove = onMove
         self.onActivate = onActivate
+        self.onMinimize = onMinimize
     }
 
     /// The link is ready: every window of the host comes up in its order
@@ -144,6 +148,7 @@ final class SeamWindows: NSObject, NSWindowDelegate {
             contentRect: NSRect(x: 0, y: 0, width: 1, height: 1), styleMask: [.borderless], backing: .buffered,
             defer: false)
         window.remoteID = id
+        window.onMinimize = { [weak self] in self?.onMinimize(id) }
         window.isReleasedWhenClosed = false
         window.hasShadow = true
         window.contentView = desktop
@@ -216,7 +221,25 @@ final class SeamWindow: NSWindow {
     var remoteID: UInt64?
     /// False for a menu, a tooltip or another popup of the host: it shows but never takes the keyboard
     var takesKeyboard = true
+    /// Minimizing is the host's: the window goes away on the Mac once the host reports it minimized
+    var onMinimize: (() -> Void)?
 
     override var canBecomeKey: Bool { takesKeyboard }
+
+    /// A frameless window has no miniaturize button, so AppKit would refuse Cmd-M: the host minimizes instead
+    override func performMiniaturize(_ sender: Any?) {
+        if let onMinimize {
+            onMinimize()
+        } else {
+            super.performMiniaturize(sender)
+        }
+    }
+
+    override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        if item.action == #selector(performMiniaturize(_:)) {
+            return onMinimize != nil && takesKeyboard
+        }
+        return super.validateUserInterfaceItem(item)
+    }
     override var canBecomeMain: Bool { true }
 }

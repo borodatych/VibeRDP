@@ -11,6 +11,7 @@ final class SeamWindowsTests: XCTestCase {
     private var remote = RemoteWindows()
     private var moves: [(UInt64, CGRect)] = []
     private var activated: [UInt64] = []
+    private var minimized: [UInt64] = []
 
     override func setUp() async throws {
         guard let renderer = FrameRenderer() else { throw XCTSkip("no Metal device") }
@@ -19,10 +20,12 @@ final class SeamWindowsTests: XCTestCase {
             geometry: SeamGeometry(layout: layout, screens: [screen]),
             makeDesktop: { DesktopView(renderer: renderer) }, onDisconnect: {},
             onMove: { [weak self] id, rect in self?.moves.append((id, rect)) },
-            onActivate: { [weak self] id in self?.activated.append(id) })
+            onActivate: { [weak self] id in self?.activated.append(id) },
+            onMinimize: { [weak self] id in self?.minimized.append(id) })
         remote = RemoteWindows()
         moves = []
         activated = []
+        minimized = []
     }
 
     override func tearDown() async throws {
@@ -128,5 +131,19 @@ final class SeamWindowsTests: XCTestCase {
         XCTAssertTrue(activated.isEmpty, "a popup does not bring itself forward on the host")
         send(.map([("type", .string("window.destroy")), ("id", .uint(9))]))
         XCTAssertEqual(owner?.childWindows?.isEmpty ?? true, true)
+    }
+
+    /// Cmd-M on a window of the host asks the host to minimize it; the window stays until the host reports it
+    func testMinimizeGoesToTheHost() {
+        seam.activate(remote)
+        send(create(1, 0, 0))
+        let window = seam.window(for: 1)
+        let item = NSMenuItem(title: "", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "")
+        XCTAssertEqual(window?.validateUserInterfaceItem(item), true, "Cmd-M is available on a frameless window")
+        window?.performMiniaturize(nil)
+        XCTAssertEqual(minimized, [1])
+        XCTAssertEqual(window?.isMiniaturized, false, "the Mac does not minimize it by itself")
+        send(.map([("type", .string("window.update")), ("id", .uint(1)), ("state", .string("minimized"))]))
+        XCTAssertNil(seam.window(for: 1))
     }
 }

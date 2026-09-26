@@ -211,7 +211,7 @@ final class ConnectionViewController: NSViewController {
         sessionWindow = window
         if window.seamGeometry != nil {
             dockProxies = DockProxies(
-                onActivate: { [weak self] ids in self?.seamWindows?.bringForward(ids) },
+                onActivate: { [weak self] ids in self?.programChosen(ids) },
                 onQuit: { [weak controller] ids in ids.forEach { controller?.sendSeam(.close, window: $0) } })
         }
         seamWindows = window.seamGeometry.map { geometry in
@@ -219,7 +219,8 @@ final class ConnectionViewController: NSViewController {
                 geometry: geometry, makeDesktop: makeDesktop,
                 onDisconnect: { [weak controller] in controller?.disconnect() },
                 onMove: { [weak controller] id, rect in controller?.sendSeam(.move(rect), window: id) },
-                onActivate: { [weak controller] id in controller?.sendSeam(.activate, window: id) })
+                onActivate: { [weak controller] id in controller?.sendSeam(.activate, window: id) },
+                onMinimize: { [weak controller] id in controller?.sendSeam(.minimize, window: id) })
         }
         model.isBusy = true
         model.activeProfile = attempt.profileID
@@ -301,6 +302,15 @@ final class ConnectionViewController: NSViewController {
                 }
             }
         }
+    }
+
+    /// A program chosen in the Dock or in Cmd-Tab: its minimized windows come back on the host,
+    /// the others come forward on the Mac at once
+    private func programChosen(_ ids: [UInt64]) {
+        for id in ids where remoteWindows.windows[id]?.state == .minimized {
+            session?.sendSeam(.restore, window: id)
+        }
+        seamWindows?.bringForward(ids)
     }
 
     /// Anything but a ready link has no windows: a new link sends them all again after its hello
