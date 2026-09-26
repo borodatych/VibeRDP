@@ -69,8 +69,11 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
         let visible = self.screen?.visibleFrame
         switch mode {
         case .window:
-            if !(frameName.map { window.setFrameUsingName($0) } ?? false), let visible {
-                window.setFrame(Self.centered(window.frame.size, in: visible), display: false)
+            // A frame whose screen is gone gives way to the screen of the connections
+            if let frameName {
+                WindowPlacement.restore(window, name: frameName, fallback: self.screen)
+            } else if let visible {
+                window.setFrame(WindowPlacement.centered(window.frame.size, in: visible), display: false)
             }
         case .maximized:
             if let visible {
@@ -79,13 +82,13 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
         case .fullScreen:
             // Full screen takes the screen the window is on
             if let visible {
-                window.setFrame(Self.centered(window.frame.size, in: visible), display: false)
+                window.setFrame(WindowPlacement.centered(window.frame.size, in: visible), display: false)
             }
         case .fixed:
             let content = visible.map { window.contentRect(forFrameRect: $0).size }
             window.setContentSize(Self.contentSize(for: fixedSize, within: content))
             if let visible {
-                window.setFrame(Self.centered(window.frame.size, in: visible), display: false)
+                window.setFrame(WindowPlacement.centered(window.frame.size, in: visible), display: false)
             }
         }
         super.init(window: window)
@@ -127,14 +130,6 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
         case .fullScreen: CGSize(width: fullScreen.width.rounded(), height: fullScreen.height.rounded())
         case .fixed: fixed.clamped.cgSize
         }
-    }
-
-    /// A frame of this size in the middle of an area, kept inside it
-    static func centered(_ size: CGSize, in area: CGRect) -> CGRect {
-        let width = min(size.width, area.width)
-        let height = min(size.height, area.height)
-        return CGRect(
-            x: (area.midX - width / 2).rounded(), y: (area.midY - height / 2).rounded(), width: width, height: height)
     }
 
     /// What a window in full screen shows of a screen: all of it but the strip of a camera housing at the top

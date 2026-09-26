@@ -185,14 +185,6 @@ final class SessionWindowTests: XCTestCase {
             DesktopRequest(size: CGSize(width: 1504, height: 971), scale: 100))
     }
 
-    /// A frame goes to the middle of an area and stays inside it
-    func testCenteredFrame() {
-        let area = CGRect(x: -1920, y: 100, width: 1920, height: 1100)
-        XCTAssertEqual(
-            SessionWindowController.centered(CGSize(width: 1000, height: 600), in: area),
-            CGRect(x: -1460, y: 350, width: 1000, height: 600))
-        XCTAssertEqual(SessionWindowController.centered(CGSize(width: 3000, height: 2000), in: area), area)
-    }
 
     /// By the window, the next session opens as large as the last window was: the frame is kept under its name
     func testWindowKeepsItsFrame() throws {
