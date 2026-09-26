@@ -44,7 +44,7 @@ final class SessionController {
     /// False when the core refuses the parameters or cannot start
     func connect(
         to address: ServerAddress, username: String, password: String, gateway: GatewayParameters? = nil,
-        desktop: DesktopRequest, audio: VRCAudioMode = .off
+        desktop: DesktopRequest, audio: VRCAudioMode = .off, sharedFolder: String = ""
     ) -> Bool {
         guard handle == nil else { return false }
         let (stream, continuation) = AsyncStream.makeStream(of: CoreEvent.self)
@@ -69,6 +69,7 @@ final class SessionController {
         params.height = UInt32(desktop.size.height)
         params.scale = desktop.scale
         params.audio = audio
+        params.sharedFolder = sharedFolder.isEmpty ? nil : strings.copy(sharedFolder)
         params.username = strings.copy(username)
         params.password = strings.copy(password)
         if let gateway {

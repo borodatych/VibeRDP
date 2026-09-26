@@ -66,7 +66,7 @@
 - [x] **3.4 Звук (rdpsnd)** — ✅ (2026-09-26, `next`, 0.1.12) каналы rdpsnd и rdpdr в сборке, вывод через подсистему `mac` FreeRDP (AudioQueue, PCM); у подключения «Звук Windows» — на Маке, на удалённом, не воспроизводить; импорт `audiomode`; журнал пишет подключённые каналы — [решение 45](decisions.md), [clientLifecycle.md](knowledge/freerdp/clientLifecycle.md); тесты: живое подключение со звуком `testSoundChannelsLoad`, неверный режим в ядре, `testAudioMode`; **звук на настоящем Windows проверяет оператор** — [liveChecks.md](manuals/liveChecks.md), раздел 20
   - [ ] Микрофон: канал audin и разрешение macOS на микрофон, выбор у подключения
   - [ ] Вернуть функции RDP8 из решения 9 — автоопределение сети и heartbeat — теперь, когда rdpdr и rdpsnd в сборке
-- [ ] 3.5 Проброс папки Мака (drive redirection), опционально в профиле
+- [x] **3.5 Проброс папки Мака (drive redirection), опционально в профиле** — ✅ (2026-09-26, `next`, 0.1.15) канал `drive` поверх rdpdr; у подключения «Папка Мака» — выбор папки, в Windows диск с её именем, по умолчанию выключено — [решение 46](decisions.md); тест `testSharedFolderLoads`; **файлы в Проводнике проверяет оператор** — [liveChecks.md](manuals/liveChecks.md), раздел 21
 
 ## Этап 4 — Протокол Seam и хелпер
 - [ ] 4.1 `protocol/seam-protocol.md`: фрейминг, сообщения, версии, capability-флаги

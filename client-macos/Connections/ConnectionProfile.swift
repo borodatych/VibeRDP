@@ -31,6 +31,8 @@ struct ConnectionProfile: Codable, Equatable, Identifiable, Sendable {
     var sharpOnRetina: Bool
     /// Where the sound of the remote computer plays
     var audio: ProfileAudio
+    /// A folder of the Mac Windows sees as a drive; empty shares none
+    var sharedFolder: String
     /// Shown under Favourites in the sidebar
     var isFavorite: Bool
     /// When a session of the profile last got in, for sorting; nil before the first one
@@ -41,7 +43,8 @@ struct ConnectionProfile: Codable, Equatable, Identifiable, Sendable {
         remembersPassword: Bool = true, keyboard: ProfileKeyboard = .settings, gatewayAddress: String = "",
         gatewayUsesServerCredentials: Bool = true, gatewayUsername: String = "", gatewayBypassLocal: Bool = false,
         displayMode: ProfileDisplayMode = .window, fixedSize: DesktopSize = .standard, sharpOnRetina: Bool = true,
-        audio: ProfileAudio = .local, isFavorite: Bool = false, lastConnected: Date? = nil
+        audio: ProfileAudio = .local, sharedFolder: String = "", isFavorite: Bool = false,
+        lastConnected: Date? = nil
     ) {
         self.id = id
         self.name = name
@@ -57,6 +60,7 @@ struct ConnectionProfile: Codable, Equatable, Identifiable, Sendable {
         self.fixedSize = fixedSize
         self.sharpOnRetina = sharpOnRetina
         self.audio = audio
+        self.sharedFolder = sharedFolder
         self.isFavorite = isFavorite
         self.lastConnected = lastConnected
     }
@@ -85,6 +89,7 @@ struct ConnectionProfile: Codable, Equatable, Identifiable, Sendable {
         fixedSize = try container.decodeIfPresent(DesktopSize.self, forKey: .fixedSize) ?? defaults.fixedSize
         sharpOnRetina = try container.decodeIfPresent(Bool.self, forKey: .sharpOnRetina) ?? defaults.sharpOnRetina
         audio = try container.decodeIfPresent(ProfileAudio.self, forKey: .audio) ?? defaults.audio
+        sharedFolder = try container.decodeIfPresent(String.self, forKey: .sharedFolder) ?? defaults.sharedFolder
         isFavorite = try container.decodeIfPresent(Bool.self, forKey: .isFavorite) ?? defaults.isFavorite
         lastConnected = try container.decodeIfPresent(Date.self, forKey: .lastConnected)
     }

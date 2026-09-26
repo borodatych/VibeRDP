@@ -953,6 +953,23 @@ static BOOL applyAudio(rdpSettings* settings, VRCAudioMode audio)
            freerdp_settings_set_bool(settings, FreeRDP_RemoteConsoleAudio, audio == VRCAudioModeRemote);
 }
 
+/* A shared folder is a drive of the device channel: Windows lists it under This PC by its name */
+static BOOL applySharedFolder(rdpSettings* settings, const VRCConnectionParams* params)
+{
+    if (!params->sharedFolder || params->sharedFolder[0] == '\0')
+        return TRUE;
+    const char* name = params->sharedFolderName && params->sharedFolderName[0] != '\0' ? params->sharedFolderName
+                                                                                     : NULL;
+    if (!name)
+    {
+        const char* slash = strrchr(params->sharedFolder, '/');
+        name = slash && slash[1] != '\0' ? slash + 1 : params->sharedFolder;
+    }
+    const char* const device[] = { "drive", name, params->sharedFolder };
+    return freerdp_settings_set_bool(settings, FreeRDP_DeviceRedirection, TRUE) &&
+           freerdp_client_add_device_channel(settings, ARRAYSIZE(device), device);
+}
+
 static BOOL applyParams(rdpSettings* settings, const VRCConnectionParams* params)
 {
     return freerdp_settings_set_string(settings, FreeRDP_ServerHostname, params->host) &&
@@ -961,7 +978,8 @@ static BOOL applyParams(rdpSettings* settings, const VRCConnectionParams* params
            (params->height == 0 || freerdp_settings_set_uint32(settings, FreeRDP_DesktopHeight, params->height)) &&
            freerdp_settings_set_uint32(settings, FreeRDP_DesktopScaleFactor, vrcDisplayDesktopScale(params->scale)) &&
            freerdp_settings_set_uint32(settings, FreeRDP_DeviceScaleFactor, vrcDisplayDeviceScale(params->scale)) &&
-           applyAudio(settings, params->audio) && applyCredentials(settings, params) && applyGateway(settings, params);
+           applyAudio(settings, params->audio) && applySharedFolder(settings, params) &&
+           applyCredentials(settings, params) && applyGateway(settings, params);
 }
 
 /*

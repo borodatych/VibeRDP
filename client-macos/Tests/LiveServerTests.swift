@@ -47,6 +47,19 @@ final class LiveServerTests: XCTestCase {
         await endsCleanly(session)
     }
 
+    /// A shared folder loads the drive of the device channel: the session connects, draws and ends cleanly
+    func testSharedFolderLoads() async throws {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "VibeRDP-shared-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let session = try start(
+            socketIn: "VIBERDP_TEST_SERVER_SOCKET", sharedFolder: folder.path(percentEncoded: false))
+        let drawn = await session.wait("the first frame", timeout: Self.timeout) { session.frames > 0 }
+        XCTAssertTrue(drawn)
+        XCTAssertEqual(session.failures, [])
+        await endsCleanly(session)
+    }
+
     func testRecordedDesktopArrivesInItsColors() async throws {
         guard let renderer = FrameRenderer() else {
             throw XCTSkip("no GPU that runs Metal Performance Shaders on this machine")
@@ -296,7 +309,9 @@ final class LiveServerTests: XCTestCase {
     }
 
     /// Connects to the server whose socket the environment names, accepting its certificate
-    private func start(socketIn variable: String, audio: VRCAudioMode = .off) throws -> LiveSession {
+    private func start(
+        socketIn variable: String, audio: VRCAudioMode = .off, sharedFolder: String = ""
+    ) throws -> LiveSession {
         guard let socket = ProcessInfo.processInfo.environment[variable] else {
             throw XCTSkip("no test server: build it with core/scripts/build-test-server.sh, build-client.sh starts it")
         }
@@ -305,7 +320,9 @@ final class LiveServerTests: XCTestCase {
         let session = LiveSession(trusted: trusted)
         let address = try XCTUnwrap(ServerAddress(socket))
         XCTAssertTrue(
-            session.controller.connect(to: address, username: "", password: "", desktop: Self.desktop, audio: audio))
+            session.controller.connect(
+                to: address, username: "", password: "", desktop: Self.desktop, audio: audio,
+                sharedFolder: sharedFolder))
         return session
     }
 

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// The main window, as Windows App lays it out: the sections on the left, the connections as tiles or rows,
@@ -573,6 +574,27 @@ private struct ProfileEditor: View {
                 }
             }
             displaySection
+            Section {
+                let folder = model.selectedProfile?.sharedFolder ?? ""
+                Text(folder.isEmpty ? Localization.text(.profileFolderNone) : folder)
+                    .foregroundStyle(folder.isEmpty ? .secondary : .primary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                HStack {
+                    Button(Localization.text(.profileFolderChoose)) {
+                        chooseFolder()
+                    }
+                    if !folder.isEmpty {
+                        Button(Localization.text(.profileFolderStop)) {
+                            model.update { $0.sharedFolder = "" }
+                        }
+                    }
+                }
+            } header: {
+                Text(Localization.text(.profileFolderSection))
+            } footer: {
+                Text(Localization.text(.profileFolderHint))
+            }
             Section(Localization.text(.profileAudioSection)) {
                 Picker(
                     Localization.text(.profileAudioLabel),
@@ -651,6 +673,17 @@ private struct ProfileEditor: View {
 
     private static func label(of size: DesktopSize) -> String {
         "\(size.width) × \(size.height)"
+    }
+
+    /// The folder comes from the open panel of the Mac: a path typed by hand is where mistakes hide
+    private func chooseFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        if panel.runModal() == .OK, let url = panel.url {
+            model.update { $0.sharedFolder = url.path(percentEncoded: false) }
+        }
     }
 
     private static func title(of audio: ProfileAudio) -> TextKey {
