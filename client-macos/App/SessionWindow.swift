@@ -5,7 +5,9 @@ import AppKit
 /// The window of the connections keeps its size and place: the session opens beside it and goes with the session
 ///
 /// The display mode of the connection sets the rest:
-/// By the window, the desktop follows the window; in full screen, the window opens in full screen and follows it too;
+/// By the window, the window opens as the last one was and the desktop follows it;
+/// zoomed, the window opens over all the free space of the screen, as a double click on its title makes it;
+/// in full screen, the window opens in full screen; both follow the window after that;
 /// a fixed desktop keeps its size, the window opens as large as the screen lets, and the frame scales into it
 @MainActor
 final class SessionWindowController: NSWindowController, NSWindowDelegate {
@@ -29,7 +31,8 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
     private var resizeTimer: Timer?
 
     /// frameName nil keeps no frame: the tests must not move the window of the app itself
-    /// A fixed desktop keeps no frame either: its window is as large as the desktop, not as the last window was
+    /// Only the window mode and full screen keep a frame: the zoomed and the fixed windows have a size of their own,
+    /// and keeping it would replace the size the window mode comes back with
     init(
         desktop: DesktopView, title: String, mode: ProfileDisplayMode, fixedSize: DesktopSize, frameName: String?,
         onDisconnect: @escaping () -> Void, onResize: @escaping (CGSize) -> Void
@@ -53,21 +56,32 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
         desktop.autoresizingMask = [.width, .height]
         content.addSubview(desktop)
         window.contentView = content
-        if mode == .fixed {
+        let keepsFrame = mode == .window || mode == .fullScreen
+        // The kept frame also names the screen of the last session: a zoomed window opens on that screen
+        let restored = frameName.map { window.setFrameUsingName($0) } ?? false
+        switch mode {
+        case .fixed:
             let screen = window.screen ?? NSScreen.main
             let visible = screen.map { window.contentRect(forFrameRect: $0.visibleFrame).size }
             window.setContentSize(Self.contentSize(for: fixedSize, within: visible))
             window.center()
-        } else if let frameName {
-            if !window.setFrameUsingName(frameName) {
+        case .maximized:
+            if let screen = window.screen ?? NSScreen.main {
+                window.setFrame(screen.visibleFrame, display: false)
+            }
+        case .window, .fullScreen:
+            if !restored {
                 window.center()
             }
-            window.setFrameAutosaveName(frameName)
-        } else {
-            window.center()
         }
         super.init(window: window)
         window.delegate = self
+        // The frame is kept through the controller: a name set on the window alone the controller does not keep,
+        // and a controller that cascades moves a new window off the place its frame names
+        shouldCascadeWindows = false
+        if let frameName, keepsFrame {
+            windowFrameAutosaveName = frameName
+        }
         if mode != .fixed {
             desktop.onResize = { [weak self] size in self?.desktopResized(to: size) }
         }
@@ -86,13 +100,13 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
             fullScreen: screen.map(Self.fullScreenSize(of:)) ?? Self.defaultSize)
     }
 
-    /// The desktop of a mode: the content of the window, the screen in full screen, or the fixed size
+    /// The desktop of a mode: the content of the window, zoomed or not, the screen in full screen, or the fixed size
     /// Sizes are in points of the Mac; the pixels of the display are task 3.2
     static func desktopSize(
         mode: ProfileDisplayMode, fixed: DesktopSize, content: CGSize, fullScreen: CGSize
     ) -> CGSize {
         switch mode {
-        case .window: CGSize(width: content.width.rounded(), height: content.height.rounded())
+        case .window, .maximized: CGSize(width: content.width.rounded(), height: content.height.rounded())
         case .fullScreen: CGSize(width: fullScreen.width.rounded(), height: fullScreen.height.rounded())
         case .fixed: fixed.clamped.cgSize
         }

@@ -238,6 +238,7 @@ private struct ProfileEditor: View {
     private static func title(of mode: ProfileDisplayMode) -> TextKey {
         switch mode {
         case .window: .profileDisplayWindow
+        case .maximized: .profileDisplayMaximized
         case .fullScreen: .profileDisplayFullScreen
         case .fixed: .profileDisplayFixed
         }
@@ -246,6 +247,7 @@ private struct ProfileEditor: View {
     private static func hint(of mode: ProfileDisplayMode) -> String {
         switch mode {
         case .window: Localization.text(.profileDisplayWindowHint)
+        case .maximized: Localization.text(.profileDisplayMaximizedHint)
         case .fullScreen: Localization.text(.profileDisplayFullScreenHint)
         case .fixed:
             Localization.text(

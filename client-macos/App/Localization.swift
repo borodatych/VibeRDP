@@ -97,6 +97,7 @@ enum TextKey: String, CaseIterable {
     case profileDisplaySection = "profile.display.section"
     case profileDisplayMode = "profile.display.mode"
     case profileDisplayWindow = "profile.display.window"
+    case profileDisplayMaximized = "profile.display.maximized"
     case profileDisplayFullScreen = "profile.display.fullScreen"
     case profileDisplayFixed = "profile.display.fixed"
     case profileDisplaySize = "profile.display.size"
@@ -104,6 +105,7 @@ enum TextKey: String, CaseIterable {
     case profileDisplayWidth = "profile.display.width"
     case profileDisplayHeight = "profile.display.height"
     case profileDisplayWindowHint = "profile.display.windowHint"
+    case profileDisplayMaximizedHint = "profile.display.maximizedHint"
     case profileDisplayFullScreenHint = "profile.display.fullScreenHint"
     case profileDisplayFixedHint = "profile.display.fixedHint"
     case credentialsTitleServer = "credentials.title.server"
@@ -257,6 +259,7 @@ extension TextKey {
         case .profileDisplaySection: "Экран"
         case .profileDisplayMode: "Рабочий стол"
         case .profileDisplayWindow: "По окну"
+        case .profileDisplayMaximized: "Развёрнутое окно"
         case .profileDisplayFullScreen: "Во весь экран"
         case .profileDisplayFixed: "Фиксированный размер"
         case .profileDisplaySize: "Разрешение"
@@ -264,7 +267,9 @@ extension TextKey {
         case .profileDisplayWidth: "Ширина"
         case .profileDisplayHeight: "Высота"
         case .profileDisplayWindowHint:
-            "Рабочий стол Windows подстраивается под окно сессии, когда его растягивают, разворачивают или открывают во весь экран."
+            "Окно сессии открывается таким, каким было в прошлый раз. Рабочий стол Windows подстраивается под окно, когда его растягивают, разворачивают или открывают во весь экран."
+        case .profileDisplayMaximizedHint:
+            "Сессия открывается окном на всё свободное место экрана, как после двойного щелчка по заголовку. Дальше рабочий стол подстраивается под окно."
         case .profileDisplayFullScreenHint:
             "Сессия открывается во весь экран. Если выйти из полноэкранного режима, рабочий стол подстраивается под окно."
         case .profileDisplayFixedHint:

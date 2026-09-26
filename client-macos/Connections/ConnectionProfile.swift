@@ -89,8 +89,11 @@ struct ConnectionProfile: Codable, Equatable, Identifiable, Sendable {
 
 /// How large the remote desktop is, and how the session window shows it
 enum ProfileDisplayMode: String, Codable, CaseIterable, Identifiable, Sendable {
-    /// The desktop follows the session window as it changes
+    /// The desktop follows the session window as it changes; the window opens as the last one was
     case window
+    /// The window opens over all the free space of the screen, as a double click on its title makes it,
+    /// and the desktop follows it after that
+    case maximized
     /// The session opens in full screen; out of it, the desktop follows the window as in the window mode
     case fullScreen
     /// The desktop keeps its size, and the window scales it with bars at the sides

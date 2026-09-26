@@ -105,6 +105,41 @@ final class SessionWindowTests: XCTestCase {
         XCTAssertEqual(sizes, [], "a fixed desktop does not follow the window")
     }
 
+    /// A zoomed window covers the free space of its screen, as a double click on its title makes it,
+    /// and asks for a desktop of its content; a change of it after that goes to the server, as by the window
+    func testZoomedWindowCoversTheScreen() async throws {
+        controller.end()
+        controller = make(.maximized)
+        let window = try XCTUnwrap(controller.window)
+        let screen = try XCTUnwrap(window.screen ?? NSScreen.main)
+        XCTAssertEqual(window.frame, screen.visibleFrame)
+        let content = window.contentRect(forFrameRect: screen.visibleFrame).size
+        XCTAssertEqual(controller.desktopSize, CGSize(width: content.width.rounded(), height: content.height.rounded()))
+        controller.show()
+        window.setContentSize(NSSize(width: 1100, height: 700))
+        try await Task.sleep(for: .seconds(SessionWindowController.resizeDelay * 3))
+        XCTAssertEqual(sizes, [CGSize(width: 1100, height: 700)])
+    }
+
+    /// By the window, the next session opens as large as the last window was: the frame is kept under its name
+    func testWindowKeepsItsFrame() throws {
+        controller.end()
+        let name = "SessionWindowTests-\(UUID().uuidString)"
+        defer { UserDefaults.standard.removeObject(forKey: "NSWindow Frame \(name)") }
+        let first = SessionWindowController(
+            desktop: DesktopView(renderer: renderer), title: "Test", mode: .window, fixedSize: .standard,
+            frameName: name, onDisconnect: {}, onResize: { _ in })
+        first.show()
+        first.window?.setContentSize(NSSize(width: 1100, height: 700))
+        first.end()
+        XCTAssertNotNil(UserDefaults.standard.string(forKey: "NSWindow Frame \(name)"), "the frame was not kept")
+
+        controller = SessionWindowController(
+            desktop: DesktopView(renderer: renderer), title: "Test", mode: .window, fixedSize: .standard,
+            frameName: name, onDisconnect: {}, onResize: { _ in })
+        XCTAssertEqual(controller.desktopSize, CGSize(width: 1100, height: 700))
+    }
+
     /// Full screen asks for the screen from the start, so the desktop needs no change once the window is there
     func testFullScreenAsksForTheScreen() throws {
         controller.end()
@@ -123,6 +158,9 @@ final class SessionWindowTests: XCTestCase {
         let fixed = DesktopSize(width: 1920, height: 1080)
         XCTAssertEqual(
             SessionWindowController.desktopSize(mode: .window, fixed: fixed, content: content, fullScreen: screen),
+            CGSize(width: 1024, height: 640))
+        XCTAssertEqual(
+            SessionWindowController.desktopSize(mode: .maximized, fixed: fixed, content: content, fullScreen: screen),
             CGSize(width: 1024, height: 640))
         XCTAssertEqual(
             SessionWindowController.desktopSize(mode: .fullScreen, fixed: fixed, content: content, fullScreen: screen),
