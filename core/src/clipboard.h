@@ -43,6 +43,14 @@ typedef struct VRCClipboard {
     uint32_t offered;
     /* The offers of the Mac so far, numbered in the log */
     uint64_t offers;
+    /*
+     * A list the server turned down goes again after a pause: how many went again since the server last took one,
+     * and when the next is due by the monotonic clock in milliseconds, 0 for none
+     */
+    uint32_t listRetries;
+    uint64_t listRetryAt;
+    /* Set when a list is due again, so the session thread wakes and waits no longer than until then */
+    HANDLE listRetryWake;
     /* The format id of the server for each format it offers, 0 for none */
     uint32_t remoteFormatIds[VRC_CLIPBOARD_FORMAT_SLOTS];
     /* The entry of the table of Windows formats each of those ids stands for */
@@ -92,6 +100,16 @@ void vrcClipboardDestroy(VRCClipboard* clipboard);
 /* The channel came up or went down; going down ends a copy that waits, as a failure */
 void vrcClipboardAttach(VRCClipboard* clipboard, CliprdrClientContext* channel);
 void vrcClipboardDetach(VRCClipboard* clipboard, CliprdrClientContext* channel);
+
+/*
+ * The session thread waits no longer than this, in milliseconds, before a list the server turned down is due again;
+ * INFINITE while none waits; now is the monotonic clock in milliseconds
+ */
+DWORD vrcClipboardRetryWait(VRCClipboard* clipboard, uint64_t now);
+/* The event that wakes the session thread when a list becomes due again */
+HANDLE vrcClipboardRetryWake(VRCClipboard* clipboard);
+/* Sends a list the server turned down again once it is due; the session thread calls it after every wait */
+void vrcClipboardRetryDue(VRCClipboard* clipboard, uint64_t now);
 
 /* See VRCSessionOfferClipboard, VRCSessionProvideClipboardData and VRCSessionCopyRemoteClipboard */
 VRCResult vrcClipboardOffer(VRCClipboard* clipboard, const VRCClipboardFormat* formats, size_t count);

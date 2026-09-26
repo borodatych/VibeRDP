@@ -18,6 +18,13 @@
 #define APP_TAG_PREFIX "com.vibebrains.viberdp."
 #define TAG_SIZE 96
 
+/*
+ * Parts of the engine the log keeps in full, at DEBUG, whatever the level of the rest
+ * The clipboard channel: what Windows does with the lists of the Mac shows only in its messages,
+ * and a Windows machine is not at hand to repeat a case
+ */
+static const char* const tracedTags[] = { "com.freerdp.channels.cliprdr.client" };
+
 /* Set once a file receives the log: before that, lines of the app go nowhere */
 static pthread_mutex_t logMutex = PTHREAD_MUTEX_INITIALIZER;
 static bool logging;
@@ -59,6 +66,8 @@ VRCResult VRCLogToFile(const char* path, VRCLogLevel level)
                         WLog_ConfigureAppender(appender, "outputfilepath", dirname(folder)) &&
                         WLog_ConfigureAppender(appender, "outputfilename", basename(name)) &&
                         WLog_OpenAppender(root) && WLog_SetLogLevel(root, wlog);
+    for (size_t i = 0; opened && i < sizeof(tracedTags) / sizeof(tracedTags[0]); i++)
+        (void)WLog_SetLogLevel(WLog_Get(tracedTags[i]), WLOG_DEBUG);
     logging = opened;
     pthread_mutex_unlock(&logMutex);
     return opened ? VRCResultOK : VRCResultFailure;

@@ -33,6 +33,7 @@
 #include <freerdp/scancode.h>
 #include <winpr/string.h>
 #include <winpr/synch.h>
+#include <winpr/sysinfo.h>
 #include <winpr/thread.h>
 
 /* The public header keeps its own copies, since no FreeRDP type crosses it */
@@ -528,18 +529,26 @@ static bool serveConnection(VRCSession* session)
 
     while (!freerdp_shall_disconnect_context(context))
     {
-        /* The last slot is the input queue: queued input wakes the thread as the network does */
-        DWORD count = freerdp_get_event_handles(context, handles, ARRAYSIZE(handles) - 1);
+        /*
+         * The last slots are the input queue and the clipboard: queued input and a list of the Mac due again wake
+         * the thread as the network does, and the wait ends no later than that list is due
+         */
+        DWORD count = freerdp_get_event_handles(context, handles, ARRAYSIZE(handles) - 2);
         if (count > 0)
+        {
             handles[count++] = session->inputReady;
+            handles[count++] = vrcClipboardRetryWake(&session->clipboard);
+        }
+        const DWORD timeout = vrcClipboardRetryWait(&session->clipboard, GetTickCount64());
 
-        if (count == 0 || WaitForMultipleObjects(count, handles, FALSE, INFINITE) == WAIT_FAILED ||
+        if (count == 0 || WaitForMultipleObjects(count, handles, FALSE, timeout) == WAIT_FAILED ||
             !freerdp_check_event_handles(context))
         {
             freerdp_set_last_error_if_not(context, FREERDP_ERROR_CONNECT_TRANSPORT_FAILED);
             return !atomic_load(&session->ending) && !freerdp_shall_disconnect_context(context);
         }
         sendPendingInput(session);
+        vrcClipboardRetryDue(&session->clipboard, GetTickCount64());
     }
     return false;
 }

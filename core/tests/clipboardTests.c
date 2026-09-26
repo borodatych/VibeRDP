@@ -14,6 +14,7 @@
 #include <unistd.h>
 
 #include <freerdp/channels/cliprdr.h>
+#include <winpr/sysinfo.h>
 #include <winpr/user.h>
 
 #include "clipboard.h"
@@ -232,6 +233,14 @@ static bool offerText(void)
     };
     CHECK(serverOffers(formats, 3) == CHANNEL_RC_OK);
     return true;
+}
+
+static UINT serverRespondsToList(bool took)
+{
+    const CLIPRDR_FORMAT_LIST_RESPONSE response = {
+        .common = { .msgType = CB_FORMAT_LIST_RESPONSE, .msgFlags = took ? CB_RESPONSE_OK : CB_RESPONSE_FAIL },
+    };
+    return channel.context.ServerFormatListResponse(&channel.context, &response);
 }
 
 /* An offer made before Monitor Ready waits, and goes out as the first list after the capabilities */
@@ -946,6 +955,54 @@ static bool testDetachEndsCopy(void)
     return true;
 }
 
+/*
+ * A list the server turned down goes again after growing pauses, three times, and then waits for the next copy;
+ * a list the server took and a new copy end the repeats
+ */
+static bool testTurnedDownListGoesAgain(void)
+{
+    VRCClipboard clipboard;
+    CHECK(setUp(&clipboard));
+    const VRCClipboardFormat text = VRCClipboardFormatText;
+    CHECK(vrcClipboardOffer(&clipboard, &text, 1) == VRCResultOK);
+    CHECK(serverMonitorReady() == CHANNEL_RC_OK);
+    CHECK(channel.formatLists == 1);
+    CHECK(vrcClipboardRetryWait(&clipboard, GetTickCount64()) == INFINITE);
+
+    static const uint32_t pauses[] = { 500, 2000, 5000 };
+    for (size_t i = 0; i < sizeof(pauses) / sizeof(pauses[0]); i++)
+    {
+        const uint64_t before = GetTickCount64();
+        CHECK(serverRespondsToList(false) == CHANNEL_RC_OK);
+        CHECK(WaitForSingleObject(vrcClipboardRetryWake(&clipboard), 0) == WAIT_OBJECT_0);
+        const DWORD wait = vrcClipboardRetryWait(&clipboard, before);
+        CHECK(wait != INFINITE && wait >= pauses[i] && wait <= pauses[i] + 1000);
+        /* Not yet due: nothing goes, and the wake is taken */
+        vrcClipboardRetryDue(&clipboard, before);
+        CHECK(channel.formatLists == (int)(1 + i));
+        CHECK(WaitForSingleObject(vrcClipboardRetryWake(&clipboard), 0) == WAIT_TIMEOUT);
+        vrcClipboardRetryDue(&clipboard, before + pauses[i] + 1000);
+        CHECK(channel.formatLists == (int)(2 + i));
+        CHECK(channel.lastFormatIds[0] == CF_UNICODETEXT);
+        CHECK(vrcClipboardRetryWait(&clipboard, GetTickCount64()) == INFINITE);
+    }
+    CHECK(serverRespondsToList(false) == CHANNEL_RC_OK);
+    CHECK(vrcClipboardRetryWait(&clipboard, GetTickCount64()) == INFINITE);
+
+    /* A new copy starts the repeats afresh; a list the server took ends them */
+    CHECK(vrcClipboardOffer(&clipboard, &text, 1) == VRCResultOK);
+    CHECK(serverRespondsToList(false) == CHANNEL_RC_OK);
+    CHECK(vrcClipboardRetryWait(&clipboard, GetTickCount64()) != INFINITE);
+    CHECK(vrcClipboardOffer(&clipboard, &text, 1) == VRCResultOK);
+    CHECK(vrcClipboardRetryWait(&clipboard, GetTickCount64()) == INFINITE);
+    CHECK(serverRespondsToList(false) == CHANNEL_RC_OK);
+    CHECK(serverRespondsToList(true) == CHANNEL_RC_OK);
+    CHECK(vrcClipboardRetryWait(&clipboard, GetTickCount64()) == INFINITE);
+
+    vrcClipboardDestroy(&clipboard);
+    return true;
+}
+
 typedef struct TestCase {
     const char* name;
     bool (*run)(void);
@@ -967,6 +1024,7 @@ static const TestCase tests[] = {
     { "serverReadsMacFiles", testServerReadsMacFiles },
     { "copyFilesFromServer", testCopyFilesFromServer },
     { "cancelFileCopy", testCancelFileCopy },
+    { "turnedDownListGoesAgain", testTurnedDownListGoesAgain },
 };
 
 int main(int argc, char* argv[])

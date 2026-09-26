@@ -20,6 +20,7 @@
 #include <unistd.h>
 
 #include <freerdp/channels/cliprdr.h>
+#include <winpr/sysinfo.h>
 #include <winpr/user.h>
 #include <winpr/wlog.h>
 
@@ -27,6 +28,14 @@
 #define TAG "com.vibebrains.viberdp.clipboard"
 /* Room for the names of all formats of the app in one line of the log */
 #define FORMAT_NAMES_SIZE 64
+
+/*
+ * The pauses before a list the server turned down goes again, in milliseconds
+ * A list turned down leaves the clipboard of the server with its old copy, and a paste there brings that copy;
+ * the pauses grow, so a clipboard the server holds for a while is waited out too
+ */
+static const uint32_t listRetryDelaysMs[] = { 500, 2000, 5000 };
+#define LIST_RETRY_COUNT (sizeof(listRetryDelaysMs) / sizeof(listRetryDelaysMs[0]))
 
 /*
  * The ids this client gives the registered formats in its own lists: the server asks for data by them
@@ -327,15 +336,71 @@ static UINT onServerCapabilities(CliprdrClientContext* channel, const CLIPRDR_CA
     return CHANNEL_RC_OK;
 }
 
-/* The server took a list of the Mac or turned it down: a list it turned down leaves its clipboard as it was */
+/*
+ * The server took a list of the Mac or turned it down
+ * A list turned down leaves the clipboard of the server as it was: the list goes again after a pause, a few times
+ */
 static UINT onServerFormatListResponse(CliprdrClientContext* channel, const CLIPRDR_FORMAT_LIST_RESPONSE* response)
 {
-    (void)channel;
+    VRCClipboard* clipboard = channel->custom;
+
+    pthread_mutex_lock(&clipboard->mutex);
     if (response->common.msgFlags & CB_RESPONSE_OK)
-        WLog_INFO(TAG, "the server took the list of the Mac");
+    {
+        WLog_INFO(TAG, "the server took the list of the Mac, after %" PRIu32 " repeats", clipboard->listRetries);
+        clipboard->listRetries = 0;
+        clipboard->listRetryAt = 0;
+    }
+    else if (clipboard->listRetries < LIST_RETRY_COUNT)
+    {
+        const uint32_t delay = listRetryDelaysMs[clipboard->listRetries];
+        clipboard->listRetries++;
+        clipboard->listRetryAt = GetTickCount64() + delay;
+        WLog_WARN(TAG, "the server turned down the list of the Mac: flags 0x%04" PRIX16 ", it goes again in %" PRIu32
+                       " ms, repeat %" PRIu32 " of %zu",
+                  response->common.msgFlags, delay, clipboard->listRetries, LIST_RETRY_COUNT);
+        (void)SetEvent(clipboard->listRetryWake);
+    }
     else
-        WLog_WARN(TAG, "the server turned down the list of the Mac: flags 0x%04" PRIX16, response->common.msgFlags);
+    {
+        WLog_WARN(TAG, "the server turned down the list of the Mac again: flags 0x%04" PRIX16
+                       ", no more repeats until the next copy",
+                  response->common.msgFlags);
+        clipboard->listRetryAt = 0;
+    }
+    pthread_mutex_unlock(&clipboard->mutex);
     return CHANNEL_RC_OK;
+}
+
+DWORD vrcClipboardRetryWait(VRCClipboard* clipboard, uint64_t now)
+{
+    pthread_mutex_lock(&clipboard->mutex);
+    const uint64_t due = clipboard->listRetryAt;
+    pthread_mutex_unlock(&clipboard->mutex);
+    if (due == 0)
+        return INFINITE;
+    return due > now ? (DWORD)(due - now) : 0;
+}
+
+HANDLE vrcClipboardRetryWake(VRCClipboard* clipboard)
+{
+    return clipboard->listRetryWake;
+}
+
+void vrcClipboardRetryDue(VRCClipboard* clipboard, uint64_t now)
+{
+    pthread_mutex_lock(&clipboard->mutex);
+    (void)ResetEvent(clipboard->listRetryWake);
+    if (clipboard->listRetryAt != 0 && now >= clipboard->listRetryAt && clipboard->channel && clipboard->ready)
+    {
+        clipboard->listRetryAt = 0;
+        const UINT result = sendFormatList(clipboard->channel, clipboard->offered);
+        char names[FORMAT_NAMES_SIZE];
+        WLog_INFO(TAG, "the list of the Mac goes again: offer %" PRIu64 " of %s, repeat %" PRIu32 ", %s",
+                  clipboard->offers, formatNames(clipboard->offered, names), clipboard->listRetries,
+                  result == CHANNEL_RC_OK ? "sent" : "the list failed");
+    }
+    pthread_mutex_unlock(&clipboard->mutex);
 }
 
 /* The clipboard of the server changed: the list is acknowledged, and the app learns what it may paste */
@@ -528,7 +593,8 @@ bool vrcClipboardInit(VRCClipboard* clipboard, const VRCCallbacks* callbacks, vo
     clipboard->userData = userData;
     clipboard->copyAnswered = CreateEventA(NULL, TRUE, FALSE, NULL);
     clipboard->rangeAnswered = CreateEventA(NULL, TRUE, FALSE, NULL);
-    return clipboard->copyAnswered != NULL && clipboard->rangeAnswered != NULL;
+    clipboard->listRetryWake = CreateEventA(NULL, TRUE, FALSE, NULL);
+    return clipboard->copyAnswered != NULL && clipboard->rangeAnswered != NULL && clipboard->listRetryWake != NULL;
 }
 
 void vrcClipboardDestroy(VRCClipboard* clipboard)
@@ -537,6 +603,8 @@ void vrcClipboardDestroy(VRCClipboard* clipboard)
         (void)CloseHandle(clipboard->copyAnswered);
     if (clipboard->rangeAnswered)
         (void)CloseHandle(clipboard->rangeAnswered);
+    if (clipboard->listRetryWake)
+        (void)CloseHandle(clipboard->listRetryWake);
     free(clipboard->copyData);
     free(clipboard->rangeData);
     free(clipboard->remoteDescriptor);
@@ -561,6 +629,8 @@ void vrcClipboardAttach(VRCClipboard* clipboard, CliprdrClientContext* channel)
     clipboard->ready = false;
     clipboard->serverAsks = NO_ENTRY;
     clipboard->lateAnswers = 0;
+    clipboard->listRetries = 0;
+    clipboard->listRetryAt = 0;
     memset(clipboard->remoteFormatIds, 0, sizeof(clipboard->remoteFormatIds));
     pthread_mutex_unlock(&clipboard->mutex);
 }
@@ -599,6 +669,9 @@ VRCResult vrcClipboardOffer(VRCClipboard* clipboard, const VRCClipboardFormat* f
     pthread_mutex_lock(&clipboard->mutex);
     clipboard->offered = offered;
     clipboard->offers++;
+    /* A new copy replaces the list that waits to go again */
+    clipboard->listRetries = 0;
+    clipboard->listRetryAt = 0;
     /* Before Monitor Ready the offer waits: it goes out as the first list of the channel */
     const bool waits = !clipboard->channel || !clipboard->ready;
     const bool sent = waits || sendFormatList(clipboard->channel, offered) == CHANNEL_RC_OK;

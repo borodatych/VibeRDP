@@ -128,7 +128,7 @@ target_compile_options(clipboardTests PRIVATE -Wall -Wextra -Werror)
 foreach(test IN ITEMS offerWaitsForMonitorReady serverPastesText serverAsksForWhatIsNotOffered serverOffersFormats
                       offerRegisteredFormats copyRegisteredFormats copyFromServer lateAnswerIsDropped copyFailures
                       detachEndsCopy offerImage imageFromServer serverReadsMacFiles copyFilesFromServer
-                      cancelFileCopy)
+                      cancelFileCopy turnedDownListGoesAgain)
   add_test(NAME ${test} COMMAND clipboardTests ${test})
   set_tests_properties(${test} PROPERTIES TIMEOUT 60 ENVIRONMENT "${VRC_TEST_ENVIRONMENT}")
 endforeach()
