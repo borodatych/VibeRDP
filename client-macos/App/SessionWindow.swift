@@ -9,6 +9,7 @@ import AppKit
 /// zoomed, the window opens over all the free space of the screen, as a double click on its title makes it;
 /// in full screen, the window opens in full screen; both follow the window after that;
 /// a fixed desktop keeps its size, the window opens as large as the screen lets, and the frame scales into it
+/// Every mode but the window one opens on the screen of the connections, where the user started the session
 @MainActor
 final class SessionWindowController: NSWindowController, NSWindowDelegate {
     /// The name the window keeps its frame under, so the next session opens where and as large as the last one
@@ -25,21 +26,25 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
     let desktop: DesktopView
     private let mode: ProfileDisplayMode
     private let fixedSize: DesktopSize
+    /// The screen the session opens on, as the connections window stood when it started
+    private let screen: NSScreen?
     private let onDisconnect: () -> Void
     private let onResize: (CGSize) -> Void
     private var reconnecting: ReconnectingOverlay?
     private var resizeTimer: Timer?
 
+    /// screen is the screen of the connections; nil takes the main one
     /// frameName nil keeps no frame: the tests must not move the window of the app itself
-    /// Only the window mode and full screen keep a frame: the zoomed and the fixed windows have a size of their own,
-    /// and keeping it would replace the size the window mode comes back with
+    /// Only the window mode keeps a frame: the other modes have a size and a screen of their own,
+    /// and keeping theirs would replace what the window mode comes back with
     init(
-        desktop: DesktopView, title: String, mode: ProfileDisplayMode, fixedSize: DesktopSize, frameName: String?,
-        onDisconnect: @escaping () -> Void, onResize: @escaping (CGSize) -> Void
+        desktop: DesktopView, title: String, mode: ProfileDisplayMode, fixedSize: DesktopSize, screen: NSScreen?,
+        frameName: String?, onDisconnect: @escaping () -> Void, onResize: @escaping (CGSize) -> Void
     ) {
         self.desktop = desktop
         self.mode = mode
         self.fixedSize = fixedSize
+        self.screen = screen ?? NSScreen.main
         self.onDisconnect = onDisconnect
         self.onResize = onResize
         let window = NSWindow(
@@ -56,22 +61,27 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
         desktop.autoresizingMask = [.width, .height]
         content.addSubview(desktop)
         window.contentView = content
-        let keepsFrame = mode == .window || mode == .fullScreen
-        // The kept frame also names the screen of the last session: a zoomed window opens on that screen
-        let restored = frameName.map { window.setFrameUsingName($0) } ?? false
+        let keepsFrame = mode == .window
+        let visible = self.screen?.visibleFrame
         switch mode {
-        case .fixed:
-            let screen = window.screen ?? NSScreen.main
-            let visible = screen.map { window.contentRect(forFrameRect: $0.visibleFrame).size }
-            window.setContentSize(Self.contentSize(for: fixedSize, within: visible))
-            window.center()
-        case .maximized:
-            if let screen = window.screen ?? NSScreen.main {
-                window.setFrame(screen.visibleFrame, display: false)
+        case .window:
+            if !(frameName.map { window.setFrameUsingName($0) } ?? false), let visible {
+                window.setFrame(Self.centered(window.frame.size, in: visible), display: false)
             }
-        case .window, .fullScreen:
-            if !restored {
-                window.center()
+        case .maximized:
+            if let visible {
+                window.setFrame(visible, display: false)
+            }
+        case .fullScreen:
+            // Full screen takes the screen the window is on
+            if let visible {
+                window.setFrame(Self.centered(window.frame.size, in: visible), display: false)
+            }
+        case .fixed:
+            let content = visible.map { window.contentRect(forFrameRect: $0).size }
+            window.setContentSize(Self.contentSize(for: fixedSize, within: content))
+            if let visible {
+                window.setFrame(Self.centered(window.frame.size, in: visible), display: false)
             }
         }
         super.init(window: window)
@@ -94,8 +104,7 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
 
     /// The desktop the session asks for when it connects, so it needs no change once the window shows
     var desktopSize: CGSize {
-        let screen = window?.screen ?? NSScreen.main
-        return Self.desktopSize(
+        Self.desktopSize(
             mode: mode, fixed: fixedSize, content: window?.contentLayoutRect.size ?? Self.defaultSize,
             fullScreen: screen.map(Self.fullScreenSize(of:)) ?? Self.defaultSize)
     }
@@ -110,6 +119,14 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
         case .fullScreen: CGSize(width: fullScreen.width.rounded(), height: fullScreen.height.rounded())
         case .fixed: fixed.clamped.cgSize
         }
+    }
+
+    /// A frame of this size in the middle of an area, kept inside it
+    static func centered(_ size: CGSize, in area: CGRect) -> CGRect {
+        let width = min(size.width, area.width)
+        let height = min(size.height, area.height)
+        return CGRect(
+            x: (area.midX - width / 2).rounded(), y: (area.midY - height / 2).rounded(), width: width, height: height)
     }
 
     /// What a window in full screen shows of a screen: all of it but the strip of a camera housing at the top

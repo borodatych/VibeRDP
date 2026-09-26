@@ -23,9 +23,12 @@ final class SessionWindowTests: XCTestCase {
         controller = make(.window)
     }
 
-    private func make(_ mode: ProfileDisplayMode, fixed: DesktopSize = .standard) -> SessionWindowController {
+    private func make(
+        _ mode: ProfileDisplayMode, fixed: DesktopSize = .standard, screen: NSScreen? = nil
+    ) -> SessionWindowController {
         SessionWindowController(
-            desktop: DesktopView(renderer: renderer), title: "Test", mode: mode, fixedSize: fixed, frameName: nil,
+            desktop: DesktopView(renderer: renderer), title: "Test", mode: mode, fixedSize: fixed, screen: screen,
+            frameName: nil,
             onDisconnect: { [weak self] in self?.disconnects += 1 },
             onResize: { [weak self] size in self?.sizes.append(size) })
     }
@@ -121,6 +124,35 @@ final class SessionWindowTests: XCTestCase {
         XCTAssertEqual(sizes, [CGSize(width: 1100, height: 700)])
     }
 
+    /// Every mode but the window one opens on the screen it is given, the screen of the connections
+    func testSessionOpensOnTheScreenOfTheConnections() throws {
+        controller.end()
+        for screen in NSScreen.screens {
+            let zoomed = make(.maximized, screen: screen)
+            XCTAssertEqual(zoomed.window?.frame, screen.visibleFrame)
+            zoomed.end()
+            let fullScreen = make(.fullScreen, screen: screen)
+            let expected = SessionWindowController.fullScreenSize(of: screen)
+            XCTAssertEqual(
+                fullScreen.desktopSize, CGSize(width: expected.width.rounded(), height: expected.height.rounded()))
+            XCTAssertTrue(fullScreen.window.map { screen.visibleFrame.contains($0.frame) } ?? false)
+            fullScreen.end()
+            let fixed = make(.fixed, fixed: DesktopSize(width: 1280, height: 720), screen: screen)
+            XCTAssertTrue(fixed.window.map { screen.visibleFrame.contains($0.frame) } ?? false)
+            fixed.end()
+        }
+        controller = make(.window)
+    }
+
+    /// A frame goes to the middle of an area and stays inside it
+    func testCenteredFrame() {
+        let area = CGRect(x: -1920, y: 100, width: 1920, height: 1100)
+        XCTAssertEqual(
+            SessionWindowController.centered(CGSize(width: 1000, height: 600), in: area),
+            CGRect(x: -1460, y: 350, width: 1000, height: 600))
+        XCTAssertEqual(SessionWindowController.centered(CGSize(width: 3000, height: 2000), in: area), area)
+    }
+
     /// By the window, the next session opens as large as the last window was: the frame is kept under its name
     func testWindowKeepsItsFrame() throws {
         controller.end()
@@ -128,7 +160,7 @@ final class SessionWindowTests: XCTestCase {
         defer { UserDefaults.standard.removeObject(forKey: "NSWindow Frame \(name)") }
         let first = SessionWindowController(
             desktop: DesktopView(renderer: renderer), title: "Test", mode: .window, fixedSize: .standard,
-            frameName: name, onDisconnect: {}, onResize: { _ in })
+            screen: nil, frameName: name, onDisconnect: {}, onResize: { _ in })
         first.show()
         first.window?.setContentSize(NSSize(width: 1100, height: 700))
         first.end()
@@ -136,7 +168,7 @@ final class SessionWindowTests: XCTestCase {
 
         controller = SessionWindowController(
             desktop: DesktopView(renderer: renderer), title: "Test", mode: .window, fixedSize: .standard,
-            frameName: name, onDisconnect: {}, onResize: { _ in })
+            screen: nil, frameName: name, onDisconnect: {}, onResize: { _ in })
         XCTAssertEqual(controller.desktopSize, CGSize(width: 1100, height: 700))
     }
 
