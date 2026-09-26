@@ -18,7 +18,7 @@ import XCTest
 final class LiveServerTests: XCTestCase {
     private static let frameCount = 20
     private static let timeout: TimeInterval = 20
-    private static let desktop = CGSize(width: 1024, height: 768)
+    private static let desktop = DesktopRequest(size: CGSize(width: 1024, height: 768))
     /// The size the interactive server switches to on G, as server/Sample/sfreerdp.c has it
     private static let resizedDesktop = CGSize(width: 800, height: 600)
     /// The recording goes from the Welcome screen through the desktop to the logoff screen
@@ -51,8 +51,8 @@ final class LiveServerTests: XCTestCase {
         XCTAssertEqual(session.credentialsQuestions, 1)
         XCTAssertTrue(session.resized)
         let surface = try XCTUnwrap(session.controller.frameSurface())
-        XCTAssertEqual(IOSurfaceGetWidth(surface), Int(Self.desktop.width))
-        XCTAssertEqual(IOSurfaceGetHeight(surface), Int(Self.desktop.height))
+        XCTAssertEqual(IOSurfaceGetWidth(surface), Int(Self.desktop.size.width))
+        XCTAssertEqual(IOSurfaceGetHeight(surface), Int(Self.desktop.size.height))
         let pixel = try renderedProbe(of: surface, renderer: renderer)
         XCTAssertGreaterThan(Int(pixel.blue), Int(pixel.red) + 40, "\(pixel)")
         XCTAssertGreaterThan(Int(pixel.green), Int(pixel.red), "\(pixel)")
@@ -98,7 +98,7 @@ final class LiveServerTests: XCTestCase {
         let input: DesktopInput = session.controller
         let g = try XCTUnwrap(KeyCodeMap.scanCode(of: UInt16(kVK_ANSI_G), iso: false))
         input.keyboardFocused(capsLock: false)
-        for size in [Self.resizedDesktop, Self.desktop] {
+        for size in [Self.resizedDesktop, Self.desktop.size] {
             input.key(g, pressed: true, repeat: false)
             input.key(g, pressed: false, repeat: false)
             let resized = await session.wait("a desktop of \(size)", timeout: Self.timeout) {

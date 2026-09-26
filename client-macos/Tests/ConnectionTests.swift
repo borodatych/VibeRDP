@@ -44,7 +44,7 @@ final class ConnectionTests: XCTestCase {
         }
 
         let address = try XCTUnwrap(ServerAddress("viberdp-test.invalid"))
-        let desktop = CGSize(width: 1024, height: 768)
+        let desktop = DesktopRequest(size: CGSize(width: 1024, height: 768))
         XCTAssertTrue(controller.connect(to: address, username: "", password: "", desktop: desktop))
         await fulfillment(of: [ended], timeout: 10)
 

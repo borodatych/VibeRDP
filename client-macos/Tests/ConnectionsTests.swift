@@ -70,6 +70,7 @@ final class ProfileStoreTests: XCTestCase {
         XCTAssertTrue(profile.hasValidGateway)
         XCTAssertEqual(profile.displayMode, .window, "a profile saved before the modes follows the window, as then")
         XCTAssertEqual(profile.fixedSize, .standard)
+        XCTAssertTrue(profile.sharpOnRetina, "a profile saved before is sharp on Retina, as new ones are")
     }
 
     /// The display mode and the fixed size are saved with the profile

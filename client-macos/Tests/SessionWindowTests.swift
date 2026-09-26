@@ -11,6 +11,7 @@ final class SessionWindowTests: XCTestCase {
     private var controller: SessionWindowController!
     private var disconnects = 0
     private var sizes: [CGSize] = []
+    private var scales: [UInt32] = []
     private var renderer: FrameRenderer!
 
     override func setUp() async throws {
@@ -23,14 +24,18 @@ final class SessionWindowTests: XCTestCase {
         controller = make(.window)
     }
 
+    /// Sharp off by default: the sizes of these tests are the points of the window on any display
     private func make(
-        _ mode: ProfileDisplayMode, fixed: DesktopSize = .standard, screen: NSScreen? = nil
+        _ mode: ProfileDisplayMode, fixed: DesktopSize = .standard, sharp: Bool = false, screen: NSScreen? = nil
     ) -> SessionWindowController {
         SessionWindowController(
-            desktop: DesktopView(renderer: renderer), title: "Test", mode: mode, fixedSize: fixed, screen: screen,
-            frameName: nil,
+            desktop: DesktopView(renderer: renderer), title: "Test", mode: mode, fixedSize: fixed, sharp: sharp,
+            screen: screen, frameName: nil,
             onDisconnect: { [weak self] in self?.disconnects += 1 },
-            onResize: { [weak self] size in self?.sizes.append(size) })
+            onResize: { [weak self] desktop in
+                self?.sizes.append(desktop.size)
+                self?.scales.append(desktop.scale)
+            })
     }
 
     override func tearDown() async throws {
@@ -41,7 +46,7 @@ final class SessionWindowTests: XCTestCase {
     func testDesktopSizeIsTheContentOfTheWindow() throws {
         let window = try XCTUnwrap(controller.window)
         XCTAssertFalse(window.isVisible, "the window waits for the user to be in")
-        XCTAssertEqual(controller.desktopSize, SessionWindowController.defaultSize)
+        XCTAssertEqual(controller.desktopRequest.size, SessionWindowController.defaultSize)
     }
 
     /// Once shown, the keyboard is on the desktop and Disconnect stands in the title bar, once however often it shows
@@ -99,7 +104,7 @@ final class SessionWindowTests: XCTestCase {
         let size = DesktopSize(width: 1280, height: 800)
         controller = make(.fixed, fixed: size)
         let window = try XCTUnwrap(controller.window)
-        XCTAssertEqual(controller.desktopSize, CGSize(width: 1280, height: 800))
+        XCTAssertEqual(controller.desktopRequest.size, CGSize(width: 1280, height: 800))
         let visible = (window.screen ?? NSScreen.main).map { window.contentRect(forFrameRect: $0.visibleFrame).size }
         XCTAssertEqual(window.contentLayoutRect.size, SessionWindowController.contentSize(for: size, within: visible))
         controller.show()
@@ -117,7 +122,8 @@ final class SessionWindowTests: XCTestCase {
         let screen = try XCTUnwrap(window.screen ?? NSScreen.main)
         XCTAssertEqual(window.frame, screen.visibleFrame)
         let content = window.contentRect(forFrameRect: screen.visibleFrame).size
-        XCTAssertEqual(controller.desktopSize, CGSize(width: content.width.rounded(), height: content.height.rounded()))
+        XCTAssertEqual(
+            controller.desktopRequest.size, CGSize(width: content.width.rounded(), height: content.height.rounded()))
         controller.show()
         window.setContentSize(NSSize(width: 1100, height: 700))
         try await Task.sleep(for: .seconds(SessionWindowController.resizeDelay * 3))
@@ -134,7 +140,8 @@ final class SessionWindowTests: XCTestCase {
             let fullScreen = make(.fullScreen, screen: screen)
             let expected = SessionWindowController.fullScreenSize(of: screen)
             XCTAssertEqual(
-                fullScreen.desktopSize, CGSize(width: expected.width.rounded(), height: expected.height.rounded()))
+                fullScreen.desktopRequest.size,
+                CGSize(width: expected.width.rounded(), height: expected.height.rounded()))
             XCTAssertTrue(fullScreen.window.map { screen.visibleFrame.contains($0.frame) } ?? false)
             fullScreen.end()
             let fixed = make(.fixed, fixed: DesktopSize(width: 1280, height: 720), screen: screen)
@@ -142,6 +149,40 @@ final class SessionWindowTests: XCTestCase {
             fixed.end()
         }
         controller = make(.window)
+    }
+
+    /// Sharp, a window on a Retina display asks for the pixels of its content and the scale of the display;
+    /// fixed stays in pixels of Windows at 100 percent
+    func testSharpDesktopTakesThePixelsOfItsDisplay() throws {
+        controller.end()
+        for screen in NSScreen.screens {
+            let zoomed = make(.maximized, sharp: true, screen: screen)
+            let window = try XCTUnwrap(zoomed.window)
+            let content = window.contentRect(forFrameRect: screen.visibleFrame).size
+            XCTAssertEqual(
+                zoomed.desktopRequest,
+                DesktopRequest.points(content, backing: screen.backingScaleFactor, sharp: true))
+            XCTAssertEqual(zoomed.desktopRequest.scale, UInt32((screen.backingScaleFactor * 100).rounded()))
+            zoomed.end()
+            let fixed = make(.fixed, fixed: DesktopSize(width: 1280, height: 720), sharp: true, screen: screen)
+            XCTAssertEqual(fixed.desktopRequest, DesktopRequest(size: CGSize(width: 1280, height: 720), scale: 100))
+            fixed.end()
+        }
+        controller = make(.window)
+    }
+
+    /// Points become pixels of a Retina display with its scale; without Retina or sharpness they stay points
+    func testDesktopRequestOfPoints() {
+        let points = CGSize(width: 1503.6, height: 971.2)
+        XCTAssertEqual(
+            DesktopRequest.points(points, backing: 2, sharp: true),
+            DesktopRequest(size: CGSize(width: 3007, height: 1942), scale: 200))
+        XCTAssertEqual(
+            DesktopRequest.points(points, backing: 2, sharp: false),
+            DesktopRequest(size: CGSize(width: 1504, height: 971), scale: 100))
+        XCTAssertEqual(
+            DesktopRequest.points(points, backing: 1, sharp: true),
+            DesktopRequest(size: CGSize(width: 1504, height: 971), scale: 100))
     }
 
     /// A frame goes to the middle of an area and stays inside it
@@ -160,7 +201,7 @@ final class SessionWindowTests: XCTestCase {
         defer { UserDefaults.standard.removeObject(forKey: "NSWindow Frame \(name)") }
         let first = SessionWindowController(
             desktop: DesktopView(renderer: renderer), title: "Test", mode: .window, fixedSize: .standard,
-            screen: nil, frameName: name, onDisconnect: {}, onResize: { _ in })
+            sharp: false, screen: nil, frameName: name, onDisconnect: {}, onResize: { _ in })
         first.show()
         first.window?.setContentSize(NSSize(width: 1100, height: 700))
         first.end()
@@ -168,8 +209,8 @@ final class SessionWindowTests: XCTestCase {
 
         controller = SessionWindowController(
             desktop: DesktopView(renderer: renderer), title: "Test", mode: .window, fixedSize: .standard,
-            screen: nil, frameName: name, onDisconnect: {}, onResize: { _ in })
-        XCTAssertEqual(controller.desktopSize, CGSize(width: 1100, height: 700))
+            sharp: false, screen: nil, frameName: name, onDisconnect: {}, onResize: { _ in })
+        XCTAssertEqual(controller.desktopRequest.size, CGSize(width: 1100, height: 700))
     }
 
     /// Full screen asks for the screen from the start, so the desktop needs no change once the window is there
@@ -180,7 +221,7 @@ final class SessionWindowTests: XCTestCase {
         let screen = try XCTUnwrap(window.screen ?? NSScreen.main)
         let expected = SessionWindowController.fullScreenSize(of: screen)
         XCTAssertEqual(
-            controller.desktopSize, CGSize(width: expected.width.rounded(), height: expected.height.rounded()))
+            controller.desktopRequest.size, CGSize(width: expected.width.rounded(), height: expected.height.rounded()))
     }
 
     /// The desktop of each mode, and the window of a fixed desktop on a smaller screen

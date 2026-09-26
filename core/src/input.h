@@ -33,7 +33,7 @@ typedef enum VRCInputKind {
     VRCInputKindReleaseKeys,
     /* The server sends the whole desktop again */
     VRCInputKindRefresh,
-    /* The desktop follows the window: x and y carry the width and the height */
+    /* The desktop follows the window: x and y carry the width and the height, scale its scale in percent */
     VRCInputKindResize,
 } VRCInputKind;
 
@@ -49,6 +49,7 @@ typedef struct VRCInputEvent {
     bool repeat;
     bool capsLock;
     bool numLock;
+    uint32_t scale;
 } VRCInputEvent;
 
 /* The keys the server holds down, as the session thread sent them */

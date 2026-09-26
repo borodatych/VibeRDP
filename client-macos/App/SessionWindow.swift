@@ -10,6 +10,7 @@ import AppKit
 /// in full screen, the window opens in full screen; both follow the window after that;
 /// a fixed desktop keeps its size, the window opens as large as the screen lets, and the frame scales into it
 /// Every mode but the window one opens on the screen of the connections, where the user started the session
+/// On a Retina display a sharp desktop takes its pixels, and a move to a display of another density asks again
 @MainActor
 final class SessionWindowController: NSWindowController, NSWindowDelegate {
     /// The name the window keeps its frame under, so the next session opens where and as large as the last one
@@ -26,10 +27,11 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
     let desktop: DesktopView
     private let mode: ProfileDisplayMode
     private let fixedSize: DesktopSize
+    private let sharp: Bool
     /// The screen the session opens on, as the connections window stood when it started
     private let screen: NSScreen?
     private let onDisconnect: () -> Void
-    private let onResize: (CGSize) -> Void
+    private let onResize: (DesktopRequest) -> Void
     private var reconnecting: ReconnectingOverlay?
     private var resizeTimer: Timer?
 
@@ -38,12 +40,14 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
     /// Only the window mode keeps a frame: the other modes have a size and a screen of their own,
     /// and keeping theirs would replace what the window mode comes back with
     init(
-        desktop: DesktopView, title: String, mode: ProfileDisplayMode, fixedSize: DesktopSize, screen: NSScreen?,
-        frameName: String?, onDisconnect: @escaping () -> Void, onResize: @escaping (CGSize) -> Void
+        desktop: DesktopView, title: String, mode: ProfileDisplayMode, fixedSize: DesktopSize, sharp: Bool,
+        screen: NSScreen?, frameName: String?, onDisconnect: @escaping () -> Void,
+        onResize: @escaping (DesktopRequest) -> Void
     ) {
         self.desktop = desktop
         self.mode = mode
         self.fixedSize = fixedSize
+        self.sharp = sharp
         self.screen = screen ?? NSScreen.main
         self.onDisconnect = onDisconnect
         self.onResize = onResize
@@ -103,10 +107,14 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
     }
 
     /// The desktop the session asks for when it connects, so it needs no change once the window shows
-    var desktopSize: CGSize {
-        Self.desktopSize(
+    var desktopRequest: DesktopRequest {
+        let points = Self.desktopSize(
             mode: mode, fixed: fixedSize, content: window?.contentLayoutRect.size ?? Self.defaultSize,
             fullScreen: screen.map(Self.fullScreenSize(of:)) ?? Self.defaultSize)
+        // A fixed desktop is in pixels of Windows already, and the window stretches it as any other frame
+        guard mode != .fixed else { return DesktopRequest(size: points) }
+        let backing = (mode == .fullScreen ? screen : window?.screen ?? screen)?.backingScaleFactor ?? 1
+        return DesktopRequest.points(points, backing: backing, sharp: sharp)
     }
 
     /// The desktop of a mode: the content of the window, zoomed or not, the screen in full screen, or the fixed size
@@ -188,6 +196,13 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
         onDisconnect()
     }
 
+    /// A move to a display of another density asks for the desktop at its pixels
+    func windowDidChangeBackingProperties(_ notification: Notification) {
+        if mode != .fixed {
+            desktopResized(to: desktop.bounds.size)
+        }
+    }
+
     /// The close button ends the session at once: Windows keeps the session, and the next connection returns to it
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         onDisconnect()
@@ -200,9 +215,10 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
         resizeTimer = Timer.scheduledTimer(withTimeInterval: Self.resizeDelay, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self, self.window?.isVisible == true else { return }
-                let rounded = CGSize(width: size.width.rounded(), height: size.height.rounded())
-                Diagnostics.info("frame", "asking for a desktop of \(rounded)")
-                self.onResize(rounded)
+                let request = DesktopRequest.points(
+                    size, backing: self.window?.backingScaleFactor ?? 1, sharp: self.sharp)
+                Diagnostics.info("frame", "asking for a desktop of \(request.size) at \(request.scale)% for \(size)")
+                self.onResize(request)
             }
         }
     }

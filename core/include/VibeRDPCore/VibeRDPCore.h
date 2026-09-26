@@ -256,6 +256,7 @@ typedef struct VRCConnectionParams {
     uint16_t port;        /* 0 keeps the default RDP port */
     uint32_t width;       /* Desktop size in pixels the client asks for; 0 keeps the engine default, 1024 */
     uint32_t height;      /* 0 keeps the engine default, 768 */
+    uint32_t scale;       /* Scale of the desktop in percent, 200 on a Retina display at its pixels; 0 keeps 100 */
     const char* username; /* Optional; without a domain, DOMAIN\user is split and user@domain is kept whole */
     const char* domain;   /* Optional */
     const char* password; /* Optional; the engine settings keep it until VRCSessionDestroy */
@@ -406,13 +407,14 @@ VRCResult VRCSessionCopyRemoteFiles(VRCSession* session, const char* directory, 
 VRCResult VRCSessionRefresh(VRCSession* session);
 
 /*
- * Asks the server for a desktop of this size, in pixels, as the window changes: the server redraws the desktop
- * at the new size and frameResized follows, as after any other change of size
- * The width goes even and both stay within 200 and 8192, the limits of the protocol; a server without the Display
- * Control channel keeps its size, and the app goes on scaling the frame into the window
- * Requests go in order with the input, so a burst of them ends with the last size; InvalidState before Connected
+ * Asks the server for a desktop of this size, in pixels, and scale, in percent, as the window changes: the server
+ * redraws the desktop at the new size and frameResized follows, as after any other change of size
+ * The width goes even and both stay within 200 and 8192, the limits of the protocol; the scale stays within 100 and
+ * 500, 0 is 100; a server without the Display Control channel keeps its size, and the app goes on scaling the frame
+ * into the window
+ * Requests go in order with the input, so a burst of them ends with the last one; InvalidState before Connected
  */
-VRCResult VRCSessionResizeDesktop(VRCSession* session, uint32_t width, uint32_t height);
+VRCResult VRCSessionResizeDesktop(VRCSession* session, uint32_t width, uint32_t height, uint32_t scale);
 
 /*
  * Diagnostics log: the lines of the engine and of the app in one file, for someone to read when something goes wrong

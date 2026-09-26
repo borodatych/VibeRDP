@@ -181,9 +181,9 @@ final class ConnectionViewController: NSViewController {
         desktop.keyboard = ProfileKeyboardSettings(store: keyboard, keyboard: profile.keyboard)
         let window = SessionWindowController(
             desktop: desktop, title: profile.title, mode: profile.displayMode, fixedSize: profile.fixedSize,
-            screen: view.window?.screen, frameName: sessionFrameName,
+            sharp: profile.sharpOnRetina, screen: view.window?.screen, frameName: sessionFrameName,
             onDisconnect: { [weak controller] in controller?.disconnect() },
-            onResize: { [weak controller] size in controller?.resizeDesktop(to: size) })
+            onResize: { [weak controller] desktop in controller?.resizeDesktop(to: desktop) })
         sessionWindow = window
         model.isBusy = true
         let gateway = profile.gateway.map {
@@ -194,7 +194,7 @@ final class ConnectionViewController: NSViewController {
         }
         let started = controller.connect(
             to: address, username: attempt.username, password: attempt.password ?? "", gateway: gateway,
-            desktop: window.desktopSize)
+            desktop: window.desktopRequest)
         if !started {
             session = nil
             sessionWindow = nil

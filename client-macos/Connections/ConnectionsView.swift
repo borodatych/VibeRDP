@@ -187,6 +187,9 @@ private struct ProfileEditor: View {
                     Text(Localization.text(Self.title(of: mode))).tag(mode)
                 }
             }
+            if mode != .fixed {
+                Toggle(Localization.text(.profileDisplaySharp), isOn: flag(\.sharpOnRetina))
+            }
             if mode == .fixed {
                 // A size not in the list shows as the custom one; choosing it keeps the size for the fields below
                 Picker(

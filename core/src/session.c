@@ -178,7 +178,8 @@ static void onChannelConnected(void* context, const ChannelConnectedEventArgs* e
         const rdpSettings* settings = session->common.context.settings;
         vrcDisplayAttach(&session->display, (DispClientContext*)event->pInterface,
                          freerdp_settings_get_uint32(settings, FreeRDP_DesktopWidth),
-                         freerdp_settings_get_uint32(settings, FreeRDP_DesktopHeight));
+                         freerdp_settings_get_uint32(settings, FreeRDP_DesktopHeight),
+                         freerdp_settings_get_uint32(settings, FreeRDP_DesktopScaleFactor));
     }
 }
 
@@ -495,7 +496,7 @@ static void sendInput(VRCSession* session, const VRCInputEvent* event)
             break;
         }
         case VRCInputKindResize:
-            vrcDisplayRequest(&session->display, event->x, event->y);
+            vrcDisplayRequest(&session->display, event->x, event->y, event->scale);
             break;
     }
 }
@@ -943,6 +944,8 @@ static BOOL applyParams(rdpSettings* settings, const VRCConnectionParams* params
            (params->port == 0 || freerdp_settings_set_uint32(settings, FreeRDP_ServerPort, params->port)) &&
            (params->width == 0 || freerdp_settings_set_uint32(settings, FreeRDP_DesktopWidth, params->width)) &&
            (params->height == 0 || freerdp_settings_set_uint32(settings, FreeRDP_DesktopHeight, params->height)) &&
+           freerdp_settings_set_uint32(settings, FreeRDP_DesktopScaleFactor, vrcDisplayDesktopScale(params->scale)) &&
+           freerdp_settings_set_uint32(settings, FreeRDP_DeviceScaleFactor, vrcDisplayDeviceScale(params->scale)) &&
            applyCredentials(settings, params) && applyGateway(settings, params);
 }
 
@@ -1229,12 +1232,12 @@ VRCResult VRCSessionRefresh(VRCSession* session)
     return queueInput(session, &event);
 }
 
-VRCResult VRCSessionResizeDesktop(VRCSession* session, uint32_t width, uint32_t height)
+VRCResult VRCSessionResizeDesktop(VRCSession* session, uint32_t width, uint32_t height, uint32_t scale)
 {
     if (!session || width == 0 || height == 0)
         return VRCResultInvalidArgument;
 
     /* The size rides in the coordinates of the event: a resize has no pointer */
-    const VRCInputEvent event = { .kind = VRCInputKindResize, .x = width, .y = height };
+    const VRCInputEvent event = { .kind = VRCInputKindResize, .x = width, .y = height, .scale = scale };
     return queueInput(session, &event);
 }

@@ -44,7 +44,7 @@ final class SessionController {
     /// False when the core refuses the parameters or cannot start
     func connect(
         to address: ServerAddress, username: String, password: String, gateway: GatewayParameters? = nil,
-        desktop: CGSize
+        desktop: DesktopRequest
     ) -> Bool {
         guard handle == nil else { return false }
         let (stream, continuation) = AsyncStream.makeStream(of: CoreEvent.self)
@@ -65,8 +65,9 @@ final class SessionController {
         var params = VRCConnectionParams()
         params.host = strings.copy(address.host)
         params.port = address.port ?? 0
-        params.width = UInt32(desktop.width)
-        params.height = UInt32(desktop.height)
+        params.width = UInt32(desktop.size.width)
+        params.height = UInt32(desktop.size.height)
+        params.scale = desktop.scale
         params.username = strings.copy(username)
         params.password = strings.copy(password)
         if let gateway {
@@ -115,10 +116,11 @@ final class SessionController {
     }
 
     /// The desktop follows the window: the server redraws it at this size, and frameResized follows
-    func resizeDesktop(to size: CGSize) {
+    func resizeDesktop(to desktop: DesktopRequest) {
         if let handle {
             _ = VRCSessionResizeDesktop(
-                handle.session, UInt32(clamping: Int(size.width)), UInt32(clamping: Int(size.height)))
+                handle.session, UInt32(clamping: Int(desktop.size.width)), UInt32(clamping: Int(desktop.size.height)),
+                desktop.scale)
         }
     }
 

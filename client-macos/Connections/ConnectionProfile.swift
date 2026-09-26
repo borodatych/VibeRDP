@@ -25,12 +25,15 @@ struct ConnectionProfile: Codable, Equatable, Identifiable, Sendable {
     var displayMode: ProfileDisplayMode
     /// The desktop of the fixed mode; the other modes keep it for when the mode comes back
     var fixedSize: DesktopSize
+    /// On a Retina display the desktop takes its pixels, so the text is sharp; off, the display stretches it,
+    /// with four times fewer pixels to send
+    var sharpOnRetina: Bool
 
     init(
         id: UUID = UUID(), name: String = "", address: String = "", username: String = "",
         remembersPassword: Bool = true, keyboard: ProfileKeyboard = .settings, gatewayAddress: String = "",
         gatewayUsesServerCredentials: Bool = true, gatewayUsername: String = "", gatewayBypassLocal: Bool = false,
-        displayMode: ProfileDisplayMode = .window, fixedSize: DesktopSize = .standard
+        displayMode: ProfileDisplayMode = .window, fixedSize: DesktopSize = .standard, sharpOnRetina: Bool = true
     ) {
         self.id = id
         self.name = name
@@ -44,6 +47,7 @@ struct ConnectionProfile: Codable, Equatable, Identifiable, Sendable {
         self.gatewayBypassLocal = gatewayBypassLocal
         self.displayMode = displayMode
         self.fixedSize = fixedSize
+        self.sharpOnRetina = sharpOnRetina
     }
 
     /// A setting missing from stored data, as in profiles saved before it existed, takes its default
@@ -68,6 +72,7 @@ struct ConnectionProfile: Codable, Equatable, Identifiable, Sendable {
         displayMode =
             try container.decodeIfPresent(ProfileDisplayMode.self, forKey: .displayMode) ?? defaults.displayMode
         fixedSize = try container.decodeIfPresent(DesktopSize.self, forKey: .fixedSize) ?? defaults.fixedSize
+        sharpOnRetina = try container.decodeIfPresent(Bool.self, forKey: .sharpOnRetina) ?? defaults.sharpOnRetina
     }
 
     /// The name, or the address for a profile without one

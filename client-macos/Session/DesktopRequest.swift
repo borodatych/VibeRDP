@@ -1,0 +1,27 @@
+import CoreGraphics
+
+/// The desktop a session asks the server for: its size in pixels of Windows and its scale in percent
+/// On a Retina display a sharp desktop takes the pixels of the display and a scale that keeps the text as large
+/// as the points would make it; otherwise the desktop takes the points, and the display stretches it
+struct DesktopRequest: Equatable, Sendable {
+    var size: CGSize
+    var scale: UInt32
+
+    /// The scale of a desktop that is not stretched to a display of higher density
+    static let standardScale: UInt32 = 100
+
+    init(size: CGSize, scale: UInt32 = standardScale) {
+        self.size = size
+        self.scale = scale
+    }
+
+    /// A desktop as large as an area of the Mac in points, at the pixels of its display when sharp
+    static func points(_ points: CGSize, backing: CGFloat, sharp: Bool) -> DesktopRequest {
+        guard sharp, backing > 1 else {
+            return DesktopRequest(size: CGSize(width: points.width.rounded(), height: points.height.rounded()))
+        }
+        return DesktopRequest(
+            size: CGSize(width: (points.width * backing).rounded(), height: (points.height * backing).rounded()),
+            scale: UInt32((backing * CGFloat(standardScale)).rounded()))
+    }
+}
