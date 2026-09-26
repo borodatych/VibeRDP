@@ -221,6 +221,13 @@ final class SessionController {
         }
     }
 
+    /// Asks the helper to act on a window of the host; nothing goes while the link is not ready
+    func sendSeam(_ command: SeamLink.Command, window id: UInt64) {
+        if let body = seam.command(command, window: id) {
+            send([body])
+        }
+    }
+
     /// Bodies for the helper, each framed by the core
     private func send(_ bodies: [MessagePackValue]) {
         guard let handle else { return }

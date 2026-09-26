@@ -9,14 +9,17 @@ final class SeamWindowsTests: XCTestCase {
     private let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)
     private var seam: SeamWindows!
     private var remote = RemoteWindows()
+    private var moves: [(UInt64, CGRect)] = []
 
     override func setUp() async throws {
         guard let renderer = FrameRenderer() else { throw XCTSkip("no Metal device") }
         let layout = MonitorLayout(screens: [(frame: screen, backing: 1)], primary: 0, sharp: false)
         seam = SeamWindows(
             geometry: SeamGeometry(layout: layout, screens: [screen]),
-            makeDesktop: { DesktopView(renderer: renderer) }, onDisconnect: {})
+            makeDesktop: { DesktopView(renderer: renderer) }, onDisconnect: {},
+            onMove: { [weak self] id, rect in self?.moves.append((id, rect)) })
         remote = RemoteWindows()
+        moves = []
     }
 
     override func tearDown() async throws {
@@ -74,5 +77,16 @@ final class SeamWindowsTests: XCTestCase {
             let below = numbers.firstIndex(of: NSNumber(value: second))
         else { return XCTFail("both windows are on screen") }
         XCTAssertLessThan(top, below, "window 1 is above window 2, as the host has them")
+    }
+
+    /// The host moving a window is not sent back; the Mac moving it is
+    func testOnlyMovesOfTheMacGoToTheHost() {
+        seam.activate(remote)
+        send(create(1, 100, 50))
+        send(.map([("type", .string("window.update")), ("id", .uint(1)), ("rect", .array([.int(0), .int(0), .int(400), .int(300)]))]))
+        XCTAssertTrue(moves.isEmpty, "the moves of the host stay on the Mac")
+        seam.window(for: 1)?.setFrame(CGRect(x: 720, y: 0, width: 720, height: 900), display: false)
+        XCTAssertEqual(moves.last?.0, 1)
+        XCTAssertEqual(moves.last?.1, CGRect(x: 720, y: 0, width: 720, height: 900))
     }
 }

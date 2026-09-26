@@ -47,4 +47,14 @@ final class SeamGeometryTests: XCTestCase {
             geometry.region(of: CGRect(x: -100, y: 10, width: 50, height: 50)),
             CGRect(x: 1404, y: 10, width: 50, height: 50))
     }
+
+    /// A frame the Mac gives a window comes back to the host as the rect it came from
+    func testRemoteRectIsTheInverse() {
+        let geometry = geometry(sharp: true)
+        for rect in [CGRect(x: 100, y: 50, width: 800, height: 600), CGRect(x: 2120, y: 100, width: 1000, height: 400)] {
+            guard let frame = geometry.macFrame(of: rect) else { return XCTFail("\(rect) has a place") }
+            XCTAssertEqual(geometry.remoteRect(of: frame), rect)
+        }
+        XCTAssertNil(geometry.remoteRect(of: CGRect(x: -9000, y: -9000, width: 10, height: 10)))
+    }
 }

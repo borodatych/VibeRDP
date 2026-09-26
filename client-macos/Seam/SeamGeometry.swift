@@ -29,6 +29,24 @@ struct SeamGeometry: Equatable {
             x: screen.minX + local.minX, y: screen.maxY - local.maxY, width: local.width, height: local.height)
     }
 
+    /// The rectangle on the host of a frame on the Mac, in pixels of Windows: the inverse of macFrame
+    /// The frame goes to the screen that holds most of it; nil when it is on none of them
+    func remoteRect(of frame: CGRect) -> CGRect? {
+        guard layout.monitors.count == screens.count else { return nil }
+        let areas = screens.map { screen in
+            let common = screen.intersection(frame)
+            return common.isNull ? 0 : common.width * common.height
+        }
+        guard let best = areas.indices.max(by: { areas[$0] < areas[$1] }), areas[best] > 0 else { return nil }
+        let monitor = layout.monitors[best].frame
+        let screen = screens[best]
+        let density = monitor.width / screen.width
+        return CGRect(
+            x: monitor.minX + ((frame.minX - screen.minX) * density).rounded(),
+            y: monitor.minY + ((screen.maxY - frame.maxY) * density).rounded(),
+            width: (frame.width * density).rounded(), height: (frame.height * density).rounded())
+    }
+
     /// The part of the frame of the engine that shows the window: the frame starts at the top left of all monitors
     func region(of rect: CGRect) -> CGRect {
         rect.offsetBy(dx: -layout.bounds.minX, dy: -layout.bounds.minY)

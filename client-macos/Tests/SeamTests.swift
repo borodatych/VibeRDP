@@ -109,4 +109,35 @@ final class SeamTests: XCTestCase {
         XCTAssertEqual(link.received(MessagePack.encode(window), at: Date()).message, window)
         XCTAssertNotNil(link.received(Data([0xc1]), at: Date()).note)
     }
+
+    private func readyLink() -> SeamLink {
+        var link = SeamLink(agent: "VibeRDP test", capabilities: ["seam"])
+        _ = link.opened(at: Date())
+        _ = link.received(hello(version: 1), at: Date())
+        return link
+    }
+
+    func testCommandsGoOnlyOnAReadyLink() {
+        var closed = SeamLink(agent: "VibeRDP test", capabilities: ["seam"])
+        XCTAssertNil(closed.command(.activate, window: 5))
+        var link = readyLink()
+        XCTAssertEqual(
+            link.command(.move(CGRect(x: -10, y: 20, width: 800, height: 600)), window: 5),
+            .map([
+                ("type", .string("command")), ("seq", .uint(1)), ("id", .uint(5)), ("action", .string("move")),
+                ("rect", .array([.int(-10), .int(20), .int(800), .int(600)])),
+            ]))
+        XCTAssertEqual(link.command(.close, window: 5)?["seq"], .uint(2))
+    }
+
+    func testAnswersAreQuietUnlessTheyFail() {
+        var link = readyLink()
+        let ack = MessagePack.encode(.map([("type", .string("ack")), ("seq", .uint(1))]))
+        XCTAssertEqual(link.received(ack, at: Date()), SeamLink.Outcome())
+        let error = MessagePack.encode(
+            .map([("type", .string("error")), ("seq", .uint(2)), ("code", .string("denied"))]))
+        let outcome = link.received(error, at: Date())
+        XCTAssertNil(outcome.message)
+        XCTAssertEqual(outcome.note, "command 2 failed, denied")
+    }
 }

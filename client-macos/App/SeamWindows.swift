@@ -8,16 +8,24 @@ final class SeamWindows: NSObject, NSWindowDelegate {
     private let geometry: SeamGeometry
     private let makeDesktop: () -> DesktopView
     private let onDisconnect: () -> Void
+    /// The Mac moved or resized a window by itself, tiling or Mission Control: the host gets the new rect
+    private let onMove: (UInt64, CGRect) -> Void
+    /// Set while this class places a window: its own moves must not go back to the host
+    private var placing = false
     private var shown: [UInt64: (window: SeamWindow, desktop: DesktopView)] = [:]
     private var surface: IOSurfaceRef?
     private var pointer = RemotePointer.system
     /// The windows show only while the link is ready; the desktop shows otherwise
     private(set) var isActive = false
 
-    init(geometry: SeamGeometry, makeDesktop: @escaping () -> DesktopView, onDisconnect: @escaping () -> Void) {
+    init(
+        geometry: SeamGeometry, makeDesktop: @escaping () -> DesktopView, onDisconnect: @escaping () -> Void,
+        onMove: @escaping (UInt64, CGRect) -> Void = { _, _ in }
+    ) {
         self.geometry = geometry
         self.makeDesktop = makeDesktop
         self.onDisconnect = onDisconnect
+        self.onMove = onMove
     }
 
     /// The link is ready: every window of the host comes up in its order
@@ -84,7 +92,9 @@ final class SeamWindows: NSObject, NSWindowDelegate {
         entry.window.title = remote.title
         entry.desktop.region = geometry.region(of: remote.frame)
         if entry.window.frame != frame {
+            placing = true
             entry.window.setFrame(frame, display: false)
+            placing = false
         }
         if !entry.window.isVisible {
             entry.window.orderFront(nil)
@@ -98,6 +108,7 @@ final class SeamWindows: NSObject, NSWindowDelegate {
         let window = SeamWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1, height: 1), styleMask: [.borderless], backing: .buffered,
             defer: false)
+        window.remoteID = id
         window.isReleasedWhenClosed = false
         window.hasShadow = true
         window.contentView = desktop
@@ -124,6 +135,22 @@ final class SeamWindows: NSObject, NSWindowDelegate {
         }
     }
 
+    func windowDidMove(_ notification: Notification) {
+        moved(notification)
+    }
+
+    func windowDidResize(_ notification: Notification) {
+        moved(notification)
+    }
+
+    /// A frame the Mac gave a window goes to the host, which moves the window there and reports it back
+    private func moved(_ notification: Notification) {
+        guard !placing, isActive, let window = notification.object as? SeamWindow, let id = window.remoteID,
+            let rect = geometry.remoteRect(of: window.frame)
+        else { return }
+        onMove(id, rect)
+    }
+
     /// The menu command while one of these windows is key: the window delegate is in the responder chain
     @objc func disconnect(_ sender: Any?) {
         onDisconnect()
@@ -132,6 +159,9 @@ final class SeamWindows: NSObject, NSWindowDelegate {
 
 /// A window without a frame that still takes the keyboard: the borderless kind refuses it by default
 final class SeamWindow: NSWindow {
+    /// The window of the host this one shows; nil for the frameless desktop of a screen
+    var remoteID: UInt64?
+
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
 }

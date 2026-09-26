@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// The client side of a conversation over the Seam channel: greeting, versions and liveness, sections 4 and 8
@@ -25,6 +26,25 @@ struct SeamLink {
         case silent
         /// The helper stopped answering pings
         case lost
+    }
+
+    /// What the client asks of a window of the host: section 7 of the specification
+    enum Command: Equatable {
+        case activate
+        /// New visible bounds in pixels of Windows
+        case move(CGRect)
+        case minimize, maximize, restore, close
+
+        var action: String {
+            switch self {
+            case .activate: "activate"
+            case .move: "move"
+            case .minimize: "minimize"
+            case .maximize: "maximize"
+            case .restore: "restore"
+            case .close: "close"
+            }
+        }
     }
 
     /// What one body brought: replies to send, a message for the rest of the app, a line for the log
@@ -82,11 +102,37 @@ struct SeamLink {
         guard case .ready = state else {
             return Outcome(note: "\"\(kind)\" outside a ready channel skipped")
         }
-        if kind == "pong" {
+        switch kind {
+        case "pong":
             lastPong = now
             return Outcome()
+        // The windows show what a command did: an answer only matters when it says the command failed
+        case "ack":
+            return Outcome()
+        case "error":
+            let seq = value["seq"]?.uint64.map(String.init) ?? "?"
+            let code = value["code"]?.string ?? "unknown"
+            let detail = value["message"]?.string.map { ": \($0)" } ?? ""
+            return Outcome(note: "command \(seq) failed, \(code)\(detail)")
+        default:
+            break
         }
         return Outcome(message: value)
+    }
+
+    /// A command for a window of the host; nil while the link is not ready
+    mutating func command(_ command: Command, window id: UInt64) -> MessagePackValue? {
+        guard case .ready = state else { return nil }
+        var entries: [(String, MessagePackValue)] = [
+            ("type", .string("command")), ("seq", .uint(UInt64(nextSeq))), ("id", .uint(id)),
+            ("action", .string(command.action)),
+        ]
+        if case .move(let rect) = command {
+            let numbers = [rect.minX, rect.minY, rect.width, rect.height].map { MessagePackValue.int(Int64($0.rounded())) }
+            entries.append(("rect", .array(numbers)))
+        }
+        nextSeq &+= 1
+        return .map(entries)
     }
 
     /// The clock moved: a ping when one is due, and the timeouts of the greeting and of the pongs
