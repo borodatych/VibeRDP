@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/sysctl.h>
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreMedia/CoreMedia.h>
@@ -630,6 +631,43 @@ static const TestCase tests[] = {
 /* CTest counts a test that returns this as skipped, not failed */
 #define SKIPPED 77
 
+/* A virtual machine, as a CI runner is, says so to the kernel */
+static bool inVirtualMachine(void)
+{
+    int present = 0;
+    size_t size = sizeof(present);
+    return sysctlbyname("kern.hv_vmm_present", &present, &size, NULL, 0) == 0 && present == 1;
+}
+
+/* One frame of 64 by 64 there and back through the decoder under test: whether VideoToolbox decodes at all here */
+static bool decodesHere(void)
+{
+    const uint32_t side = 64;
+    Canvas source;
+    Canvas decoded;
+    Planes planes;
+    Encoder encoder;
+    if (!canvasInit(&source, side, side) || !canvasInit(&decoded, side, side) || !planesInit(&planes, side, side) ||
+        !encoderInit(&encoder, side, side))
+        return false;
+    H264_CONTEXT* h264 = h264_context_new(FALSE);
+    bool decoded420 = false;
+    if (h264 && h264_context_reset(h264, side, side))
+    {
+        drawBlocks(&source, 0);
+        const RECTANGLE_16 whole = { 0, 0, (UINT16)side, (UINT16)side };
+        decoded420 = toYUV420(&source, &planes) && encodeFrame(&encoder, &planes, true) &&
+                     avc420_decompress(h264, encoder.stream, (UINT32)encoder.length, decoded.pixels,
+                                       PIXEL_FORMAT_BGRX32, decoded.stride, side, side, &whole, 1) >= 0;
+    }
+    h264_context_free(h264);
+    encoderFree(&encoder);
+    planesFree(&planes);
+    canvasFree(&decoded);
+    canvasFree(&source);
+    return decoded420;
+}
+
 int main(int argc, char* argv[])
 {
     if (argc != 2)
@@ -638,12 +676,13 @@ int main(int argc, char* argv[])
         return 2;
     }
     /*
-     * Every Mac the app runs on decodes H.264 in hardware; a virtual machine, as a CI runner is, has no such decoder,
-     * and VideoToolbox fails its frames there: the tests say so and skip rather than fail
+     * VideoToolbox of the macOS virtual machines of the CI runners fails every frame (-19092, a status no header
+     * names), while every Mac decodes them; the tests skip there, and only there: on a real Mac a failing decoder
+     * fails the tests
      */
-    if (!VTIsHardwareDecodeSupported(kCMVideoCodecType_H264))
+    if (inVirtualMachine() && !decodesHere())
     {
-        printf("skipped: this machine has no hardware H.264 decoder\n");
+        printf("skipped: VideoToolbox of this virtual machine does not decode H.264\n");
         return SKIPPED;
     }
     for (size_t i = 0; i < sizeof(tests) / sizeof(tests[0]); i++)
