@@ -56,6 +56,8 @@ final class ConnectionViewController: NSViewController {
 
     override func loadView() {
         let connections = NSHostingView(rootView: ConnectionsView(model: model))
+        // The toolbar and the search of the SwiftUI view become the toolbar of the AppKit window
+        connections.sceneBridgingOptions = [.toolbars]
         connections.frame = NSRect(origin: .zero, size: MainWindow.defaultSize)
         view = connections
     }
@@ -186,6 +188,7 @@ final class ConnectionViewController: NSViewController {
             onResize: { [weak controller] desktop in controller?.resizeDesktop(to: desktop) })
         sessionWindow = window
         model.isBusy = true
+        model.activeProfile = attempt.profileID
         let gateway = profile.gateway.map {
             GatewayParameters(
                 address: $0, usesServerCredentials: profile.gatewayUsesServerCredentials,
@@ -200,6 +203,7 @@ final class ConnectionViewController: NSViewController {
             sessionWindow = nil
             self.attempt = nil
             model.isBusy = false
+            model.activeProfile = nil
             model.status = Localization.text(.connectionStatusStartFailed, ["host": host])
             return
         }
@@ -279,6 +283,7 @@ final class ConnectionViewController: NSViewController {
     private func signedIn() {
         guard let attempt, var profile = model.store.profile(attempt.profileID) else { return }
         profile.username = attempt.username
+        profile.lastConnected = Date()
         if !profile.gatewayUsesServerCredentials {
             profile.gatewayUsername = attempt.gatewayUsername
         }
@@ -299,6 +304,11 @@ final class ConnectionViewController: NSViewController {
 
     private func sessionEnded() {
         closeSheet()
+        // The desktop keeps its last frame after the engine lets go of it: that frame becomes the picture of the tile
+        if let id = attempt?.profileID, let surface = sessionWindow?.desktop.surface {
+            model.keepSnapshot(surface, for: id)
+        }
+        model.activeProfile = nil
         let wasShown = sessionWindow?.window?.isVisible == true
         sessionWindow?.end()
         sessionWindow = nil

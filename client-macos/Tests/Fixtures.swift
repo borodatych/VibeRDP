@@ -1,6 +1,8 @@
 import AppKit
 import ImageIO
+import IOSurface
 import Security
+import XCTest
 
 @testable import VibeRDP
 
@@ -103,5 +105,20 @@ enum TestImage {
             return true
         }
         return drawn && zip(bytes, pixels.flatMap { $0 }).allSatisfy { abs(Int($0) - Int($1)) <= tolerance }
+    }
+}
+
+/// A desktop surface as the engine draws it: BGRA, the alpha unused, filled with one colour
+enum TestSurface {
+    static func make(width: Int = 1024, height: Int = 640) throws -> IOSurfaceRef {
+        let properties: [CFString: Any] = [
+            kIOSurfaceWidth: width, kIOSurfaceHeight: height, kIOSurfaceBytesPerElement: 4,
+            kIOSurfacePixelFormat: 0x4247_5241,
+        ]
+        let surface = try XCTUnwrap(IOSurfaceCreate(properties as CFDictionary))
+        IOSurfaceLock(surface, [], nil)
+        memset(IOSurfaceGetBaseAddress(surface), 0x80, IOSurfaceGetAllocSize(surface))
+        IOSurfaceUnlock(surface, [], nil)
+        return surface
     }
 }

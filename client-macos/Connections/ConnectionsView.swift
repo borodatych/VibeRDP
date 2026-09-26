@@ -1,107 +1,402 @@
 import SwiftUI
 
-/// The main window: the saved connections on the left, the selected one on the right
+/// The main window, as Windows App lays it out: the sections on the left, the connections as tiles or rows,
+/// the toolbar with a new connection, the layout, the order and the search; a connection is edited in a sheet
 struct ConnectionsView: View {
-    static let sidebarWidth: CGFloat = 240
+    static let sidebarWidth: CGFloat = 220
+    static let editorSize = CGSize(width: 560, height: 640)
 
     @Bindable var model: ConnectionsModel
+    /// The profile the user asked to delete, while the question is open
+    @State private var deleting: ConnectionProfile?
 
     var body: some View {
-        HStack(spacing: 0) {
-            sidebar
-                .frame(width: Self.sidebarWidth)
-            Divider()
-            detail
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-    }
-
-    private var sidebar: some View {
-        VStack(spacing: 0) {
-            List(selection: $model.selection) {
-                ForEach(model.store.profiles) { profile in
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(profile.title.isEmpty ? Localization.text(.connectionsUntitled) : profile.title)
-                        if !profile.name.isEmpty && !profile.address.isEmpty {
-                            Text(profile.address)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .tag(profile.id)
-                }
+        NavigationSplitView {
+            List(selection: sectionSelection) {
+                Label(Localization.text(.connectionsSidebarFavorites), systemImage: "star")
+                    .tag(ConnectionsSection.favorites)
+                Label(Localization.text(.connectionsSidebarAll), systemImage: "display")
+                    .tag(ConnectionsSection.all)
             }
-            // Double-click or Return on a row connects, as in the Finder a double-click opens
-            .contextMenu(forSelectionType: UUID.self) { _ in
-            } primaryAction: { ids in
-                if let id = ids.first {
-                    model.selection = id
-                    model.connect()
-                }
-            }
-            Divider()
-            HStack(spacing: 4) {
-                Button {
-                    model.addProfile()
-                } label: {
-                    Image(systemName: "plus")
-                        .accessibilityLabel(Localization.text(.connectionsAdd))
-                }
-                Button {
-                    model.deleteSelected()
-                } label: {
-                    Image(systemName: "minus")
-                        .accessibilityLabel(Localization.text(.connectionsRemove))
-                }
-                .disabled(model.selection == nil)
-                Spacer()
-            }
-            .buttonStyle(.borderless)
-            .padding(8)
-        }
-        .disabled(model.isBusy)
-    }
-
-    @ViewBuilder
-    private var detail: some View {
-        if model.selectedProfile != nil {
+            .navigationSplitViewColumnWidth(Self.sidebarWidth)
+        } detail: {
             VStack(spacing: 0) {
-                ProfileEditor(model: model)
-                    .disabled(model.isBusy)
-                Divider()
-                HStack(alignment: .firstTextBaseline) {
+                ConnectionsContent(model: model, deleting: $deleting)
+                if !model.status.isEmpty {
+                    Divider()
                     Text(model.status)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal)
+                        .padding(.vertical, 8)
+                }
+            }
+            .toolbar { toolbar }
+            .searchable(
+                text: $model.searchText, placement: .toolbar, prompt: Localization.text(.connectionsSearchPrompt))
+        }
+        .sheet(item: editingProfile) { _ in
+            VStack(spacing: 0) {
+                ProfileEditor(model: model)
+                Divider()
+                HStack {
                     Spacer()
-                    if model.isBusy {
-                        Button(Localization.text(.connectionActionDisconnect)) {
-                            model.disconnect()
-                        }
-                    } else {
-                        Button(Localization.text(.connectionActionConnect)) {
-                            model.connect()
-                        }
-                        .keyboardShortcut(.defaultAction)
-                        .disabled(!model.canConnect)
+                    Button(Localization.text(.connectionsEditDone)) {
+                        model.editing = nil
                     }
+                    .keyboardShortcut(.defaultAction)
                 }
                 .padding()
             }
-        } else {
+            .frame(width: Self.editorSize.width, height: Self.editorSize.height)
+        }
+        .confirmationDialog(
+            Localization.text(.connectionsDeleteQuestion, ["name": deleting.map(Self.title(of:)) ?? ""]),
+            isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })
+        ) {
+            Button(Localization.text(.connectionsRemove), role: .destructive) {
+                if let deleting {
+                    model.delete(deleting.id)
+                }
+                deleting = nil
+            }
+            Button(Localization.text(.connectionsDeleteCancel), role: .cancel) {
+                deleting = nil
+            }
+        } message: {
+            Text(Localization.text(.connectionsDeleteMessage))
+        }
+    }
+
+    @ToolbarContentBuilder
+    private var toolbar: some ToolbarContent {
+        ToolbarItem {
+            Button {
+                model.addAndEdit()
+            } label: {
+                Label(Localization.text(.connectionsAdd), systemImage: "plus")
+            }
+            .help(Localization.text(.connectionsAdd))
+            .disabled(model.isBusy)
+        }
+        ToolbarItem {
+            Picker(Localization.text(.connectionsLayoutGrid), selection: $model.layout) {
+                Label(Localization.text(.connectionsLayoutGrid), systemImage: "square.grid.2x2")
+                    .tag(ConnectionsLayout.grid)
+                Label(Localization.text(.connectionsLayoutList), systemImage: "list.bullet")
+                    .tag(ConnectionsLayout.list)
+            }
+            .pickerStyle(.segmented)
+        }
+        ToolbarItem {
+            Menu {
+                Picker(Localization.text(.connectionsSortLabel), selection: $model.sort) {
+                    Text(Localization.text(.connectionsSortName)).tag(ConnectionsSort.name)
+                    Text(Localization.text(.connectionsSortLastConnected)).tag(ConnectionsSort.lastConnected)
+                }
+                .pickerStyle(.inline)
+            } label: {
+                Label(Localization.text(.connectionsSortLabel), systemImage: "arrow.up.arrow.down")
+            }
+            .help(Localization.text(.connectionsSortLabel))
+        }
+    }
+
+    /// The sidebar always has a section: a click on empty space would otherwise clear it
+    private var sectionSelection: Binding<ConnectionsSection?> {
+        Binding(get: { model.section }, set: { section in model.section = section ?? model.section })
+    }
+
+    private var editingProfile: Binding<EditedProfile?> {
+        Binding(
+            get: { model.editing.map(EditedProfile.init) },
+            set: { model.editing = $0?.id })
+    }
+
+    static func title(of profile: ConnectionProfile) -> String {
+        profile.title.isEmpty ? Localization.text(.connectionsUntitled) : profile.title
+    }
+}
+
+/// The profile of the edit sheet, as the sheet needs an identifiable item
+private struct EditedProfile: Identifiable {
+    let id: UUID
+}
+
+/// The connections of the section: tiles or rows, or what to do when there are none
+private struct ConnectionsContent: View {
+    static let tileMinimumWidth: CGFloat = 260
+    static let tileMaximumWidth: CGFloat = 360
+    static let spacing: CGFloat = 20
+
+    @Bindable var model: ConnectionsModel
+    @Binding var deleting: ConnectionProfile?
+
+    var body: some View {
+        let profiles = model.visibleProfiles
+        if model.store.profiles.isEmpty {
             ContentUnavailableView {
                 Label(Localization.text(.connectionsEmptyTitle), systemImage: "display")
             } description: {
                 Text(Localization.text(.connectionsEmptyMessage))
             } actions: {
                 Button(Localization.text(.connectionsAdd)) {
-                    model.addProfile()
+                    model.addAndEdit()
                 }
                 if model.windowsAppInstalled {
                     Button(Localization.text(.connectionsWindowsAppOffer)) {
                         model.importWindowsApp()
                     }
                 }
+            }
+        } else if profiles.isEmpty {
+            if model.searchText.isEmpty {
+                ContentUnavailableView(
+                    Localization.text(.connectionsFavoritesEmptyTitle), systemImage: "star",
+                    description: Text(Localization.text(.connectionsFavoritesEmptyMessage)))
+            } else {
+                ContentUnavailableView(Localization.text(.connectionsSearchEmpty), systemImage: "magnifyingglass")
+            }
+        } else if model.layout == .grid {
+            ScrollView {
+                VStack(alignment: .leading, spacing: Self.spacing) {
+                    Text(Localization.text(model.section == .all ? .connectionsSaved : .connectionsSidebarFavorites))
+                        .font(.title2.bold())
+                    LazyVGrid(
+                        columns: [
+                            GridItem(
+                                .adaptive(minimum: Self.tileMinimumWidth, maximum: Self.tileMaximumWidth),
+                                spacing: Self.spacing, alignment: .top)
+                        ],
+                        alignment: .leading, spacing: Self.spacing
+                    ) {
+                        ForEach(profiles) { profile in
+                            ConnectionTile(model: model, profile: profile)
+                                .onTapGesture(count: 2) { model.connect(profile.id) }
+                                .onTapGesture { model.selection = profile.id }
+                                .contextMenu { ConnectionMenu(model: model, profile: profile, deleting: $deleting) }
+                        }
+                    }
+                }
+                .padding(Self.spacing)
+            }
+            .focusable()
+            .focusEffectDisabled()
+            .onKeyPress(.return) {
+                model.connect()
+                return .handled
+            }
+        } else {
+            List(selection: $model.selection) {
+                ForEach(profiles) { profile in
+                    ConnectionRow(model: model, profile: profile)
+                        .tag(profile.id)
+                }
+            }
+            // Double-click or Return on a row connects, as in the Finder a double-click opens
+            .contextMenu(forSelectionType: UUID.self) { ids in
+                if let id = ids.first, let profile = model.store.profile(id) {
+                    ConnectionMenu(model: model, profile: profile, deleting: $deleting)
+                }
+            } primaryAction: { ids in
+                if let id = ids.first {
+                    model.connect(id)
+                }
+            }
+        }
+    }
+}
+
+/// What can be done with one connection, from its tile or its row
+private struct ConnectionMenu: View {
+    let model: ConnectionsModel
+    let profile: ConnectionProfile
+    @Binding var deleting: ConnectionProfile?
+
+    var body: some View {
+        Button(Localization.text(.connectionActionConnect)) {
+            model.connect(profile.id)
+        }
+        .disabled(model.isBusy)
+        Button(Localization.text(.connectionsActionEdit)) {
+            model.edit(profile.id)
+        }
+        .disabled(model.isBusy)
+        Button(Localization.text(profile.isFavorite ? .connectionsActionUnfavorite : .connectionsActionFavorite)) {
+            model.toggleFavorite(profile.id)
+        }
+        Divider()
+        Button(Localization.text(.connectionsRemove), role: .destructive) {
+            deleting = profile
+        }
+        .disabled(model.isBusy && model.activeProfile == profile.id)
+    }
+}
+
+/// A connection as a tile: its last picture or the art of VibeRDP, the name over it, and the session while it runs
+private struct ConnectionTile: View {
+    static let aspectRatio: CGFloat = 16 / 10
+    static let cornerRadius: CGFloat = 14
+
+    let model: ConnectionsModel
+    let profile: ConnectionProfile
+
+    var body: some View {
+        let selected = model.selection == profile.id
+        let running = model.isBusy && model.activeProfile == profile.id
+        ZStack(alignment: .bottomLeading) {
+            picture
+            LinearGradient(colors: [.clear, .black.opacity(0.7)], startPoint: .center, endPoint: .bottom)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(ConnectionsView.title(of: profile))
+                    .font(.title3.bold())
+                if !profile.username.isEmpty {
+                    Text(profile.username)
+                        .font(.callout)
+                }
+            }
+            .foregroundStyle(.white)
+            .lineLimit(1)
+            .padding(14)
+        }
+        .overlay(alignment: .topLeading) {
+            HStack(spacing: 6) {
+                Text(Localization.text(.connectionsTileBadge))
+                if profile.isFavorite {
+                    Image(systemName: "star.fill")
+                }
+            }
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 6))
+            .padding(12)
+        }
+        .overlay {
+            if running {
+                ZStack {
+                    Color.black.opacity(0.55)
+                    VStack(spacing: 10) {
+                        ProgressView()
+                            .controlSize(.regular)
+                        Button(Localization.text(.connectionsTileCancel)) {
+                            model.disconnect()
+                        }
+                    }
+                }
+            }
+        }
+        .aspectRatio(Self.aspectRatio, contentMode: .fit)
+        .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
+        .overlay {
+            RoundedRectangle(cornerRadius: Self.cornerRadius)
+                .strokeBorder(selected ? Color.accentColor : .white.opacity(0.08), lineWidth: selected ? 3 : 1)
+        }
+        .contentShape(RoundedRectangle(cornerRadius: Self.cornerRadius))
+        .help(profile.address)
+    }
+
+    @ViewBuilder
+    private var picture: some View {
+        // The revision is read so a new picture redraws the tile
+        let _ = model.snapshotRevision
+        if let image = model.snapshots.image(for: profile.id) {
+            Image(nsImage: image)
+                .resizable()
+                .scaledToFill()
+        } else {
+            TileArt(seed: profile.id)
+        }
+    }
+}
+
+/// A connection as a row: a small picture, the name and the address, the user at the end
+private struct ConnectionRow: View {
+    static let pictureSize = CGSize(width: 64, height: 40)
+
+    let model: ConnectionsModel
+    let profile: ConnectionProfile
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Group {
+                let _ = model.snapshotRevision
+                if let image = model.snapshots.image(for: profile.id) {
+                    Image(nsImage: image)
+                        .resizable()
+                        .scaledToFill()
+                } else {
+                    TileArt(seed: profile.id)
+                }
+            }
+            .frame(width: Self.pictureSize.width, height: Self.pictureSize.height)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 4) {
+                    Text(ConnectionsView.title(of: profile))
+                    if profile.isFavorite {
+                        Image(systemName: "star.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                if !profile.name.isEmpty && !profile.address.isEmpty {
+                    Text(profile.address)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            if model.isBusy && model.activeProfile == profile.id {
+                ProgressView()
+                    .controlSize(.small)
+            }
+            Text(profile.username)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+/// The picture of a connection before its first session: waves in the colours of the VibeRDP icon over its dark,
+/// shifted by the id, so the tiles differ
+struct TileArt: View {
+    /// The colours of the icon: its dark ground, its violet and its light violet
+    static let ground = Color(red: 0x1A / 255, green: 0x12 / 255, blue: 0x33 / 255)
+    static let violet = Color(red: 0x92 / 255, green: 0x77 / 255, blue: 0xFF / 255)
+    static let light = Color(red: 0xBB / 255, green: 0xA8 / 255, blue: 0xFF / 255)
+
+    let seed: UUID
+
+    var body: some View {
+        let phase = Double(seed.uuid.0) / 255
+        Canvas { context, size in
+            context.fill(
+                Path(CGRect(origin: .zero, size: size)),
+                with: .linearGradient(
+                    Gradient(colors: [Self.ground, .black]), startPoint: .zero,
+                    endPoint: CGPoint(x: size.width, y: size.height)))
+            let waves: [(Color, Double, Double)] = [
+                (Self.violet, 0.55, 0.45), (Self.light, 0.35, 0.3), (Self.violet, 0.8, 0.6),
+            ]
+            for (index, wave) in waves.enumerated() {
+                let (color, level, opacity) = wave
+                var path = Path()
+                path.move(to: CGPoint(x: 0, y: size.height))
+                for step in 0...48 {
+                    let x = size.width * Double(step) / 48
+                    let angle = (Double(step) / 48 + phase + Double(index) * 0.21) * .pi * 2
+                    let y = size.height * (level - 0.18 * sin(angle) - 0.25 * Double(step) / 48)
+                    path.addLine(to: CGPoint(x: x, y: y))
+                }
+                path.addLine(to: CGPoint(x: size.width, y: size.height))
+                path.closeSubpath()
+                context.fill(
+                    path,
+                    with: .linearGradient(
+                        Gradient(colors: [color.opacity(opacity), color.opacity(0.05)]),
+                        startPoint: CGPoint(x: size.width, y: 0), endPoint: CGPoint(x: 0, y: size.height)))
             }
         }
     }

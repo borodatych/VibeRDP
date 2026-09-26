@@ -71,6 +71,8 @@ final class ProfileStoreTests: XCTestCase {
         XCTAssertEqual(profile.displayMode, .window, "a profile saved before the modes follows the window, as then")
         XCTAssertEqual(profile.fixedSize, .standard)
         XCTAssertTrue(profile.sharpOnRetina, "a profile saved before is sharp on Retina, as new ones are")
+        XCTAssertFalse(profile.isFavorite)
+        XCTAssertNil(profile.lastConnected)
     }
 
     /// The display mode and the fixed size are saved with the profile
@@ -123,16 +125,83 @@ final class ConnectionsModelTests: XCTestCase {
     private var suiteName = ""
     private var passwords: MemoryPasswordStore!
     private var model: ConnectionsModel!
+    private var snapshotsRoot: URL!
 
     override func setUp() async throws {
         suiteName = "tech.vibebrains.viberdp.tests.\(UUID().uuidString)"
         passwords = MemoryPasswordStore()
+        snapshotsRoot = FileManager.default.temporaryDirectory.appending(path: suiteName, directoryHint: .isDirectory)
         let store = ProfileStore(defaults: try XCTUnwrap(UserDefaults(suiteName: suiteName)), passwords: passwords)
-        model = ConnectionsModel(store: store)
+        model = ConnectionsModel(store: store, snapshots: SessionSnapshots(root: snapshotsRoot))
     }
 
     override func tearDown() async throws {
         UserDefaults().removePersistentDomain(forName: suiteName)
+        try? FileManager.default.removeItem(at: snapshotsRoot)
+    }
+
+    /// The tiles of a section: favourites only there, the search over title, address and user, in the chosen order
+    func testVisibleProfiles() {
+        let now = Date()
+        let profiles = [
+            ConnectionProfile(name: "Бухгалтерия", address: "acc", username: "CORP\\anna", lastConnected: now),
+            ConnectionProfile(name: "аптека", address: "pharm", isFavorite: true),
+            ConnectionProfile(
+                name: "Сервер", address: "srv", isFavorite: true, lastConnected: now.addingTimeInterval(-60)),
+        ]
+        func titles(_ section: ConnectionsSection, _ search: String, _ sort: ConnectionsSort) -> [String] {
+            ConnectionsModel.visible(profiles, section: section, search: search, sort: sort).map(\.title)
+        }
+        XCTAssertEqual(titles(.all, "", .name), ["аптека", "Бухгалтерия", "Сервер"], "by name, whatever the case")
+        XCTAssertEqual(titles(.all, "", .lastConnected), ["Бухгалтерия", "Сервер", "аптека"])
+        XCTAssertEqual(titles(.favorites, "", .name), ["аптека", "Сервер"])
+        XCTAssertEqual(titles(.all, "ANNA", .name), ["Бухгалтерия"], "the user matches too")
+        XCTAssertEqual(titles(.all, " srv ", .name), ["Сервер"], "the address matches, spaces aside")
+        XCTAssertEqual(titles(.favorites, "acc", .name), [])
+    }
+
+    /// A tile goes to the favourites and back; a new connection opens in the edit sheet
+    func testFavoriteAndAddAndEdit() throws {
+        model.addAndEdit()
+        let id = try XCTUnwrap(model.selection)
+        XCTAssertEqual(model.editing, id)
+        XCTAssertFalse(try XCTUnwrap(model.store.profile(id)).isFavorite)
+        model.toggleFavorite(id)
+        XCTAssertTrue(try XCTUnwrap(model.store.profile(id)).isFavorite)
+        model.section = .favorites
+        XCTAssertEqual(model.visibleProfiles.map(\.id), [id])
+        model.toggleFavorite(id)
+        XCTAssertEqual(model.visibleProfiles, [])
+    }
+
+    /// A connection deleted from its tile takes its picture along and closes its sheet
+    func testDeleteTakesThePicture() throws {
+        model.addProfile()
+        let id = try XCTUnwrap(model.selection)
+        model.addProfile()
+        let other = try XCTUnwrap(model.selection)
+        model.edit(id)
+        XCTAssertTrue(model.snapshots.save(try TestSurface.make(), for: id))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: model.snapshots.url(for: id).path))
+        model.delete(id)
+        XCTAssertNil(model.store.profile(id))
+        XCTAssertNil(model.editing)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: model.snapshots.url(for: id).path))
+        XCTAssertEqual(model.selection, other)
+    }
+
+    /// The last desktop becomes a picture a tile shows: scaled down to the width, its proportions kept
+    func testSnapshotOfTheDesktop() throws {
+        model.addProfile()
+        let id = try XCTUnwrap(model.selection)
+        let revision = model.snapshotRevision
+        model.keepSnapshot(try TestSurface.make(width: 1280, height: 800), for: id)
+        XCTAssertEqual(model.snapshotRevision, revision + 1)
+        let image = try XCTUnwrap(NSImage(contentsOf: model.snapshots.url(for: id)))
+        let rep = try XCTUnwrap(image.representations.first)
+        XCTAssertEqual(rep.pixelsWide, SessionSnapshots.width)
+        XCTAssertEqual(rep.pixelsHigh, SessionSnapshots.width * 800 / 1280)
+        XCTAssertNotNil(model.snapshots.image(for: id))
     }
 
     func testAddSelectsTheNewProfile() {

@@ -8,10 +8,12 @@ enum MainWindow {
     static func make(title: String, content: NSViewController) -> NSWindow {
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: defaultSize),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            // The sidebar runs up under the title bar, as in the other apps with a sidebar
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false)
         window.title = title
+        window.toolbarStyle = .unified
         window.contentViewController = content
         window.autorecalculatesKeyViewLoop = true
         window.collectionBehavior.insert(.fullScreenPrimary)

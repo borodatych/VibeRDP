@@ -28,12 +28,17 @@ struct ConnectionProfile: Codable, Equatable, Identifiable, Sendable {
     /// On a Retina display the desktop takes its pixels, so the text is sharp; off, the display stretches it,
     /// with four times fewer pixels to send
     var sharpOnRetina: Bool
+    /// Shown under Favourites in the sidebar
+    var isFavorite: Bool
+    /// When a session of the profile last got in, for sorting; nil before the first one
+    var lastConnected: Date?
 
     init(
         id: UUID = UUID(), name: String = "", address: String = "", username: String = "",
         remembersPassword: Bool = true, keyboard: ProfileKeyboard = .settings, gatewayAddress: String = "",
         gatewayUsesServerCredentials: Bool = true, gatewayUsername: String = "", gatewayBypassLocal: Bool = false,
-        displayMode: ProfileDisplayMode = .window, fixedSize: DesktopSize = .standard, sharpOnRetina: Bool = true
+        displayMode: ProfileDisplayMode = .window, fixedSize: DesktopSize = .standard, sharpOnRetina: Bool = true,
+        isFavorite: Bool = false, lastConnected: Date? = nil
     ) {
         self.id = id
         self.name = name
@@ -48,6 +53,8 @@ struct ConnectionProfile: Codable, Equatable, Identifiable, Sendable {
         self.displayMode = displayMode
         self.fixedSize = fixedSize
         self.sharpOnRetina = sharpOnRetina
+        self.isFavorite = isFavorite
+        self.lastConnected = lastConnected
     }
 
     /// A setting missing from stored data, as in profiles saved before it existed, takes its default
@@ -73,6 +80,8 @@ struct ConnectionProfile: Codable, Equatable, Identifiable, Sendable {
             try container.decodeIfPresent(ProfileDisplayMode.self, forKey: .displayMode) ?? defaults.displayMode
         fixedSize = try container.decodeIfPresent(DesktopSize.self, forKey: .fixedSize) ?? defaults.fixedSize
         sharpOnRetina = try container.decodeIfPresent(Bool.self, forKey: .sharpOnRetina) ?? defaults.sharpOnRetina
+        isFavorite = try container.decodeIfPresent(Bool.self, forKey: .isFavorite) ?? defaults.isFavorite
+        lastConnected = try container.decodeIfPresent(Date.self, forKey: .lastConnected)
     }
 
     /// The name, or the address for a profile without one
