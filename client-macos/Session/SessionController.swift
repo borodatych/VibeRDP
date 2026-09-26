@@ -241,6 +241,10 @@ final class SessionController {
                 Diagnostics.info("seam", note)
             }
             if seam.state != before {
+                // A late hello comes after the clock of the greeting stopped: the pings need it again
+                if case .ready = seam.state, seamTimer == nil {
+                    startSeamTimer()
+                }
                 sentLanguage = nil
                 syncLayout()
                 onEvent(.seam(seam.state))

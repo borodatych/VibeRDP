@@ -65,7 +65,7 @@ final class SeamTests: XCTestCase {
         XCTAssertEqual(link.state, .ready(agent: "vibe-seam-helper 0.1.0", capabilities: ["windows", "icons"]))
     }
 
-    func testNoHelloInTimeLeavesTheDesktop() {
+    func testNoHelloInTimeShowsTheDesktopUntilTheHelperSpeaks() {
         var link = SeamLink(agent: "VibeRDP test", capabilities: [])
         let start = Date(timeIntervalSinceReferenceDate: 0)
         _ = link.opened(at: start)
@@ -73,8 +73,11 @@ final class SeamTests: XCTestCase {
         XCTAssertEqual(link.state, .greeting)
         _ = link.tick(at: start + 2)
         XCTAssertEqual(link.state, .silent)
-        _ = link.received(hello(version: 1), at: start + 3)
-        XCTAssertEqual(link.state, .silent, "a late hello does not bring the link up")
+        _ = link.received(hello(version: 1), at: start + 69)
+        XCTAssertEqual(
+            link.state, .ready(agent: "vibe-seam-helper 0.1.0", capabilities: ["windows", "icons"]),
+            "a helper slow to answer still brings the windows")
+        XCTAssertEqual(link.tick(at: start + 69 + 9), [], "the pings count from the late hello")
     }
 
     func testOtherVersionIsIncompatible() {

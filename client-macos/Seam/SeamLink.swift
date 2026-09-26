@@ -22,7 +22,8 @@ struct SeamLink {
         case ready(agent: String, capabilities: Set<String>)
         /// The helper speaks another version: the two do not talk
         case incompatible(version: UInt64)
-        /// The helper said nothing in time: the session stays a desktop, without a word to the user
+        /// The helper said nothing in time: the session shows the desktop, without a word to the user,
+        /// until the helper does speak; a slow one still brings the windows
         case silent
         /// The helper stopped answering pings
         case lost
@@ -174,7 +175,7 @@ struct SeamLink {
     }
 
     private mutating func greet(_ hello: MessagePackValue, at now: Date) -> Outcome {
-        guard state == .greeting else {
+        guard state == .greeting || state == .silent else {
             return Outcome(note: "hello outside the greeting skipped")
         }
         guard let version = hello["version"]?.uint64 else {
