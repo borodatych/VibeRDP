@@ -606,6 +606,7 @@ private struct ProfileEditor: View {
                         Text(Localization.text(Self.title(of: audio))).tag(audio)
                     }
                 }
+                Toggle(Localization.text(.profileAudioMicrophone), isOn: flag(\.microphone))
             }
         }
         .formStyle(.grouped)

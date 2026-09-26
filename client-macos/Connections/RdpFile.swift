@@ -87,7 +87,8 @@ struct RdpFile: Equatable {
             name: name, address: address, username: username, gatewayAddress: gatewayAddress,
             gatewayUsesServerCredentials: integer("promptcredentialonce").map { $0 != 0 } ?? true,
             gatewayBypassLocal: integer("gatewayusagemethod") == 2, displayMode: displayMode,
-            fixedSize: desktopSize ?? .standard, audio: audio)
+            fixedSize: desktopSize ?? .standard, audio: audio,
+            microphone: integer("audiocapturemode") == 1)
     }
 
     /// audiomode 0 plays on this computer, 1 on the remote one, 2 nowhere; without the key, on this computer

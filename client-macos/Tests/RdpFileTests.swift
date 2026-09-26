@@ -133,6 +133,10 @@ final class RdpFileTests: XCTestCase {
         XCTAssertEqual(try audio("audiomode:i:0\n"), .local)
         XCTAssertEqual(try audio("audiomode:i:1\n"), .remote)
         XCTAssertEqual(try audio("audiomode:i:2\n"), .off)
+        let microphone = try XCTUnwrap(
+            RdpFile(data: Data("full address:s:w\naudiocapturemode:i:1\n".utf8))?.profile(named: "x"))
+        XCTAssertTrue(microphone.microphone)
+        XCTAssertFalse(try XCTUnwrap(RdpFile(data: Data("full address:s:w\n".utf8))?.profile(named: "x")).microphone)
     }
 
     /// A file without settings is no connection file, and one without an address makes no profile

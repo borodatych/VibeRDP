@@ -265,6 +265,7 @@ typedef struct VRCConnectionParams {
     uint32_t height;      /* 0 keeps the engine default, 768 */
     uint32_t scale;       /* Scale of the desktop in percent, 200 on a Retina display at its pixels; 0 keeps 100 */
     VRCAudioMode audio;   /* Where the sound plays; 0 plays none */
+    bool microphone;      /* The microphone of the Mac goes to Windows; macOS asks the user the first time */
     /* A folder of the Mac Windows sees as a drive, under the name given; NULL or empty shares none */
     const char* sharedFolder;
     const char* sharedFolderName; /* NULL or empty takes the last part of the path */

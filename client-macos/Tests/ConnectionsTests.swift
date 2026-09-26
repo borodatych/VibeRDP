@@ -75,6 +75,7 @@ final class ProfileStoreTests: XCTestCase {
         XCTAssertNil(profile.lastConnected)
         XCTAssertEqual(profile.audio, .local, "a profile saved before plays its sound on this Mac")
         XCTAssertEqual(profile.sharedFolder, "", "a profile saved before shares no folder")
+        XCTAssertFalse(profile.microphone)
     }
 
     /// The display mode and the fixed size are saved with the profile

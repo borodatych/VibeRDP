@@ -120,6 +120,7 @@
   "profile.folder.none": "Windows sees no files of the Mac",
   "profile.folder.hint": "Windows sees this folder as a drive under its name and can read and change the files in it.",
   "profile.audio.section": "Sound",
+  "profile.audio.microphone": "Mac microphone in Windows",
   "profile.audio.label": "Windows sound",
   "profile.audio.local": "On this Mac",
   "profile.audio.remote": "On the remote computer",

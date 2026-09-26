@@ -5,3 +5,4 @@
 
 /* The document type of .rdp files, keyed by the base name that Info.plist gives it */
 "Подключение к удалённому рабочему столу" = "Remote Desktop Connection";
+"NSMicrophoneUsageDescription" = "VibeRDP sends the sound of the Mac microphone to Windows when the connection has it turned on.";

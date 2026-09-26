@@ -55,6 +55,7 @@ targets:
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
         # macOS asks the user before an app reaches the local network, and the alert quotes this text
         INFOPLIST_KEY_NSLocalNetworkUsageDescription: "VibeRDP подключается к компьютерам Windows в вашей сети по протоколу RDP."
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: "VibeRDP передаёт звук микрофона Мака в Windows, если это включено в подключении."
 
   VibeRDPTests:
     type: bundle.unit-test

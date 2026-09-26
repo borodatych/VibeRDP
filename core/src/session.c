@@ -947,10 +947,11 @@ static BOOL applyGateway(rdpSettings* settings, const VRCConnectionParams* param
  * The sound of the session: on the Mac the engine loads the audio channel, which needs the device channel as well,
  * and plays through AudioToolbox; on the remote computer the server keeps it; off, neither plays it
  */
-static BOOL applyAudio(rdpSettings* settings, VRCAudioMode audio)
+static BOOL applyAudio(rdpSettings* settings, VRCAudioMode audio, bool microphone)
 {
     return freerdp_settings_set_bool(settings, FreeRDP_AudioPlayback, audio == VRCAudioModeLocal) &&
-           freerdp_settings_set_bool(settings, FreeRDP_RemoteConsoleAudio, audio == VRCAudioModeRemote);
+           freerdp_settings_set_bool(settings, FreeRDP_RemoteConsoleAudio, audio == VRCAudioModeRemote) &&
+           freerdp_settings_set_bool(settings, FreeRDP_AudioCapture, microphone);
 }
 
 /* A shared folder is a drive of the device channel: Windows lists it under This PC by its name */
@@ -978,7 +979,7 @@ static BOOL applyParams(rdpSettings* settings, const VRCConnectionParams* params
            (params->height == 0 || freerdp_settings_set_uint32(settings, FreeRDP_DesktopHeight, params->height)) &&
            freerdp_settings_set_uint32(settings, FreeRDP_DesktopScaleFactor, vrcDisplayDesktopScale(params->scale)) &&
            freerdp_settings_set_uint32(settings, FreeRDP_DeviceScaleFactor, vrcDisplayDeviceScale(params->scale)) &&
-           applyAudio(settings, params->audio) && applySharedFolder(settings, params) &&
+           applyAudio(settings, params->audio, params->microphone) && applySharedFolder(settings, params) &&
            applyCredentials(settings, params) && applyGateway(settings, params);
 }
 
