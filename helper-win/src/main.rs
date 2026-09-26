@@ -9,7 +9,11 @@
 #[cfg(windows)]
 mod channel;
 #[cfg(windows)]
+mod link;
+#[cfg(windows)]
 mod log;
+#[cfg(windows)]
+mod tracker;
 
 #[cfg(windows)]
 fn main() {
@@ -25,13 +29,15 @@ mod helper {
     use std::thread::sleep;
     use std::time::Duration;
 
-    use vibe_seam_helper::protocol::{self, FrameReader};
-    use vibe_seam_helper::session::Session;
+    use vibe_seam_helper::protocol::FrameReader;
+    use vibe_seam_helper::session::{Peer, Session};
     use windows_sys::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError};
     use windows_sys::Win32::System::Threading::CreateMutexW;
 
-    use crate::channel::Channel;
+    use crate::channel::{self, Reader};
+    use crate::link::Link;
     use crate::log;
+    use crate::tracker::Tracker;
 
     const AGENT: &str = concat!("vibe-seam-helper ", env!("CARGO_PKG_VERSION"));
     /// One helper per session: the Local namespace is the session's own
@@ -46,15 +52,19 @@ mod helper {
         }
         log::open();
         log::line(&format!("{AGENT} started"));
+        let link = Link::default();
+        let tracker = Tracker::start(link.clone());
         let mut retry = RETRY_FIRST;
         let mut shut_logged = false;
         loop {
-            match Channel::open() {
-                Ok(channel) => {
+            match channel::open() {
+                Ok((reader, writer)) => {
                     log::line("channel open");
                     shut_logged = false;
                     retry = RETRY_FIRST;
-                    let reason = converse(channel);
+                    let generation = link.attach(writer);
+                    let reason = converse(reader, &link, generation, &tracker);
+                    link.detach();
                     log::line(&format!("channel closed: {reason}"));
                 }
                 // Logged once per stretch: the client may stay away for hours
@@ -70,27 +80,30 @@ mod helper {
     }
 
     /// Talks over an open channel until it breaks, and says why it did
-    fn converse(mut channel: Channel) -> String {
+    fn converse(mut reader: Reader, link: &Link, generation: u64, tracker: &Tracker) -> String {
         let mut session = Session::new(AGENT);
-        if let Err(error) = channel.write(&protocol::frame(&session.greeting())) {
-            return format!("hello not sent: {error}");
+        if !link.send(generation, &[session.greeting()]) {
+            return "hello not sent".to_string();
         }
         let mut frames = FrameReader::default();
         loop {
-            let bodies = match channel.read().map(|chunk| frames.push(chunk)) {
+            let bodies = match reader.read().map(|chunk| frames.push(chunk)) {
                 Ok(Ok(bodies)) => bodies,
                 Ok(Err(error)) => return format!("protocol error {error:?}"),
                 Err(error) => return error.to_string(),
             };
             for body in bodies {
+                let before = session.peer();
                 let outcome = session.handle(&body);
                 if let Some(note) = outcome.note {
                     log::line(&note);
                 }
-                for reply in outcome.replies {
-                    if let Err(error) = channel.write(&protocol::frame(&reply)) {
-                        return format!("reply not sent: {error}");
-                    }
+                if !outcome.replies.is_empty() && !link.send(generation, &outcome.replies) {
+                    return "reply not sent".to_string();
+                }
+                // The client learns the windows once it has said hello in our version
+                if before != Peer::Ready && session.peer() == Peer::Ready {
+                    tracker.snapshot(generation);
                 }
             }
         }
