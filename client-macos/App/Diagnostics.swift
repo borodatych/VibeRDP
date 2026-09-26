@@ -67,12 +67,47 @@ final class DiagnosticsSettings {
         NSWorkspace.shared.open(Self.issuesURL)
     }
 
+    /// The logs in one zip to attach to a message: VibeRDP-logs-<time>.zip, chosen where to save
+    func saveLogs() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.zip]
+        panel.nameFieldStringValue = "VibeRDP-logs-\(Self.stamp(Date())).zip"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try exportLogs(to: url)
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = Localization.text(.settingsDiagnosticsSaveFailed, ["error": error.localizedDescription])
+            alert.runModal()
+        }
+    }
+
+    /// The folder of the logs zipped as the Finder does it, the folder itself in the archive
+    func exportLogs(to archive: URL) throws {
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        if FileManager.default.fileExists(atPath: archive.path) {
+            try FileManager.default.removeItem(at: archive)
+        }
+        let ditto = Process()
+        ditto.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+        ditto.arguments = ["-c", "-k", "--sequesterRsrc", "--keepParent", folder.path, archive.path]
+        try ditto.run()
+        ditto.waitUntilExit()
+        guard ditto.terminationStatus == 0 else {
+            throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: archive.path])
+        }
+    }
+
     /// viberdp-2026-09-25-17-40-05.log: the names sort by time, so the newest is last in the Finder
     static func fileName(for date: Date) -> String {
+        "viberdp-\(stamp(date)).\(fileExtension)"
+    }
+
+    static func stamp(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd-HH-mm-ss"
-        return "viberdp-\(formatter.string(from: date)).\(fileExtension)"
+        return formatter.string(from: date)
     }
 
     /// Leaves room for the new file among the kept ones

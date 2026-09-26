@@ -10,6 +10,8 @@ struct MainMenu {
     let disconnectItem: NSMenuItem
     /// The desktop in place of the windows of Windows, in a session of that mode; the app sets its target
     let windowsDesktopItem: NSMenuItem
+    /// Why the windows of Windows do not show, in a session of that mode; the app sets its target
+    let seamDiagnosisItem: NSMenuItem
     /// The Start menu of the host and the item of the bar that holds it, filled by StartMenu
     let startMenu: NSMenu
     let startItem = NSMenuItem()
@@ -52,6 +54,9 @@ struct MainMenu {
         windowsDesktopItem = Self.item(
             .menuWindowWindowsDesktop, [:], #selector(ConnectionViewController.toggleWindowsDesktop(_:)))
         windowMenu.addItem(windowsDesktopItem)
+        seamDiagnosisItem = Self.item(
+            .menuWindowSeamDiagnosis, [:], #selector(ConnectionViewController.explainWindows(_:)))
+        windowMenu.addItem(seamDiagnosisItem)
 
         startMenu = NSMenu(title: Localization.text(.menuStart))
         for submenu in [application, file, startMenu, windowMenu] {

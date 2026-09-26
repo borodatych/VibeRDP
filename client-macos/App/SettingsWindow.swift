@@ -203,6 +203,9 @@ struct DiagnosticsSettingsView: View {
                     Button(Localization.text(.settingsDiagnosticsOpenFolder)) {
                         settings.revealFolder()
                     }
+                    Button(Localization.text(.settingsDiagnosticsSave)) {
+                        settings.saveLogs()
+                    }
                     Button(Localization.text(.settingsDiagnosticsReport)) {
                         settings.reportProblem()
                     }

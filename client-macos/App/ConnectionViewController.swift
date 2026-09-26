@@ -31,6 +31,8 @@ final class ConnectionViewController: NSViewController {
     private var remoteApps = RemoteApps()
     /// The server refused RemoteApp: when this session ends, the same attempt starts again without it
     private var retryWithoutRemoteApp: LoginAttempt?
+    /// The session runs without RemoteApp because the server refused it: the diagnosis says so
+    private var remoteAppRefused = false
     private var desktop: DesktopView? { sessionWindow?.desktop }
     private var wakeObserver: NSObjectProtocol?
     /// The profile of the running session and how it signs in
@@ -79,6 +81,23 @@ final class ConnectionViewController: NSViewController {
     /// The menu command while this window is key; the session window takes it while it is
     @objc func disconnect(_ sender: Any?) {
         session?.disconnect()
+    }
+
+    /// The menu command: what the channel of the helper says, in the words of the user, and what to do
+    @objc func explainWindows(_ sender: Any?) {
+        let diagnosis = SeamDiagnosis.of(seamState)
+        let alert = NSAlert()
+        alert.messageText = Localization.text(diagnosis.title.key, diagnosis.title.values)
+        alert.informativeText = diagnosis.advice(remoteAppRefused: remoteAppRefused)
+            .map { Localization.text($0.key, $0.values) }
+            .joined(separator: "\n\n")
+        alert.alertStyle = { if case .working = diagnosis { .informational } else { .warning } }()
+        Diagnostics.info("seam", "diagnosis shown: \(diagnosis)")
+        if let window = NSApp.keyWindow {
+            alert.beginSheetModal(for: window)
+        } else {
+            alert.runModal()
+        }
     }
 
     /// The menu command: the desktop in place of the windows of Windows and back, without reconnecting
@@ -453,6 +472,7 @@ final class ConnectionViewController: NSViewController {
         remoteApps = RemoteApps()
         seamState = .closed
         prefersDesktop = false
+        remoteAppRefused = false
         sessionWindow?.end()
         sessionWindow = nil
         // The list comes forward with the reason the session ended in its status line
@@ -470,6 +490,7 @@ final class ConnectionViewController: NSViewController {
             failure = nil
             Diagnostics.info("rail", "connecting again without RemoteApp")
             start(retry, remoteApp: false)
+            remoteAppRefused = true
             return
         }
         model.status = failure?.message ?? Localization.text(.connectionStatusDisconnected, ["host": host])
@@ -656,6 +677,7 @@ extension ConnectionViewController: NSMenuItemValidation {
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         switch menuItem.action {
         case #selector(disconnect(_:)): session != nil
+        case #selector(explainWindows(_:)): seamWindows != nil
         case #selector(toggleWindowsDesktop(_:)):
             {
                 menuItem.state = prefersDesktop ? .on : .off
