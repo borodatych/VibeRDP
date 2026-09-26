@@ -120,6 +120,8 @@ final class SeamWindows: NSObject, NSWindowDelegate {
         // A menu or a tooltip must not take the keyboard: its owner keeps it, as on Windows,
         // and the activate that a key popup would send makes Windows close the menu
         entry.window.takesKeyboard = remote.kind == .app
+        // A window of a program may go full screen in a space of its own; a popup follows its owner
+        entry.window.collectionBehavior = remote.kind == .app ? [.managed, .fullScreenPrimary] : [.managed]
         entry.desktop.region = geometry.region(of: remote.frame)
         if entry.window.frame != frame {
             placing = true
@@ -144,9 +146,10 @@ final class SeamWindows: NSObject, NSWindowDelegate {
         let desktop = makeDesktop()
         desktop.surface = surface
         desktop.pointer = pointer
+        // Resizable lets full screen give the window the size of the screen: a frameless one keeps its size there
         let window = SeamWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1, height: 1), styleMask: [.borderless], backing: .buffered,
-            defer: false)
+            contentRect: NSRect(x: 0, y: 0, width: 1, height: 1), styleMask: [.borderless, .resizable],
+            backing: .buffered, defer: false)
         window.remoteID = id
         window.onMinimize = { [weak self] in self?.onMinimize(id) }
         window.isReleasedWhenClosed = false
@@ -192,6 +195,19 @@ final class SeamWindows: NSObject, NSWindowDelegate {
         onActivate(id)
     }
 
+    /// Full screen resizes the window to the screen, and that size goes to the host as any other move
+    /// On the way out the frame from before comes back, and the host gets it too
+    func windowWillEnterFullScreen(_ notification: Notification) {
+        guard let window = notification.object as? SeamWindow else { return }
+        window.frameBeforeFullScreen = window.frame
+    }
+
+    func windowDidExitFullScreen(_ notification: Notification) {
+        guard let window = notification.object as? SeamWindow, let frame = window.frameBeforeFullScreen else { return }
+        window.frameBeforeFullScreen = nil
+        window.setFrame(frame, display: true)
+    }
+
     func windowDidMove(_ notification: Notification) {
         moved(notification)
     }
@@ -223,6 +239,8 @@ final class SeamWindow: NSWindow {
     var takesKeyboard = true
     /// Minimizing is the host's: the window goes away on the Mac once the host reports it minimized
     var onMinimize: (() -> Void)?
+    /// Where the window stood before it went full screen
+    var frameBeforeFullScreen: NSRect?
 
     override var canBecomeKey: Bool { takesKeyboard }
 

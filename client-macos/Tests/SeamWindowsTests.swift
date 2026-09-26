@@ -146,4 +146,24 @@ final class SeamWindowsTests: XCTestCase {
         send(.map([("type", .string("window.update")), ("id", .uint(1)), ("state", .string("minimized"))]))
         XCTAssertNil(seam.window(for: 1))
     }
+
+    /// A window of a program may go full screen, a popup may not; leaving full screen sends the old frame back
+    func testFullScreenSizeGoesToTheHostAndBack() {
+        seam.activate(remote)
+        send(create(1, 100, 50))
+        send(.map([
+            ("type", .string("window.create")), ("id", .uint(9)), ("owner", .uint(1)), ("kind", .string("popup")),
+            ("rect", .array([.int(0), .int(0), .int(50), .int(50)])),
+        ]))
+        guard let window = seam.window(for: 1) as? SeamWindow else { return XCTFail("the window shows") }
+        XCTAssertTrue(window.collectionBehavior.contains(.fullScreenPrimary))
+        XCTAssertFalse(seam.window(for: 9)?.collectionBehavior.contains(.fullScreenPrimary) ?? true)
+        let before = window.frame
+        seam.windowWillEnterFullScreen(Notification(name: NSWindow.willEnterFullScreenNotification, object: window))
+        window.setFrame(screen, display: false)
+        XCTAssertEqual(moves.last?.1, CGRect(x: 0, y: 0, width: 1440, height: 900))
+        seam.windowDidExitFullScreen(Notification(name: NSWindow.didExitFullScreenNotification, object: window))
+        XCTAssertEqual(window.frame, before)
+        XCTAssertEqual(moves.last?.1, CGRect(x: 100, y: 50, width: 400, height: 300))
+    }
 }
