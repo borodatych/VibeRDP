@@ -15,8 +15,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Files the Finder asked to open before the window existed: a double click on a .rdp file launches the app
     private var pendingFiles: [URL] = []
 
+    /// XCTest runs its tests inside the app and names its configuration to the process through this variable
+    static let testConfigurationVariable = "XCTestConfigurationFilePath"
+
     func applicationDidFinishLaunching(_ notification: Notification) {
-        diagnostics.start()
+        // A test run launches the app again and again: its logs would push the user's own out of the kept ones
+        if ProcessInfo.processInfo.environment[Self.testConfigurationVariable] == nil {
+            diagnostics.start()
+        }
         let languages = LanguageSettings(folder: LanguageFolder(url: LanguageFolder.standard))
         Localization.use(languages.catalog)
         self.languages = languages
