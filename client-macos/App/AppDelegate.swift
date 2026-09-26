@@ -57,7 +57,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // The system may move a window after it shows, as onto another display: the log shows where it stays
         Task { [weak self] in
             try? await Task.sleep(for: .seconds(Self.placementCheckDelay))
+            self?.mainWindowFrame?.holdOpeningPlace()
             self?.mainWindowFrame?.logPlace("shown")
+            self?.mainWindowFrame?.endOpening()
         }
         mainWindow = window
         NSApp.activate()
@@ -85,6 +87,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ?? SettingsWindowController(keyboard: keyboard, languages: languages, diagnostics: diagnostics)
         settingsWindow = controller
         controller.showWindow(sender)
+    }
+
+    /// The app became active after launch: the system may have moved the main window by now
+    func applicationDidBecomeActive(_ notification: Notification) {
+        mainWindowFrame?.holdOpeningPlace()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

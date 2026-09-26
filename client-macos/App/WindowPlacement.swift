@@ -55,6 +55,8 @@ final class WindowFrameKeeper {
     private var observers: [NSObjectProtocol] = []
     /// The window took its kept frame; false when it went to the fallback screen
     private(set) var restored = false
+    /// The frame the window took as it opened, to put it back when the system moves it
+    private var openedAt: CGRect?
 
     init(window: NSWindow, name: String, defaults: UserDefaults = .standard, fallback: NSScreen?) {
         self.window = window
@@ -78,6 +80,22 @@ final class WindowFrameKeeper {
             ) { [weak self] _ in
                 MainActor.assumeIsolated { self?.logPlace("kept on close") }
             })
+    }
+
+    /// Puts the window back where it opened, once the app is active: launched from the Dock or the Finder,
+    /// the system moves the new window of an app to the display it takes for current, whatever its frame says
+    func holdOpeningPlace() {
+        guard let frame = openedAt, window.frame != frame,
+            WindowPlacement.isReachable(frame, on: NSScreen.screens.map(\.visibleFrame))
+        else { return }
+        logPlace("moved by the system")
+        window.setFrame(frame, display: true)
+        logPlace("put back")
+    }
+
+    /// The opening is over: from now on a move is the user's
+    func endOpening() {
+        openedAt = nil
     }
 
     /// Where the window stands and on which screen, for the diagnostics log: a window the system moves after
@@ -110,6 +128,7 @@ final class WindowFrameKeeper {
             "\(name) opens: kept \(kept.map(NSStringFromRect) ?? "none"), screens \(names.joined(separator: ", "))")
         if let frame = kept, WindowPlacement.isReachable(frame, on: screens) {
             window.setFrame(frame, display: false)
+            openedAt = frame
             return true
         }
         if let area = fallback?.visibleFrame {
