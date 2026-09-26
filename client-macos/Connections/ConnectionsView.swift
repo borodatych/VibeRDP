@@ -133,7 +133,7 @@ private struct ConnectionsContent: View {
     static let spacing: CGFloat = 20
     /// How far the pointer moves before a press becomes a drag, so a click stays a click
     static let dragThreshold: CGFloat = 8
-    /// The lifted tile: a little larger, over the others, with a shadow
+    /// The lifted tile: a little larger than the others, with a shadow
     static let liftScale: CGFloat = 1.06
     static let liftShadow: CGFloat = 18
     static let tiles = "tiles"
@@ -148,6 +148,10 @@ private struct ConnectionsContent: View {
     @State private var grab: CGSize = .zero
     /// Where each tile stands now in the grid, as the layout reports it
     @State private var frames: [UUID: CGRect] = [:]
+    /// A change of places waits for the layout to report the new ones
+    @State private var awaitingLayout = false
+    /// The lifted copy lands in its place as the drag ends
+    @State private var settling = false
 
     var body: some View {
         let profiles = model.visibleProfiles
@@ -192,7 +196,11 @@ private struct ConnectionsContent: View {
                         }
                     }
                     .coordinateSpace(name: Self.tiles)
-                    .onPreferenceChange(TileFrames.self) { frames = $0 }
+                    .onPreferenceChange(TileFrames.self) { reported in
+                        frames = reported
+                        awaitingLayout = false
+                    }
+                    .overlay(alignment: .topLeading) { liftedTile }
                 }
                 .padding(Self.spacing)
             }
@@ -231,36 +239,35 @@ private struct ConnectionsContent: View {
 }
 
 extension ConnectionsContent {
-    /// A tile with its clicks, its menu and its drag; the dragged one follows the pointer over the others
+    /// A tile with its clicks, its menu and its drag; while dragged it stays as an empty place among the others,
+    /// and its lifted copy over the grid follows the pointer
     private func tile(_ profile: ConnectionProfile) -> some View {
-        let lifted = dragged == profile.id
-        let slot = frames[profile.id]
-        let offset =
-            lifted && slot != nil
-            ? CGSize(
-                width: pointer.x - grab.width - slot!.midX, height: pointer.y - grab.height - slot!.midY)
-            : .zero
-        return ConnectionTile(model: model, profile: profile)
+        ConnectionTile(model: model, profile: profile)
             .background {
                 GeometryReader { geometry in
                     Color.clear.preference(
                         key: TileFrames.self, value: [profile.id: geometry.frame(in: .named(Self.tiles))])
                 }
             }
-            .scaleEffect(lifted ? Self.liftScale : 1)
-            .shadow(color: .black.opacity(lifted ? 0.45 : 0), radius: lifted ? Self.liftShadow : 0)
-            .offset(offset)
-            .zIndex(lifted ? 1 : 0)
-            // The lifted tile moves with the pointer itself; only the others slide into their new places
-            .transaction { transaction in
-                if lifted {
-                    transaction.animation = nil
-                }
-            }
+            .opacity(dragged == profile.id ? 0 : 1)
             .onTapGesture(count: 2) { model.connect(profile.id) }
             .onTapGesture { model.selection = profile.id }
             .gesture(drag(profile))
             .contextMenu { ConnectionMenu(model: model, profile: profile, deleting: $deleting) }
+    }
+
+    /// The lifted copy of the dragged tile: placed by the pointer alone, so a change of places under it never
+    /// moves it; as the drag ends it settles into its place and gives way to the tile itself
+    @ViewBuilder
+    private var liftedTile: some View {
+        if let id = dragged, let profile = model.store.profile(id), let slot = frames[id] {
+            ConnectionTile(model: model, profile: profile)
+                .frame(width: slot.width, height: slot.height)
+                .scaleEffect(settling ? 1 : Self.liftScale)
+                .shadow(color: .black.opacity(settling ? 0 : 0.45), radius: settling ? 0 : Self.liftShadow)
+                .position(x: pointer.x - grab.width, y: pointer.y - grab.height)
+                .allowsHitTesting(false)
+        }
     }
 
     private func drag(_ profile: ConnectionProfile) -> some Gesture {
@@ -269,17 +276,33 @@ extension ConnectionsContent {
                 if dragged == nil, let slot = frames[profile.id] {
                     model.selection = profile.id
                     grab = CGSize(width: value.startLocation.x - slot.midX, height: value.startLocation.y - slot.midY)
-                    withAnimation(Self.makeWay) { dragged = profile.id }
+                    pointer = value.startLocation
+                    settling = false
+                    dragged = profile.id
                 }
+                guard dragged == profile.id else { return }
                 pointer = value.location
+                // Until the layout reports the places after a change, the old ones would send the tile back
+                guard !awaitingLayout else { return }
                 // The tile under the pointer gives its place; the others shift by one toward the gap
                 let under = frames.first { $0.key != profile.id && $0.value.contains(value.location) }
                 if let target = under?.key {
+                    awaitingLayout = true
                     withAnimation(Self.makeWay) { model.move(profile.id, to: target) }
                 }
             }
             .onEnded { _ in
-                withAnimation(Self.makeWay) { dragged = nil }
+                guard dragged == profile.id, let slot = frames[profile.id] else {
+                    dragged = nil
+                    return
+                }
+                withAnimation(Self.makeWay) {
+                    pointer = CGPoint(x: slot.midX + grab.width, y: slot.midY + grab.height)
+                    settling = true
+                } completion: {
+                    dragged = nil
+                    settling = false
+                }
             }
     }
 }
