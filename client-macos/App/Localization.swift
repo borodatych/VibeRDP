@@ -469,8 +469,6 @@ extension TextKey {
 
 enum Localization {
     /// The strings of the language this launch speaks, over the base ones; set once, before the first window
-    /// NSLock rather than OSAllocatedUnfairLock: the Xcode 26 SDK inlines the latter with a typed-throws path
-    /// that calls into a runtime newer than macOS 14
     private static let lock = NSLock()
     nonisolated(unsafe) private static var strings: [String: String] = [:]
 
@@ -491,9 +489,13 @@ enum Localization {
         return fill(template, values)
     }
 
+    /// A plain loop: reduce of the Swift 6.2 standard library throws a typed error, and Xcode 26.6 leaves its path,
+    /// a call into a runtime newer than macOS 14, in the app
     static func fill(_ template: String, _ values: [String: String]) -> String {
-        values.reduce(template) { text, value in
-            text.replacingOccurrences(of: "{\(value.key)}", with: value.value)
+        var text = template
+        for (name, value) in values {
+            text = text.replacingOccurrences(of: "{\(name)}", with: value)
         }
+        return text
     }
 }
