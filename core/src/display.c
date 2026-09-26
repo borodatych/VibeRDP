@@ -8,7 +8,6 @@
 
 #include <freerdp/settings.h>
 
-/* The scale the layout asks for: the desktop is as large as the window in points, scaling it is task 3.2 */
 /* The scales of the protocol, in percent: the desktop one within its limits, the device one of three values */
 #define DESKTOP_SCALE_MIN 100u
 #define DESKTOP_SCALE_MAX 500u

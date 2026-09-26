@@ -118,7 +118,7 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
     }
 
     /// The desktop of a mode: the content of the window, zoomed or not, the screen in full screen, or the fixed size
-    /// Sizes are in points of the Mac; the pixels of the display are task 3.2
+    /// Sizes are in points of the Mac; desktopRequest turns them into pixels of the display
     static func desktopSize(
         mode: ProfileDisplayMode, fixed: DesktopSize, content: CGSize, fullScreen: CGSize
     ) -> CGSize {
