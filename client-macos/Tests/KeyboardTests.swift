@@ -280,13 +280,19 @@ final class KeyboardSettingsViewTests: XCTestCase {
             url: FileManager.default.temporaryDirectory.appendingPathComponent(suiteName, isDirectory: true))
         defer { try? FileManager.default.removeItem(at: folder.url) }
         let languages = LanguageSettings(folder: folder, defaults: try XCTUnwrap(UserDefaults(suiteName: suiteName)))
-        let controller = SettingsWindowController(keyboard: store, languages: languages)
+        let diagnostics = DiagnosticsSettings(
+            folder: folder.url.appending(path: "logs"), defaults: try XCTUnwrap(UserDefaults(suiteName: suiteName)),
+            openLog: { _ in false })
+        let controller = SettingsWindowController(keyboard: store, languages: languages, diagnostics: diagnostics)
         let window = try XCTUnwrap(controller.window)
         XCTAssertEqual(window.title, Localization.text(.settingsTitle))
         let tabs = try XCTUnwrap(window.contentViewController as? NSTabViewController)
         XCTAssertEqual(
             tabs.tabViewItems.map(\.label),
-            [Localization.text(.settingsKeyboardTab), Localization.text(.settingsLanguageTab)])
+            [
+                Localization.text(.settingsKeyboardTab), Localization.text(.settingsLanguageTab),
+                Localization.text(.settingsDiagnosticsTab),
+            ])
 
         let content = try XCTUnwrap(window.contentView)
         XCTAssertEqual(content.frame.size.width, KeyboardSettingsView.size.width, accuracy: 1)

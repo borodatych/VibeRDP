@@ -1,4 +1,5 @@
 import AppKit
+import IOSurface
 import SwiftUI
 import VibeRDPCore
 
@@ -22,6 +23,8 @@ final class ConnectionViewController: NSViewController {
     private var host = ""
     /// Why the session ended: the error comes right before Disconnected, and Disconnected shows it
     private var failure: (kind: VRCErrorKind, message: String)?
+    /// The first update after each change of size is logged, the rest are too many to read
+    private var frameUpdateLogged = false
 
     init(trusted: TrustedCertificates, keyboard: KeyboardSettingsStore, profiles: ProfileStore) {
         self.trusted = trusted
@@ -202,6 +205,7 @@ final class ConnectionViewController: NSViewController {
     }
 
     private func handle(_ event: SessionController.Event) {
+        log(event)
         switch event {
         case .state(.connecting):
             model.status = Localization.text(.connectionStatusConnecting, ["host": host])
@@ -239,6 +243,29 @@ final class ConnectionViewController: NSViewController {
             clipboard?.remoteClipboardChanged(formats)
         case .clipboardDataRequested(let format):
             clipboard?.dataRequested(format)
+        }
+    }
+
+    /// The session in the diagnostics log: its states and errors, and the frame at each change of size with its first
+    /// update, so a desktop that stays empty shows where the frames stop; pixels and input are never logged
+    private func log(_ event: SessionController.Event) {
+        switch event {
+        case .state(let state):
+            Diagnostics.info("session", "state \(state.rawValue)")
+        case .failed(let kind, let name):
+            Diagnostics.warning("session", "failed: kind \(kind.rawValue), \(name)")
+        case .reconnecting(let attempt, let maxAttempts):
+            Diagnostics.info("session", "reconnecting, attempt \(attempt) of \(maxAttempts)")
+        case .frameResized(let width, let height):
+            let surface = session?.frameSurface().map { "\(IOSurfaceGetWidth($0))x\(IOSurfaceGetHeight($0))" }
+            Diagnostics.info("frame", "resized to \(width)x\(height), surface \(surface ?? "missing")")
+            frameUpdateLogged = false
+        case .frameUpdated where !frameUpdateLogged:
+            Diagnostics.info(
+                "frame", "first update since the resize, desktop view \(desktop == nil ? "missing" : "present")")
+            frameUpdateLogged = true
+        default:
+            break
         }
     }
 
@@ -294,6 +321,8 @@ final class ConnectionViewController: NSViewController {
         desktop.autoresizingMask = [.width, .height]
         view.addSubview(desktop)
         connections?.isHidden = true
+        Diagnostics.info(
+            "frame", "desktop shown in \(view.bounds.size), backing scale \(view.window?.backingScaleFactor ?? 0)")
         if let profile = attempt.flatMap({ model.store.profile($0.profileID) }) {
             view.window?.subtitle = profile.title
         }

@@ -405,6 +405,27 @@ VRCResult VRCSessionCopyRemoteFiles(VRCSession* session, const char* directory, 
  */
 VRCResult VRCSessionRefresh(VRCSession* session);
 
+/*
+ * Diagnostics log: the lines of the engine and of the app in one file, for someone to read when something goes wrong
+ * The log is one for the process, not for a session: it is set before the first session, as the app starts
+ */
+typedef VRC_ENUM(VRCLogLevel) {
+    VRCLogLevelDebug = 1,
+    VRCLogLevelInfo = 2,
+    VRCLogLevelWarning = 3,
+    VRCLogLevelError = 4,
+} VRCLogLevel;
+
+/*
+ * Writes the log of the engine and of VRCLog to this file from now on, appending; lines below the level are dropped
+ * The folder is made when missing
+ * InvalidArgument for a NULL path or a level outside VRCLogLevel, Failure when the file cannot be opened
+ */
+VRCResult VRCLogToFile(const char* path, VRCLogLevel level);
+
+/* A line of the app in the log, under the category given; nothing happens while no log is set */
+void VRCLog(VRCLogLevel level, const char* category, const char* message);
+
 #ifdef __cplusplus
 }
 #endif

@@ -141,6 +141,15 @@ add_test(NAME clipboardRoundTrip COMMAND clipboardEchoTests roundTrip)
 set_tests_properties(clipboardRoundTrip PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77
                                               ENVIRONMENT "${VRC_TEST_ENVIRONMENT}")
 
+# The diagnostics log through the framework, as the app calls it
+add_executable(logTests logTests.c)
+target_link_libraries(logTests PRIVATE VibeRDPCore)
+target_compile_options(logTests PRIVATE -Wall -Wextra -Werror)
+foreach(test IN ITEMS linesReachTheFile logRefusals)
+  add_test(NAME ${test} COMMAND logTests ${test})
+  set_tests_properties(${test} PROPERTIES TIMEOUT 60 ENVIRONMENT "${VRC_TEST_ENVIRONMENT}")
+endforeach()
+
 # Kerberos logons through NLA against the test peer that build-core.sh starts; without it they skip themselves
 add_executable(kerberosLogonTests kerberosLogonTests.c support.c)
 target_link_libraries(kerberosLogonTests PRIVATE VibeRDPCore)

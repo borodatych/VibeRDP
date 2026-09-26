@@ -5,7 +5,7 @@ import SwiftUI
 /// The window and its tabs are AppKit, as the rest of the app, and each tab is a SwiftUI view
 @MainActor
 final class SettingsWindowController: NSWindowController {
-    init(keyboard: KeyboardSettingsStore, languages: LanguageSettings) {
+    init(keyboard: KeyboardSettingsStore, languages: LanguageSettings, diagnostics: DiagnosticsSettings) {
         let tabs = NSTabViewController()
         tabs.tabStyle = .toolbar
         let keyboardTab = NSTabViewItem(
@@ -18,6 +18,11 @@ final class SettingsWindowController: NSWindowController {
         languageTab.label = Localization.text(.settingsLanguageTab)
         languageTab.image = NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
         tabs.addTabViewItem(languageTab)
+        let diagnosticsTab = NSTabViewItem(
+            viewController: NSHostingController(rootView: DiagnosticsSettingsView(settings: diagnostics)))
+        diagnosticsTab.label = Localization.text(.settingsDiagnosticsTab)
+        diagnosticsTab.image = NSImage(systemSymbolName: "doc.text.magnifyingglass", accessibilityDescription: nil)
+        tabs.addTabViewItem(diagnosticsTab)
 
         let window = NSWindow(contentViewController: tabs)
         window.styleMask = [.titled, .closable]
@@ -175,6 +180,37 @@ struct LanguageSettingsView: View {
                 }
             } footer: {
                 Text(Localization.text(.settingsLanguageFolderHint, ["folder": settings.folder.url.path]))
+            }
+        }
+        .formStyle(.grouped)
+        .frame(width: KeyboardSettingsView.size.width, height: KeyboardSettingsView.size.height)
+    }
+}
+
+/// The diagnostics tab: the log for troubleshooting, where its files are, and where to report a problem
+struct DiagnosticsSettingsView: View {
+    @Bindable var settings: DiagnosticsSettings
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle(Localization.text(.settingsDiagnosticsLog), isOn: $settings.enabled)
+            } footer: {
+                Text(Localization.text(.settingsDiagnosticsRestart))
+            }
+            Section {
+                HStack {
+                    Button(Localization.text(.settingsDiagnosticsOpenFolder)) {
+                        settings.revealFolder()
+                    }
+                    Button(Localization.text(.settingsDiagnosticsReport)) {
+                        settings.reportProblem()
+                    }
+                }
+            } footer: {
+                Text(
+                    Localization.text(.settingsDiagnosticsHint, ["folder": settings.folder.path(percentEncoded: false)])
+                )
             }
         }
         .formStyle(.grouped)
