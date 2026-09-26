@@ -11,7 +11,7 @@
 - `_swift_willThrowTypedImpl` — типизированный `throws(Ошибка)`: заменён обычным `throws`, тип ошибки проверяется в месте вызова
 - `_swift_coroFrameAlloc` — изменение значения словаря на месте, например `windows[id]?.icon = png`: компилятор делает сопрограмму `modify` у `Dictionary`; заменено чтением значения и записью обратно
 - `_swift_stdlib_isStackAllocationSafe` — ложная тревога, а не новый API: стандартная библиотека Swift 6.2 (Xcode 26.6 на CI) зовёт её при временном выделении на стеке под `#available(macOS 12.3)`, рантайм Swift 5.6 её уже содержит; Swift 6.3 (Xcode 27) её не зовёт — символ зависит от компилятора, поэтому проверку бандла гоняет и CI; символ внесён в список допустимых в `core/scripts/common.sh`
-- `_swift_willThrowTypedImpl` из `OSAllocatedUnfairLock.withLock` — SDK Xcode 26 встраивает его с путём типизированной ошибки; на CI источник назвала проверка бандла (`Localization.o`), замок каталога строк заменён на `NSLock`; `withLock` с замыканием, которое не бросает, символа не оставляет
+- `_swift_willThrowTypedImpl` из `Dictionary.filter` в `LanguageFolder.language(at:)` — Xcode 26.6 специализирует его с путём типизированной ошибки; заменено циклом; символ лежал в `Localization.o`, а код — в `Languages.swift`: две правки по имени файла ушли мимо, источник назвала функция в выводе проверки
 
 ## 3. Как искать источник
 

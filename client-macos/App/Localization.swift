@@ -1,4 +1,4 @@
-import Foundation
+import os
 
 /// Keys of the interface strings: flat and dotted, the same in every language
 enum TextKey: String, CaseIterable {
@@ -469,33 +469,23 @@ extension TextKey {
 
 enum Localization {
     /// The strings of the language this launch speaks, over the base ones; set once, before the first window
-    private static let lock = NSLock()
-    nonisolated(unsafe) private static var strings: [String: String] = [:]
+    private static let strings = OSAllocatedUnfairLock(initialState: [String: String]())
 
     /// The catalog of this launch, from Languages: the base keeps every key a language does not translate
     static func use(_ catalog: [String: String]) {
-        lock.lock()
-        defer { lock.unlock() }
-        strings = catalog
+        strings.withLock { $0 = catalog }
     }
 
     /// The string of a key with its named placeholders filled in
     /// A placeholder without a value stays visible as {name}: a missing value shows up instead of vanishing
     static func text(_ key: TextKey, _ values: [String: String] = [:]) -> String {
-        lock.lock()
-        let translated = strings[key.rawValue]
-        lock.unlock()
-        let template = translated ?? key.baseText
+        let template = strings.withLock { $0[key.rawValue] } ?? key.baseText
         return fill(template, values)
     }
 
-    /// A plain loop: reduce of the Swift 6.2 standard library throws a typed error, and Xcode 26.6 leaves its path,
-    /// a call into a runtime newer than macOS 14, in the app
     static func fill(_ template: String, _ values: [String: String]) -> String {
-        var text = template
-        for (name, value) in values {
-            text = text.replacingOccurrences(of: "{\(name)}", with: value)
+        values.reduce(template) { text, value in
+            text.replacingOccurrences(of: "{\(value.key)}", with: value.value)
         }
-        return text
     }
 }

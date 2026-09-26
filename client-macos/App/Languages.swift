@@ -71,9 +71,13 @@ struct LanguageFolder {
         else { return nil }
         let strings = object.compactMapValues { $0 as? String }
         let code = file.deletingPathExtension().lastPathComponent
-        return LanguageFile(
-            code: code, name: strings[nameKey] ?? code,
-            strings: strings.filter { !$0.key.hasPrefix(servicePrefix) })
+        // A loop rather than Dictionary.filter: Xcode 26.6 specializes that one with a typed-throws path,
+        // a call into a runtime newer than macOS 14
+        var interface: [String: String] = [:]
+        for (key, value) in strings where !key.hasPrefix(servicePrefix) {
+            interface[key] = value
+        }
+        return LanguageFile(code: code, name: strings[nameKey] ?? code, strings: interface)
     }
 }
 
