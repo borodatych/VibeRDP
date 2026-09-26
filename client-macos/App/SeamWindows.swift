@@ -153,7 +153,9 @@ final class SeamWindows: NSObject, NSWindowDelegate {
         window.remoteID = id
         window.onMinimize = { [weak self] in self?.onMinimize(id) }
         window.isReleasedWhenClosed = false
-        window.hasShadow = true
+        // No shadow: macOS 26 draws a light rim along every window that has one, a white frame around the dark
+        // windows of Windows; their own border tells them apart
+        window.hasShadow = false
         window.contentView = desktop
         // The keyboard goes to the desktop view as soon as the window is key, as in the session window
         window.initialFirstResponder = desktop

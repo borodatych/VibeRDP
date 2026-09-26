@@ -55,6 +55,7 @@ final class SeamWindowsTests: XCTestCase {
         XCTAssertEqual(window?.frame, CGRect(x: 100, y: 900 - 50 - 300, width: 400, height: 300))
         XCTAssertEqual(window?.title, "Книга1 - Excel")
         XCTAssertEqual(window?.isVisible, true)
+        XCTAssertEqual(window?.hasShadow, false, "a shadow brings the light rim of macOS 26 around the window")
         seam.deactivate()
         XCTAssertNil(seam.window(for: 1))
     }
