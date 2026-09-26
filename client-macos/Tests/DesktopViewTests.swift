@@ -40,6 +40,27 @@ final class DesktopViewTests: XCTestCase {
         window?.close()
     }
 
+    /// A changed frame reaches the screen through the display link, and a still one is not drawn again
+    func testChangedFramesReachTheScreen() async {
+        window.orderFront(nil)
+        let first = await drawn(after: 0)
+        XCTAssertTrue(first, "the frame of the new surface was never drawn")
+        let drawnFrames = view.presentedFrames
+        try? await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(view.presentedFrames, drawnFrames, "a still desktop was drawn again")
+        view.frameChanged()
+        let second = await drawn(after: drawnFrames)
+        XCTAssertTrue(second, "the changed frame was never drawn")
+    }
+
+    /// Waits up to two seconds for the view to put more frames on screen than it had
+    private func drawn(after count: Int) async -> Bool {
+        for _ in 0..<200 where view.presentedFrames <= count {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return view.presentedFrames > count
+    }
+
     /// The view counts from the bottom left, the desktop from the top left
     func testClickLandsOnThePixelUnderIt() {
         view.mouseDown(with: mouseEvent(.leftMouseDown, at: NSPoint(x: 100, y: 668)))

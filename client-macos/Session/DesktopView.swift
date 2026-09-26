@@ -6,7 +6,9 @@ import QuartzCore
 import VibeRDPCore
 
 /// The remote desktop on screen: a CAMetalLayer redrawn from the engine surface whenever a frame changes
-/// AppKit coalesces the redraw requests, so a burst of changed regions costs one draw per display refresh
+/// The view draws at the refresh of its display, through a display link, and only after a change:
+/// a burst of changed regions costs one draw, and a still desktop costs none
+/// AppKit itself never draws this layer: needsDisplay on a view backed by a CAMetalLayer does not reach updateLayer
 /// The mouse over it goes to the input in desktop pixels, and the cursor is the pointer of the server
 /// While it is the first responder of the key window, the keyboard goes to the input as well
 @MainActor
@@ -33,10 +35,22 @@ final class DesktopView: NSView {
     var surface: IOSurfaceRef? {
         didSet {
             texture = surface.flatMap(renderer.makeTexture)
-            needsDisplay = true
+            reportedProblem = nil
+            presented = false
+            requestFrame()
             updateCursor()
         }
     }
+
+    /// What the diagnostics log was told about the current surface: each problem once, the first frame once
+    private var reportedProblem: String?
+    private var presented = false
+
+    /// Runs at the refresh of the display while a change waits, and pauses when none does
+    private var displayLink: CADisplayLink?
+    private var needsFrame = false
+    /// Frames the view put on screen
+    private(set) var presentedFrames = 0
 
     /// The pointer of the server, shown as the cursor over the desktop
     var pointer = RemotePointer.system {
@@ -47,7 +61,6 @@ final class DesktopView: NSView {
         self.renderer = renderer
         super.init(frame: .zero)
         wantsLayer = true
-        layerContentsRedrawPolicy = .onSetNeedsDisplay
         // The visible rect is tracked as the view changes, so one area serves for good
         addTrackingArea(
             NSTrackingArea(
@@ -59,8 +72,6 @@ final class DesktopView: NSView {
     required init?(coder: NSCoder) {
         fatalError("the view is built in code")
     }
-
-    override var wantsUpdateLayer: Bool { true }
 
     /// Remote pixels are sRGB; an untagged layer would show them in the display space, too saturated on wide gamut
     override func makeBackingLayer() -> CALayer {
@@ -75,7 +86,21 @@ final class DesktopView: NSView {
 
     /// Something in the frame changed: draw at the next display refresh
     func frameChanged() {
-        needsDisplay = true
+        requestFrame()
+    }
+
+    private func requestFrame() {
+        needsFrame = true
+        displayLink?.isPaused = false
+    }
+
+    @objc private func step(_ link: CADisplayLink) {
+        guard needsFrame else {
+            link.isPaused = true
+            return
+        }
+        needsFrame = false
+        render()
     }
 
     override func setFrameSize(_ newSize: NSSize) {
@@ -88,14 +113,32 @@ final class DesktopView: NSView {
         updateDrawableSize()
     }
 
-    override func updateLayer() {
-        guard let layer = layer as? CAMetalLayer, let texture, layer.drawableSize.width > 0,
-            layer.drawableSize.height > 0, let drawable = layer.nextDrawable(),
-            let commandBuffer = renderer.queue.makeCommandBuffer()
-        else { return }
+    private func render() {
+        guard let layer = layer as? CAMetalLayer else { return report("the view has no Metal layer") }
+        guard let texture else {
+            return report(surface == nil ? "no surface yet" : "Metal could not wrap the surface in a texture")
+        }
+        guard layer.drawableSize.width > 0, layer.drawableSize.height > 0 else {
+            return report("the layer has no size: \(layer.drawableSize)")
+        }
+        guard let drawable = layer.nextDrawable(), let commandBuffer = renderer.queue.makeCommandBuffer() else {
+            return report("the layer gave no drawable")
+        }
         renderer.encode(texture, into: drawable.texture, commandBuffer: commandBuffer)
         commandBuffer.present(drawable)
         commandBuffer.commit()
+        presentedFrames += 1
+        if !presented {
+            presented = true
+            Diagnostics.info(
+                "frame", "first frame drawn: \(texture.width)x\(texture.height) into \(layer.drawableSize)")
+        }
+    }
+
+    private func report(_ problem: String) {
+        guard problem != reportedProblem else { return }
+        reportedProblem = problem
+        Diagnostics.warning("frame", "not drawn: \(problem)")
     }
 
     // MARK: Mouse
@@ -203,6 +246,15 @@ final class DesktopView: NSView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        // The link follows the display of the window and holds the view: it goes when the view leaves the window
+        displayLink?.invalidate()
+        displayLink = nil
+        if window != nil {
+            let link = displayLink(target: self, selector: #selector(step))
+            link.add(to: .main, forMode: .common)
+            displayLink = link
+            requestFrame()
+        }
         if let window {
             windowObservers = [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification].map { name in
                 NotificationCenter.default.addObserver(forName: name, object: window, queue: nil) { [weak self] _ in
@@ -322,7 +374,7 @@ final class DesktopView: NSView {
         let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
         layer.contentsScale = scale
         layer.drawableSize = CGSize(width: bounds.width * scale, height: bounds.height * scale)
-        needsDisplay = true
+        requestFrame()
         updateCursor()
     }
 }
