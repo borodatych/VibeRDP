@@ -152,7 +152,7 @@ final class ImportTests: XCTestCase {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         let form = ConnectionViewController(
             trusted: TrustedCertificates(defaults: defaults), keyboard: KeyboardSettingsStore(defaults: defaults),
-            profiles: ProfileStore(defaults: defaults, passwords: MemoryPasswordStore()))
+            profiles: ProfileStore(defaults: defaults, passwords: MemoryPasswordStore()), sessionFrameName: nil)
         let office = folder.appendingPathComponent("Офис.rdp")
         try Data("full address:s:win.corp:3390\nusername:s:CORP\\alice\n".utf8).write(to: office)
         let broken = folder.appendingPathComponent("заметка.rdp")

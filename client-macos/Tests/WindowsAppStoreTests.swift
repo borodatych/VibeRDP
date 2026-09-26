@@ -130,7 +130,7 @@ final class WindowsAppStoreTests: XCTestCase {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         let form = ConnectionViewController(
             trusted: TrustedCertificates(defaults: defaults), keyboard: KeyboardSettingsStore(defaults: defaults),
-            profiles: ProfileStore(defaults: defaults, passwords: MemoryPasswordStore()))
+            profiles: ProfileStore(defaults: defaults, passwords: MemoryPasswordStore()), sessionFrameName: nil)
         let store = WindowsAppStore(database: database)
 
         form.importWindowsApp(from: store)

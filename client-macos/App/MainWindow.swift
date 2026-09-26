@@ -1,6 +1,6 @@
 import AppKit
 
-/// The main window: the connection form until the session view arrives (roadmap 1.2)
+/// The main window: the list of connections; a session opens a window of its own
 @MainActor
 enum MainWindow {
     static let defaultSize = NSSize(width: 1024, height: 640)

@@ -42,7 +42,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let profiles = ProfileStore(passwords: KeychainPasswordStore())
-        let content = ConnectionViewController(trusted: TrustedCertificates(), keyboard: keyboard, profiles: profiles)
+        let content = ConnectionViewController(
+            trusted: TrustedCertificates(), keyboard: keyboard, profiles: profiles,
+            sessionFrameName: SessionWindowController.frameName)
         let window = MainWindow.make(title: Self.appName, content: content)
         window.makeKeyAndOrderFront(nil)
         mainWindow = window

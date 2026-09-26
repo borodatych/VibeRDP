@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The main window without a session: the saved connections on the left, the selected one on the right
+/// The main window: the saved connections on the left, the selected one on the right
 struct ConnectionsView: View {
     static let sidebarWidth: CGFloat = 240
 

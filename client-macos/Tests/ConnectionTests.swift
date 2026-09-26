@@ -24,7 +24,7 @@ final class ConnectionTests: XCTestCase {
         profiles.add(ConnectionProfile(name: "Test", address: address))
         let form = ConnectionViewController(
             trusted: TrustedCertificates(defaults: defaults), keyboard: KeyboardSettingsStore(defaults: defaults),
-            profiles: profiles)
+            profiles: profiles, sessionFrameName: nil)
         form.loadView()
         return form
     }

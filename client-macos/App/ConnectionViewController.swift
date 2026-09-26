@@ -3,20 +3,23 @@ import IOSurface
 import SwiftUI
 import VibeRDPCore
 
-/// Content of the main window: the saved connections, and the remote desktop over them while connected
+/// Content of the main window: the saved connections and the session they start
+/// The session shows in a window of its own, so this window keeps its size and place whatever the session does
+/// Questions while connecting come over this window, the reasons a session ended show in its status line
 @MainActor
 final class ConnectionViewController: NSViewController {
     let model: ConnectionsModel
 
     private let trusted: TrustedCertificates
     private let keyboard: KeyboardSettingsStore
+    /// The name the session window keeps its frame under, nil for none
+    private let sessionFrameName: String?
     private var session: SessionController?
     /// Keeps the Mac clipboard and the remote one in step while the session lasts
     private var clipboard: ClipboardBridge?
-    private var connections: NSView?
-    private var desktop: DesktopView?
-    /// Over the desktop while a dropped connection is being restored
-    private var reconnecting: ReconnectingOverlay?
+    /// The window of the session, from the start of a connection; it shows once the user is in
+    private var sessionWindow: SessionWindowController?
+    private var desktop: DesktopView? { sessionWindow?.desktop }
     private var wakeObserver: NSObjectProtocol?
     /// The profile of the running session and how it signs in
     private var attempt: LoginAttempt?
@@ -25,19 +28,13 @@ final class ConnectionViewController: NSViewController {
     private var failure: (kind: VRCErrorKind, message: String)?
     /// The first update after each change of size is logged, the rest are too many to read
     private var frameUpdateLogged = false
-    /// The desktop follows the window once the window has stopped for this long:
-    /// a drag of the corner would otherwise make the server redraw at every step
-    static let resizeDelay: TimeInterval = 0.3
-    private var resizeTimer: Timer?
-    /// Disconnect in the title bar while connected, where it shows in full screen too, when the menu bar hides
-    private var disconnectAccessory: NSTitlebarAccessoryViewController?
-    /// The button sits in the title bar of a standard window: its height, and air from the right edge
-    static let titleBarHeight: CGFloat = 28
-    static let titleBarMargin: CGFloat = 8
 
-    init(trusted: TrustedCertificates, keyboard: KeyboardSettingsStore, profiles: ProfileStore) {
+    init(
+        trusted: TrustedCertificates, keyboard: KeyboardSettingsStore, profiles: ProfileStore, sessionFrameName: String?
+    ) {
         self.trusted = trusted
         self.keyboard = keyboard
+        self.sessionFrameName = sessionFrameName
         model = ConnectionsModel(store: profiles)
         super.init(nibName: nil, bundle: nil)
         model.onConnect = { [weak self] id in self?.connect(id) }
@@ -60,14 +57,10 @@ final class ConnectionViewController: NSViewController {
     override func loadView() {
         let connections = NSHostingView(rootView: ConnectionsView(model: model))
         connections.frame = NSRect(origin: .zero, size: MainWindow.defaultSize)
-        connections.autoresizingMask = [.width, .height]
-        let container = NSView(frame: NSRect(origin: .zero, size: MainWindow.defaultSize))
-        container.addSubview(connections)
-        self.connections = connections
-        view = container
+        view = connections
     }
 
-    /// The menu command: while connected, the desktop covers the list together with its button
+    /// The menu command while this window is key; the session window takes it while it is
     @objc func disconnect(_ sender: Any?) {
         session?.disconnect()
     }
@@ -186,11 +179,12 @@ final class ConnectionViewController: NSViewController {
         let desktop = DesktopView(renderer: renderer)
         desktop.input = controller
         desktop.keyboard = ProfileKeyboardSettings(store: keyboard, keyboard: profile.keyboard)
-        desktop.onResize = { [weak self] size in self?.desktopResized(to: size) }
-        self.desktop = desktop
+        let window = SessionWindowController(
+            desktop: desktop, title: profile.title, frameName: sessionFrameName,
+            onDisconnect: { [weak controller] in controller?.disconnect() },
+            onResize: { [weak controller] size in controller?.resizeDesktop(to: size) })
+        sessionWindow = window
         model.isBusy = true
-        // The desktop is as large as the window in points; scaling it to the pixels of the display is task 3.2
-        let size = view.bounds.size
         let gateway = profile.gateway.map {
             GatewayParameters(
                 address: $0, usesServerCredentials: profile.gatewayUsesServerCredentials,
@@ -199,10 +193,10 @@ final class ConnectionViewController: NSViewController {
         }
         let started = controller.connect(
             to: address, username: attempt.username, password: attempt.password ?? "", gateway: gateway,
-            desktop: CGSize(width: size.width.rounded(), height: size.height.rounded()))
+            desktop: window.desktopSize)
         if !started {
             session = nil
-            self.desktop = nil
+            sessionWindow = nil
             self.attempt = nil
             model.isBusy = false
             model.status = Localization.text(.connectionStatusStartFailed, ["host": host])
@@ -219,18 +213,18 @@ final class ConnectionViewController: NSViewController {
         switch event {
         case .state(.connecting):
             model.status = Localization.text(.connectionStatusConnecting, ["host": host])
-        case .state(.connected) where reconnecting != nil:
+        case .state(.connected) where sessionWindow?.isReconnecting == true:
             model.status = Localization.text(.connectionStatusConnected, ["host": host])
-            hideReconnecting()
+            sessionWindow?.hideReconnecting()
         case .state(.connected):
             model.status = Localization.text(.connectionStatusConnected, ["host": host])
             signedIn()
-            showDesktop()
+            sessionWindow?.show()
         case .state(.reconnecting):
             model.status = Localization.text(.connectionStatusReconnecting, ["host": host])
-            showReconnecting()
+            sessionWindow?.showReconnecting(host: host)
         case .reconnecting(let attempt, let maxAttempts):
-            reconnecting?.show(attempt: attempt, of: maxAttempts)
+            sessionWindow?.showReconnectingAttempt(attempt, of: maxAttempts)
         case .state(.disconnected):
             sessionEnded()
         case .state:
@@ -304,8 +298,13 @@ final class ConnectionViewController: NSViewController {
 
     private func sessionEnded() {
         closeSheet()
-        hideReconnecting()
-        hideDesktop()
+        let wasShown = sessionWindow?.window?.isVisible == true
+        sessionWindow?.end()
+        sessionWindow = nil
+        // The list comes forward with the reason the session ended in its status line
+        if wasShown {
+            view.window?.makeKeyAndOrderFront(nil)
+        }
         clipboard?.stop()
         clipboard = nil
         session = nil
@@ -324,91 +323,16 @@ final class ConnectionViewController: NSViewController {
         }
     }
 
-    /// The desktop covers the list while connected; the list stays underneath for the next connection
-    private func showDesktop() {
-        guard let desktop, desktop.superview == nil else { return }
-        desktop.frame = view.bounds
-        desktop.autoresizingMask = [.width, .height]
-        view.addSubview(desktop)
-        connections?.isHidden = true
-        Diagnostics.info(
-            "frame", "desktop shown in \(view.bounds.size), backing scale \(view.window?.backingScaleFactor ?? 0)")
-        if let profile = attempt.flatMap({ model.store.profile($0.profileID) }) {
-            view.window?.subtitle = profile.title
+    /// Questions come over the window the user looks at: the session window once it shows, the list before
+    private var questionWindow: NSWindow? {
+        if let window = sessionWindow?.window, window.isVisible {
+            return window
         }
-        view.window?.makeFirstResponder(desktop)
-        showDisconnectButton()
-    }
-
-    private func showReconnecting() {
-        guard reconnecting == nil else { return }
-        let overlay = ReconnectingOverlay(host: host) { [weak self] in self?.session?.disconnect() }
-        overlay.frame = view.bounds
-        overlay.autoresizingMask = [.width, .height]
-        view.addSubview(overlay)
-        reconnecting = overlay
-    }
-
-    private func hideReconnecting() {
-        reconnecting?.removeFromSuperview()
-        reconnecting = nil
-    }
-
-    /// The window stopped changing: the server gets its size, the frame scales into the window meanwhile
-    private func desktopResized(to size: CGSize) {
-        resizeTimer?.invalidate()
-        resizeTimer = Timer.scheduledTimer(withTimeInterval: Self.resizeDelay, repeats: false) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self, let session = self.session, self.desktop?.superview != nil else { return }
-                let rounded = CGSize(width: size.width.rounded(), height: size.height.rounded())
-                Diagnostics.info("frame", "asking for a desktop of \(rounded)")
-                session.resizeDesktop(to: rounded)
-            }
-        }
-    }
-
-    private func showDisconnectButton() {
-        guard disconnectAccessory == nil, let window = view.window else { return }
-        let button = NSButton(
-            title: Localization.text(.connectionActionDisconnect),
-            image: NSImage(systemSymbolName: "xmark.circle", accessibilityDescription: nil) ?? NSImage(),
-            target: self, action: #selector(disconnect(_:)))
-        button.bezelStyle = .accessoryBarAction
-        button.imagePosition = .imageLeading
-        let accessory = NSTitlebarAccessoryViewController()
-        let holder = NSView()
-        holder.addSubview(button)
-        button.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            button.centerYAnchor.constraint(equalTo: holder.centerYAnchor),
-            button.leadingAnchor.constraint(equalTo: holder.leadingAnchor),
-            button.trailingAnchor.constraint(equalTo: holder.trailingAnchor, constant: -Self.titleBarMargin),
-        ])
-        holder.frame.size = NSSize(width: button.fittingSize.width + Self.titleBarMargin, height: Self.titleBarHeight)
-        accessory.view = holder
-        accessory.layoutAttribute = .trailing
-        window.addTitlebarAccessoryViewController(accessory)
-        disconnectAccessory = accessory
-    }
-
-    private func hideDisconnectButton() {
-        disconnectAccessory?.removeFromParent()
-        disconnectAccessory = nil
-    }
-
-    private func hideDesktop() {
-        resizeTimer?.invalidate()
-        resizeTimer = nil
-        hideDisconnectButton()
-        desktop?.removeFromSuperview()
-        desktop = nil
-        connections?.isHidden = false
-        view.window?.subtitle = ""
-        view.window?.makeFirstResponder(connections)
+        return view.window
     }
 
     private func ask(about certificate: ServerCertificate, verdict: CertificateVerdict) {
-        guard let window = view.window else {
+        guard let window = questionWindow else {
             session?.answerCertificate(accept: false, remember: false)
             return
         }
@@ -425,7 +349,7 @@ final class ConnectionViewController: NSViewController {
     /// The engine waits for credentials it was not given; declining ends the connection without an error
     /// A gateway that takes the credentials of the computer asks for those, so the question is about the computer
     private func askForCredentials(_ request: CredentialsRequest) {
-        guard let window = view.window, let attempt, let profile = model.store.profile(attempt.profileID) else {
+        guard let window = questionWindow, let attempt, let profile = model.store.profile(attempt.profileID) else {
             session?.cancelCredentials()
             return
         }
@@ -481,7 +405,7 @@ final class ConnectionViewController: NSViewController {
 
     /// A gateway message: a consent waits for the user's answer, a notice only needs to be read
     private func show(_ message: GatewayMessage) {
-        guard let window = view.window else {
+        guard let window = questionWindow else {
             if message.needsConsent {
                 session?.answerGatewayMessage(accept: false)
             }
@@ -521,7 +445,7 @@ final class ConnectionViewController: NSViewController {
 
     /// A notice that needs no answer, over whatever the window shows
     private func tell(_ text: String) {
-        guard let window = view.window else { return }
+        guard let window = questionWindow else { return }
         let alert = NSAlert()
         alert.messageText = text
         alert.beginSheetModal(for: window)
@@ -529,8 +453,10 @@ final class ConnectionViewController: NSViewController {
 
     /// The session ended while a question was open: the question has nothing left to answer
     private func closeSheet() {
-        if let window = view.window, let sheet = window.attachedSheet {
-            window.endSheet(sheet, returnCode: .abort)
+        for window in [view.window, sessionWindow?.window].compactMap({ $0 }) {
+            if let sheet = window.attachedSheet {
+                window.endSheet(sheet, returnCode: .abort)
+            }
         }
     }
 
