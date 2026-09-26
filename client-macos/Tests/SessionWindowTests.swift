@@ -189,21 +189,26 @@ final class SessionWindowTests: XCTestCase {
     /// By the window, the next session opens as large as the last window was: the frame is kept under its name
     func testWindowKeepsItsFrame() throws {
         controller.end()
-        let name = "SessionWindowTests-\(UUID().uuidString)"
-        defer { UserDefaults.standard.removeObject(forKey: WindowFrameKeeper.key(for: name)) }
+        // Defaults of their own: the frame of the app itself stays as the user left it
+        let suite = "tech.vibebrains.viberdp.tests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
         let first = SessionWindowController(
             desktop: DesktopView(renderer: renderer), title: "Test", mode: .window, fixedSize: .standard,
-            sharp: false, screen: nil, frameName: name, onDisconnect: {}, onResize: { _ in })
+            sharp: false, screen: nil, frameName: "Test", frameDefaults: defaults, onDisconnect: {},
+            onResize: { _ in })
         first.show()
         first.window?.setContentSize(NSSize(width: 1100, height: 700))
         first.end()
-        XCTAssertNotNil(
-            UserDefaults.standard.string(forKey: WindowFrameKeeper.key(for: name)), "the frame was not kept")
+        XCTAssertNotNil(defaults.string(forKey: WindowFrameKeeper.key(for: "Test")), "the frame was not kept")
 
-        controller = SessionWindowController(
+        let second = SessionWindowController(
             desktop: DesktopView(renderer: renderer), title: "Test", mode: .window, fixedSize: .standard,
-            sharp: false, screen: nil, frameName: name, onDisconnect: {}, onResize: { _ in })
-        XCTAssertEqual(controller.desktopRequest.size, CGSize(width: 1100, height: 700))
+            sharp: false, screen: nil, frameName: "Test", frameDefaults: defaults, onDisconnect: {},
+            onResize: { _ in })
+        XCTAssertEqual(second.desktopRequest.size, CGSize(width: 1100, height: 700))
+        second.end()
+        controller = make(.window)
     }
 
     /// Full screen asks for the screen from the start, so the desktop needs no change once the window is there

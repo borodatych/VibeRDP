@@ -17,6 +17,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Files the Finder asked to open before the window existed: a double click on a .rdp file launches the app
     private var pendingFiles: [URL] = []
 
+    /// How long after the main window shows its place goes to the log, so a move by the system is caught
+    static let placementCheckDelay: TimeInterval = 1
+
     /// XCTest runs its tests inside the app and names its configuration to the process through this variable
     static let testConfigurationVariable = "XCTestConfigurationFilePath"
 
@@ -51,6 +54,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mainWindowFrame = WindowFrameKeeper(
             window: window, name: MainWindow.frameName, fallback: WindowPlacement.primaryScreen)
         window.makeKeyAndOrderFront(nil)
+        // The system may move a window after it shows, as onto another display: the log shows where it stays
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(Self.placementCheckDelay))
+            self?.mainWindowFrame?.logPlace("shown")
+        }
         mainWindow = window
         NSApp.activate()
         if !pendingFiles.isEmpty {

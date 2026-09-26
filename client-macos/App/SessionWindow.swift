@@ -43,8 +43,8 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
     /// and keeping theirs would replace what the window mode comes back with
     init(
         desktop: DesktopView, title: String, mode: ProfileDisplayMode, fixedSize: DesktopSize, sharp: Bool,
-        screen: NSScreen?, frameName: String?, onDisconnect: @escaping () -> Void,
-        onResize: @escaping (DesktopRequest) -> Void
+        screen: NSScreen?, frameName: String?, frameDefaults: UserDefaults = .standard,
+        onDisconnect: @escaping () -> Void, onResize: @escaping (DesktopRequest) -> Void
     ) {
         self.desktop = desktop
         self.mode = mode
@@ -98,7 +98,8 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
         shouldCascadeWindows = false
         // A frame whose screen is gone gives way to the screen of the connections
         if let frameName, keepsFrame {
-            frameKeeper = WindowFrameKeeper(window: window, name: frameName, fallback: self.screen)
+            frameKeeper = WindowFrameKeeper(
+                window: window, name: frameName, defaults: frameDefaults, fallback: self.screen)
         }
         if mode != .fixed {
             desktop.onResize = { [weak self] size in self?.desktopResized(to: size) }

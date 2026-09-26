@@ -49,6 +49,7 @@ final class WindowFrameKeeper {
     }
 
     private let window: NSWindow
+    private let name: String
     private let key: String
     private let defaults: UserDefaults
     private var observers: [NSObjectProtocol] = []
@@ -57,6 +58,7 @@ final class WindowFrameKeeper {
 
     init(window: NSWindow, name: String, defaults: UserDefaults = .standard, fallback: NSScreen?) {
         self.window = window
+        self.name = name
         self.defaults = defaults
         key = Self.key(for: name)
         restored = restore(legacy: Self.legacyKey(for: name), fallback: fallback)
@@ -70,6 +72,21 @@ final class WindowFrameKeeper {
                 MainActor.assumeIsolated { self?.save() }
             }
         }
+        observers.append(
+            NotificationCenter.default.addObserver(
+                forName: NSWindow.willCloseNotification, object: window, queue: nil
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.logPlace("kept on close") }
+            })
+    }
+
+    /// Where the window stands and on which screen, for the diagnostics log: a window the system moves after
+    /// it opens shows here, with the screens it had then
+    func logPlace(_ event: String) {
+        let screen = window.screen?.localizedName ?? "none"
+        Diagnostics.info(
+            "window",
+            "\(name) \(event): \(NSStringFromRect(window.frame)) on \(screen), active space \(window.isOnActiveSpace)")
     }
 
     /// No more saving: the window goes with its owner
@@ -86,15 +103,19 @@ final class WindowFrameKeeper {
 
     private func restore(legacy: String, fallback: NSScreen?) -> Bool {
         let screens = NSScreen.screens.map(\.visibleFrame)
-        if let frame = Self.frame(defaults.string(forKey: key)) ?? Self.legacyFrame(defaults.string(forKey: legacy)),
-            WindowPlacement.isReachable(frame, on: screens)
-        {
+        let kept = Self.frame(defaults.string(forKey: key)) ?? Self.legacyFrame(defaults.string(forKey: legacy))
+        let names = NSScreen.screens.map { "\($0.localizedName) \(NSStringFromRect($0.visibleFrame))" }
+        Diagnostics.info(
+            "window",
+            "\(name) opens: kept \(kept.map(NSStringFromRect) ?? "none"), screens \(names.joined(separator: ", "))")
+        if let frame = kept, WindowPlacement.isReachable(frame, on: screens) {
             window.setFrame(frame, display: false)
             return true
         }
         if let area = fallback?.visibleFrame {
             window.setFrame(WindowPlacement.centered(window.frame.size, in: area), display: false)
         }
+        Diagnostics.info("window", "\(name) goes to the fallback screen: \(NSStringFromRect(window.frame))")
         return false
     }
 
