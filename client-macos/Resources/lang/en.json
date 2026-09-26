@@ -99,6 +99,7 @@
   "connections.layout.grid": "Tiles",
   "connections.layout.list": "List",
   "connections.sort.label": "Sort",
+  "connections.sort.manual": "Manually",
   "connections.sort.name": "By Name",
   "connections.sort.lastConnected": "By Last Connection",
   "connections.edit.done": "Done",

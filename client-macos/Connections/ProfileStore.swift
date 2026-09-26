@@ -1,14 +1,15 @@
 import Foundation
 import Observation
 
-/// The saved connections, kept in the app defaults in the order they were added
+/// The saved connections, kept in the app defaults in the order they were added or the user moved them to
 /// A profile that goes takes its saved passwords with it
 @MainActor
 @Observable
 final class ProfileStore {
     static let defaultsKey = "connections"
 
-    @ObservationIgnored private let defaults: UserDefaults
+    /// Also keeps how the window shows the connections: the view belongs with the list it shows
+    @ObservationIgnored let defaults: UserDefaults
     @ObservationIgnored let passwords: PasswordStore
 
     private(set) var profiles: [ConnectionProfile] {
@@ -32,6 +33,22 @@ final class ProfileStore {
 
     func profile(_ id: UUID) -> ConnectionProfile? {
         profiles.first { $0.id == id }
+    }
+
+    /// The profile takes the place of the target, and those between shift by one toward where it was
+    func move(_ id: UUID, to target: UUID) {
+        guard id != target, let from = profiles.firstIndex(where: { $0.id == id }),
+            let to = profiles.firstIndex(where: { $0.id == target })
+        else { return }
+        var reordered = profiles
+        reordered.insert(reordered.remove(at: from), at: to)
+        profiles = reordered
+    }
+
+    /// The profiles in the order of these ids; a profile the ids miss keeps its place at the end
+    func reorder(_ ids: [UUID]) {
+        let named = ids.compactMap(profile)
+        profiles = named + profiles.filter { !ids.contains($0.id) }
     }
 
     func add(_ profile: ConnectionProfile) {

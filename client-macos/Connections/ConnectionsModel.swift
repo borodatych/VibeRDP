@@ -11,6 +11,8 @@ enum ConnectionsSection: String, CaseIterable, Identifiable, Sendable {
 
 /// The order of the tiles
 enum ConnectionsSort: String, CaseIterable, Identifiable, Sendable {
+    /// As the user dragged them, new ones at the end
+    case manual
     /// By title, as the Finder sorts names
     case name
     /// The last connected first; those never connected follow by title
@@ -36,8 +38,15 @@ final class ConnectionsModel {
     @ObservationIgnored let snapshots: SessionSnapshots
 
     var section: ConnectionsSection = .all
-    var sort: ConnectionsSort = .name
-    var layout: ConnectionsLayout = .grid
+    /// The order and the layout stay for the next launch: a dragged order would be lost otherwise
+    var sort: ConnectionsSort {
+        didSet { store.defaults.set(sort.rawValue, forKey: Self.sortKey) }
+    }
+    var layout: ConnectionsLayout {
+        didSet { store.defaults.set(layout.rawValue, forKey: Self.layoutKey) }
+    }
+    static let sortKey = "connections.sort"
+    static let layoutKey = "connections.layout"
     var searchText = ""
     /// The profile the edit sheet shows, nil while it is closed
     var editing: UUID?
@@ -73,6 +82,8 @@ final class ConnectionsModel {
     init(store: ProfileStore, snapshots: SessionSnapshots = SessionSnapshots()) {
         self.store = store
         self.snapshots = snapshots
+        sort = store.defaults.string(forKey: Self.sortKey).flatMap(ConnectionsSort.init(rawValue:)) ?? .name
+        layout = store.defaults.string(forKey: Self.layoutKey).flatMap(ConnectionsLayout.init(rawValue:)) ?? .grid
         selection = store.profiles.first?.id
         refreshSavedPassword()
     }
@@ -126,6 +137,8 @@ final class ConnectionsModel {
             $0.title.localizedStandardCompare($1.title) == .orderedAscending
         }
         switch sort {
+        case .manual:
+            return shown
         case .name:
             return shown.sorted(by: byTitle)
         case .lastConnected:
@@ -143,6 +156,24 @@ final class ConnectionsModel {
     func edit(_ id: UUID) {
         selection = id
         editing = id
+    }
+
+    /// A tile dragged over another takes its place, and the order becomes the manual one, which keeps it
+    /// The order the tiles showed becomes the manual one first, so nothing but the dragged tile moves
+    func move(_ id: UUID, to target: UUID) {
+        if sort != .manual {
+            store.reorder(Self.visible(store.profiles, section: .all, search: "", sort: sort).map(\.id))
+            sort = .manual
+        }
+        store.move(id, to: target)
+    }
+
+    /// The profile a row moved in a list lands in place of: the one at the drop above it,
+    /// the one before the drop below it; nil when the row stays where it was
+    static func target(moving source: Int, to destination: Int, in profiles: [ConnectionProfile]) -> UUID? {
+        let index = destination > source ? destination - 1 : destination
+        guard profiles.indices.contains(source), profiles.indices.contains(index), index != source else { return nil }
+        return profiles[index].id
     }
 
     func toggleFavorite(_ id: UUID) {

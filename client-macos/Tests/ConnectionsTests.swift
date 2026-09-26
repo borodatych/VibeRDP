@@ -160,6 +160,40 @@ final class ConnectionsModelTests: XCTestCase {
         XCTAssertEqual(titles(.favorites, "acc", .name), [])
     }
 
+    /// A dragged tile takes the place of the one under it; the order the tiles showed becomes the manual one first,
+    /// and the order and the layout stay for the next launch
+    func testDragReorders() throws {
+        for name in ["В", "Б", "А"] {
+            model.addProfile()
+            model.update { $0.name = name }
+        }
+        XCTAssertEqual(model.sort, .name)
+        XCTAssertEqual(model.visibleProfiles.map(\.title), ["А", "Б", "В"])
+        let a = model.visibleProfiles[0].id
+        let c = model.visibleProfiles[2].id
+        model.move(c, to: a)
+        XCTAssertEqual(model.sort, .manual)
+        XCTAssertEqual(model.visibleProfiles.map(\.title), ["В", "А", "Б"], "the shown order was kept, then В moved")
+        model.move(c, to: model.visibleProfiles[2].id)
+        XCTAssertEqual(model.visibleProfiles.map(\.title), ["А", "Б", "В"])
+        model.layout = .list
+
+        let again = ConnectionsModel(store: ProfileStore(defaults: model.store.defaults, passwords: passwords))
+        XCTAssertEqual(again.sort, .manual)
+        XCTAssertEqual(again.layout, .list)
+        XCTAssertEqual(again.visibleProfiles.map(\.title), ["А", "Б", "В"])
+    }
+
+    /// A row moved in a list lands in place of the row at the drop above it, of the one before the drop below it
+    func testListMoveTarget() {
+        let profiles = ["a", "b", "c", "d"].map { ConnectionProfile(name: $0, address: $0) }
+        XCTAssertEqual(ConnectionsModel.target(moving: 3, to: 0, in: profiles), profiles[0].id)
+        XCTAssertEqual(ConnectionsModel.target(moving: 0, to: 4, in: profiles), profiles[3].id)
+        XCTAssertEqual(ConnectionsModel.target(moving: 0, to: 2, in: profiles), profiles[1].id)
+        XCTAssertNil(ConnectionsModel.target(moving: 1, to: 1, in: profiles))
+        XCTAssertNil(ConnectionsModel.target(moving: 1, to: 2, in: profiles), "a drop right below a row leaves it")
+    }
+
     /// A tile goes to the favourites and back; a new connection opens in the edit sheet
     func testFavoriteAndAddAndEdit() throws {
         model.addAndEdit()

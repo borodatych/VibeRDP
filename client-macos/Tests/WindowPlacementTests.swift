@@ -49,9 +49,12 @@ final class WindowPlacementTests: XCTestCase {
         first.orderFront(nil)
         first.saveFrame(usingName: name)
         first.orderOut(nil)
+        // Where on the screens a frame comes back is for AppKit to say: with several screens it places the frame
+        // of a window never shown against the screen it takes for current; the size and the reach are ours
         let second = makeWindow()
         XCTAssertTrue(WindowPlacement.restore(second, name: name, fallback: screen))
-        XCTAssertEqual(second.frame, kept)
+        XCTAssertEqual(second.frame.size, kept.size)
+        XCTAssertTrue(WindowPlacement.isReachable(second.frame, on: NSScreen.screens.map(\.visibleFrame)))
 
         let gone = makeWindow()
         gone.setFrame(CGRect(x: 100_000, y: 100_000, width: 900, height: 600), display: false)

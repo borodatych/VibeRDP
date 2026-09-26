@@ -92,6 +92,7 @@ struct ConnectionsView: View {
         ToolbarItem {
             Menu {
                 Picker(Localization.text(.connectionsSortLabel), selection: $model.sort) {
+                    Text(Localization.text(.connectionsSortManual)).tag(ConnectionsSort.manual)
                     Text(Localization.text(.connectionsSortName)).tag(ConnectionsSort.name)
                     Text(Localization.text(.connectionsSortLastConnected)).tag(ConnectionsSort.lastConnected)
                 }
@@ -125,13 +126,28 @@ private struct EditedProfile: Identifiable {
 }
 
 /// The connections of the section: tiles or rows, or what to do when there are none
+/// A tile is dragged as an icon in the Dock is: it lifts and follows the pointer, and the others make way for it
 private struct ConnectionsContent: View {
     static let tileMinimumWidth: CGFloat = 260
     static let tileMaximumWidth: CGFloat = 360
     static let spacing: CGFloat = 20
+    /// How far the pointer moves before a press becomes a drag, so a click stays a click
+    static let dragThreshold: CGFloat = 8
+    /// The lifted tile: a little larger, over the others, with a shadow
+    static let liftScale: CGFloat = 1.06
+    static let liftShadow: CGFloat = 18
+    static let tiles = "tiles"
+    /// The others make way with a spring, as icons do
+    static let makeWay = Animation.spring(response: 0.35, dampingFraction: 0.78)
 
     @Bindable var model: ConnectionsModel
     @Binding var deleting: ConnectionProfile?
+    /// The tile being dragged, where the pointer is and where it held the tile, in the space of the grid
+    @State private var dragged: UUID?
+    @State private var pointer: CGPoint = .zero
+    @State private var grab: CGSize = .zero
+    /// Where each tile stands now in the grid, as the layout reports it
+    @State private var frames: [UUID: CGRect] = [:]
 
     var body: some View {
         let profiles = model.visibleProfiles
@@ -172,12 +188,11 @@ private struct ConnectionsContent: View {
                         alignment: .leading, spacing: Self.spacing
                     ) {
                         ForEach(profiles) { profile in
-                            ConnectionTile(model: model, profile: profile)
-                                .onTapGesture(count: 2) { model.connect(profile.id) }
-                                .onTapGesture { model.selection = profile.id }
-                                .contextMenu { ConnectionMenu(model: model, profile: profile, deleting: $deleting) }
+                            tile(profile)
                         }
                     }
+                    .coordinateSpace(name: Self.tiles)
+                    .onPreferenceChange(TileFrames.self) { frames = $0 }
                 }
                 .padding(Self.spacing)
             }
@@ -193,6 +208,13 @@ private struct ConnectionsContent: View {
                     ConnectionRow(model: model, profile: profile)
                         .tag(profile.id)
                 }
+                // A row dragged between others takes the place it is dropped at, as a tile does
+                .onMove { sources, destination in
+                    guard let source = sources.first,
+                        let target = ConnectionsModel.target(moving: source, to: destination, in: profiles)
+                    else { return }
+                    model.move(profiles[source].id, to: target)
+                }
             }
             // Double-click or Return on a row connects, as in the Finder a double-click opens
             .contextMenu(forSelectionType: UUID.self) { ids in
@@ -205,6 +227,69 @@ private struct ConnectionsContent: View {
                 }
             }
         }
+    }
+}
+
+extension ConnectionsContent {
+    /// A tile with its clicks, its menu and its drag; the dragged one follows the pointer over the others
+    private func tile(_ profile: ConnectionProfile) -> some View {
+        let lifted = dragged == profile.id
+        let slot = frames[profile.id]
+        let offset =
+            lifted && slot != nil
+            ? CGSize(
+                width: pointer.x - grab.width - slot!.midX, height: pointer.y - grab.height - slot!.midY)
+            : .zero
+        return ConnectionTile(model: model, profile: profile)
+            .background {
+                GeometryReader { geometry in
+                    Color.clear.preference(
+                        key: TileFrames.self, value: [profile.id: geometry.frame(in: .named(Self.tiles))])
+                }
+            }
+            .scaleEffect(lifted ? Self.liftScale : 1)
+            .shadow(color: .black.opacity(lifted ? 0.45 : 0), radius: lifted ? Self.liftShadow : 0)
+            .offset(offset)
+            .zIndex(lifted ? 1 : 0)
+            // The lifted tile moves with the pointer itself; only the others slide into their new places
+            .transaction { transaction in
+                if lifted {
+                    transaction.animation = nil
+                }
+            }
+            .onTapGesture(count: 2) { model.connect(profile.id) }
+            .onTapGesture { model.selection = profile.id }
+            .gesture(drag(profile))
+            .contextMenu { ConnectionMenu(model: model, profile: profile, deleting: $deleting) }
+    }
+
+    private func drag(_ profile: ConnectionProfile) -> some Gesture {
+        DragGesture(minimumDistance: Self.dragThreshold, coordinateSpace: .named(Self.tiles))
+            .onChanged { value in
+                if dragged == nil, let slot = frames[profile.id] {
+                    model.selection = profile.id
+                    grab = CGSize(width: value.startLocation.x - slot.midX, height: value.startLocation.y - slot.midY)
+                    withAnimation(Self.makeWay) { dragged = profile.id }
+                }
+                pointer = value.location
+                // The tile under the pointer gives its place; the others shift by one toward the gap
+                let under = frames.first { $0.key != profile.id && $0.value.contains(value.location) }
+                if let target = under?.key {
+                    withAnimation(Self.makeWay) { model.move(profile.id, to: target) }
+                }
+            }
+            .onEnded { _ in
+                withAnimation(Self.makeWay) { dragged = nil }
+            }
+    }
+}
+
+/// Where each tile stands in the grid, gathered from the tiles
+private struct TileFrames: PreferenceKey {
+    static let defaultValue: [UUID: CGRect] = [:]
+
+    static func reduce(value: inout [UUID: CGRect], nextValue: () -> [UUID: CGRect]) {
+        value.merge(nextValue()) { _, new in new }
     }
 }
 
