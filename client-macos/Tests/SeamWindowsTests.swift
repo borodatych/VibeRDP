@@ -167,4 +167,13 @@ final class SeamWindowsTests: XCTestCase {
         XCTAssertEqual(window.frame, before)
         XCTAssertEqual(moves.last?.1, CGRect(x: 100, y: 50, width: 400, height: 300))
     }
+
+    /// A window of the host at the very top of its screen stays there, under the menu bar of the Mac
+    func testWindowStaysWhereTheHostPutsIt() {
+        seam.activate(remote)
+        send(create(1, 0, 0))
+        XCTAssertEqual(seam.window(for: 1)?.frame, CGRect(x: 0, y: 600, width: 400, height: 300))
+        send(.map([("type", .string("window.update")), ("id", .uint(1)), ("rect", .array([.int(-100), .int(-20), .int(400), .int(300)]))]))
+        XCTAssertEqual(seam.window(for: 1)?.frame.origin, CGPoint(x: -100, y: 620), "past the edge of the screen too")
+    }
 }

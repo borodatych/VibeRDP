@@ -82,10 +82,10 @@ final class SessionWindowTests: XCTestCase {
     func testDesktopFollowsTheWindowOnceItStops() async throws {
         let window = try XCTUnwrap(controller.window)
         controller.show()
-        window.setContentSize(NSSize(width: 1100, height: 700))
-        window.setContentSize(NSSize(width: 1280, height: 800))
+        window.setContentSize(NSSize(width: 700, height: 450))
+        window.setContentSize(NSSize(width: 800, height: 500))
         try await Task.sleep(for: .seconds(SessionWindowController.resizeDelay * 3))
-        XCTAssertEqual(sizes, [CGSize(width: 1280, height: 800)])
+        XCTAssertEqual(sizes, [CGSize(width: 800, height: 500)])
     }
 
     /// The overlay covers the desktop while the connection is restored and goes with it
@@ -125,9 +125,9 @@ final class SessionWindowTests: XCTestCase {
         XCTAssertEqual(
             controller.desktopRequest.size, CGSize(width: content.width.rounded(), height: content.height.rounded()))
         controller.show()
-        window.setContentSize(NSSize(width: 1100, height: 700))
+        window.setContentSize(NSSize(width: 700, height: 450))
         try await Task.sleep(for: .seconds(SessionWindowController.resizeDelay * 3))
-        XCTAssertEqual(sizes, [CGSize(width: 1100, height: 700)])
+        XCTAssertEqual(sizes, [CGSize(width: 700, height: 450)])
     }
 
     /// Every mode but the window one opens on the screen it is given, the screen of the connections
@@ -215,7 +215,7 @@ final class SessionWindowTests: XCTestCase {
             sharp: false, screen: nil, frameName: "Test", frameDefaults: defaults, onDisconnect: {},
             onResize: { _ in })
         first.show()
-        first.window?.setContentSize(NSSize(width: 1100, height: 700))
+        first.window?.setContentSize(NSSize(width: 700, height: 450))
         first.end()
         XCTAssertNotNil(defaults.string(forKey: WindowFrameKeeper.key(for: "Test")), "the frame was not kept")
 
@@ -223,7 +223,7 @@ final class SessionWindowTests: XCTestCase {
             desktop: DesktopView(renderer: renderer), title: "Test", mode: .window, fixedSize: .standard,
             sharp: false, screen: nil, frameName: "Test", frameDefaults: defaults, onDisconnect: {},
             onResize: { _ in })
-        XCTAssertEqual(second.desktopRequest.size, CGSize(width: 1100, height: 700))
+        XCTAssertEqual(second.desktopRequest.size, CGSize(width: 700, height: 450))
         second.end()
         controller = make(.window)
     }

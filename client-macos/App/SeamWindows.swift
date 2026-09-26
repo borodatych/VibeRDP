@@ -246,6 +246,12 @@ final class SeamWindow: NSWindow {
 
     override var canBecomeKey: Bool { takesKeyboard }
 
+    /// The window stands where the host put it, under the menu bar or past a screen edge too:
+    /// AppKit would push it back onto the screen, and the picture and the clicks would part from the host
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
+        frameRect
+    }
+
     /// A frameless window has no miniaturize button, so AppKit would refuse Cmd-M: the host minimizes instead
     override func performMiniaturize(_ sender: Any?) {
         if let onMinimize {
