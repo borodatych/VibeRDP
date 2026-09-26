@@ -37,10 +37,10 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer VIBERDP_CACHE_DIR=/Volu
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer VIBERDP_CACHE_DIR=/Volumes/Storage/Caches/VibeRDP CMAKE=/Volumes/Storage/Caches/VibeRDP/tools/cmake-4.4.3-macos-universal/CMake.app/Contents/bin/cmake core/scripts/build-core.sh
 ```
 
-Хелпер — форматирование и clippy под хост и под Windows; сам exe собирается только на Windows:
+Хелпер — форматирование, clippy под хост и под Windows и тесты протокола; сам exe собирается только на Windows:
 
 ```bash
-cd helper-win && CARGO_TARGET_DIR=/Volumes/Storage/Caches/VibeRDP/cargo cargo fmt --check && CARGO_TARGET_DIR=/Volumes/Storage/Caches/VibeRDP/cargo cargo clippy -- -D warnings && CARGO_TARGET_DIR=/Volumes/Storage/Caches/VibeRDP/cargo cargo clippy --target x86_64-pc-windows-msvc -- -D warnings
+cd helper-win && CARGO_TARGET_DIR=/Volumes/Storage/Caches/VibeRDP/cargo cargo fmt --check && CARGO_TARGET_DIR=/Volumes/Storage/Caches/VibeRDP/cargo cargo clippy --all-targets -- -D warnings && CARGO_TARGET_DIR=/Volumes/Storage/Caches/VibeRDP/cargo cargo clippy --target x86_64-pc-windows-msvc -- -D warnings && CARGO_TARGET_DIR=/Volumes/Storage/Caches/VibeRDP/cargo cargo test
 ```
 
 Тестовый RDP-сервер для живого теста клиента — после зависимостей ядра; без него этот тест пропускается:
