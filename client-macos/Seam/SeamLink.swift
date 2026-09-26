@@ -145,6 +145,11 @@ struct SeamLink {
         request("launch", [("id", .string(id))])
     }
 
+    /// Asks the helper to switch the window with the focus to a layout of this language; nil while not ready
+    mutating func layout(_ language: String) -> MessagePackValue? {
+        request("input.layout", [("language", .string(language))])
+    }
+
     private mutating func request(_ type: String, _ entries: [(String, MessagePackValue)]) -> MessagePackValue? {
         guard case .ready = state else { return nil }
         defer { nextSeq &+= 1 }

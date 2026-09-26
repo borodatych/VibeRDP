@@ -15,6 +15,8 @@ mod icons;
 #[cfg(windows)]
 mod instance;
 #[cfg(windows)]
+mod keyboard;
+#[cfg(windows)]
 mod link;
 #[cfg(windows)]
 mod log;
@@ -51,6 +53,7 @@ mod helper {
     use crate::channel::{self, Reader};
     use crate::commands;
     use crate::instance;
+    use crate::keyboard;
     use crate::link::Link;
     use crate::log;
     use crate::startmenu;
@@ -126,6 +129,18 @@ mod helper {
                         ));
                     }
                     if !link.send(generation, &[session::reply(command.seq, result)]) {
+                        return "reply not sent".to_string();
+                    }
+                }
+                if let Some(request) = outcome.layout {
+                    let result = keyboard::switch(&request.language);
+                    if let Err(failure) = &result {
+                        log::line(&format!(
+                            "layout {} for {}: {} {}",
+                            request.seq, request.language, failure.code, failure.message
+                        ));
+                    }
+                    if !link.send(generation, &[session::reply(request.seq, result)]) {
                         return "reply not sent".to_string();
                     }
                 }

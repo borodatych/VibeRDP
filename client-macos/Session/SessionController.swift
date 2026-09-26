@@ -57,10 +57,25 @@ final class SessionController {
     /// RemoteApp in the words of the Seam protocol, while the server runs the program
     private var rail = RailBridge()
     private var railActive = false
+    /// The language of the Mac layout the helper was last asked for: the same one is not asked for again
+    private var sentLanguage: String?
+    private var inputObserver: DistributedObservation?
 
     init(trusted: TrustedCertificates, onEvent: @escaping (Event) -> Void) {
         self.trusted = trusted
         self.onEvent = onEvent
+        inputObserver = DistributedObservation(InputLanguage.changed) { [weak self] in self?.syncLayout() }
+    }
+
+    /// The layout of Windows follows the Mac: a helper that can switch it is asked when the link comes up
+    /// and at every switch on the Mac, decision 52
+    private func syncLayout() {
+        guard !railActive, case .ready(_, let capabilities) = seam.state, capabilities.contains("keyboard-layout"),
+            let language = InputLanguage.current(), language != sentLanguage, let body = seam.layout(language)
+        else { return }
+        sentLanguage = language
+        Diagnostics.info("seam", "layout of Windows asked for \(language)")
+        send([body])
     }
 
     /// Starts connecting with a desktop of the given size in pixels, through the gateway when there is one
@@ -226,6 +241,8 @@ final class SessionController {
                 Diagnostics.info("seam", note)
             }
             if seam.state != before {
+                sentLanguage = nil
+                syncLayout()
                 onEvent(.seam(seam.state))
             }
             if let message = outcome.message {

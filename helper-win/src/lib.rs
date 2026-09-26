@@ -5,5 +5,6 @@ pub mod desktop;
 pub mod i18n;
 pub mod icon;
 pub mod launcher;
+pub mod layout;
 pub mod protocol;
 pub mod session;

@@ -6,7 +6,13 @@
 use crate::protocol::{self, Value};
 
 /// What this build of the helper does beyond keeping the channel: grows as the window stages land
-pub const CAPABILITIES: &[&str] = &["windows", "icons", "commands", "launcher"];
+pub const CAPABILITIES: &[&str] = &[
+    "windows",
+    "icons",
+    "commands",
+    "launcher",
+    "keyboard-layout",
+];
 
 /// Where the conversation is: the client greets once, and its version decides whether the two talk
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -56,12 +62,21 @@ pub enum LauncherRequest {
     Launch { seq: u64, id: String },
 }
 
+/// A keyboard layout the client asks for: the language of its own layout, section 7 of the specification
+#[derive(Clone, Debug, PartialEq)]
+pub struct LayoutRequest {
+    pub seq: u64,
+    /// BCP 47: "ru-RU", "en-US", or a bare language
+    pub language: String,
+}
+
 /// The answer to one message: bodies to send back, a command to carry out and a line for the log
 #[derive(Debug, Default, PartialEq)]
 pub struct Outcome {
     pub replies: Vec<Value>,
     pub command: Option<Command>,
     pub launcher: Option<LauncherRequest>,
+    pub layout: Option<LayoutRequest>,
     pub note: Option<String>,
 }
 
@@ -161,14 +176,15 @@ impl Session {
                 },
                 _ => Outcome::note("launch without seq or id skipped".to_string()),
             },
-            // Requests the helper has not announced still get an answer, so the client does not wait for one
-            "input.layout" => match seq(body) {
-                Some(seq) => Outcome {
-                    replies: vec![error(seq, "unsupported")],
-                    note: Some(format!("\"{kind}\" is not supported by this build")),
+            "input.layout" => match (seq(body), body.get("language").and_then(Value::as_str)) {
+                (Some(seq), Some(language)) => Outcome {
+                    layout: Some(LayoutRequest {
+                        seq,
+                        language: language.to_string(),
+                    }),
                     ..Outcome::default()
                 },
-                None => Outcome::note(format!("\"{kind}\" without seq skipped")),
+                _ => Outcome::note("input.layout without seq or language skipped".to_string()),
             },
             _ => Outcome::note(format!("unknown message \"{kind}\" skipped")),
         }
@@ -461,5 +477,26 @@ mod tests {
         let without_id = ready().handle(&message("launch", vec![("seq", Value::UInt(7))]));
         assert_eq!(without_id.launcher, None);
         assert!(without_id.note.is_some());
+    }
+
+    #[test]
+    fn layout_request_is_handed_out() {
+        let request = message(
+            "input.layout",
+            vec![
+                ("seq", Value::UInt(4)),
+                ("language", Value::Str("ru-RU".into())),
+            ],
+        );
+        assert_eq!(
+            ready().handle(&request).layout,
+            Some(LayoutRequest {
+                seq: 4,
+                language: "ru-RU".into()
+            })
+        );
+        let without = ready().handle(&message("input.layout", vec![("seq", Value::UInt(5))]));
+        assert_eq!(without.layout, None);
+        assert!(without.replies.is_empty());
     }
 }
