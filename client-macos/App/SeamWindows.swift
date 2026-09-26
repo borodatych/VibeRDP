@@ -101,6 +101,9 @@ final class SeamWindows: NSObject, NSWindowDelegate {
         }
         let entry = shown[remote.id] ?? open(remote.id)
         entry.window.title = remote.title
+        // A menu or a tooltip must not take the keyboard: its owner keeps it, as on Windows,
+        // and the activate that a key popup would send makes Windows close the menu
+        entry.window.takesKeyboard = remote.kind == .app
         entry.desktop.region = geometry.region(of: remote.frame)
         if entry.window.frame != frame {
             placing = true
@@ -110,6 +113,15 @@ final class SeamWindows: NSObject, NSWindowDelegate {
         if !entry.window.isVisible {
             entry.window.orderFront(nil)
         }
+        attach(entry.window, to: remote.owner)
+    }
+
+    /// A window with an owner rides on the window of its owner: it moves with it and stays above it
+    private func attach(_ window: SeamWindow, to owner: UInt64) {
+        let parent = owner == 0 ? nil : shown[owner]?.window
+        guard window.parent !== parent else { return }
+        window.parent?.removeChildWindow(window)
+        parent?.addChildWindow(window, ordered: .above)
     }
 
     private func open(_ id: UInt64) -> (window: SeamWindow, desktop: DesktopView) {
@@ -133,6 +145,7 @@ final class SeamWindows: NSObject, NSWindowDelegate {
 
     private func remove(_ id: UInt64) {
         guard let entry = shown.removeValue(forKey: id) else { return }
+        entry.window.parent?.removeChildWindow(entry.window)
         entry.window.delegate = nil
         entry.window.close()
     }
@@ -140,7 +153,8 @@ final class SeamWindows: NSObject, NSWindowDelegate {
     /// The Mac windows in the order of the host: each goes right under the one above it,
     /// so the stack moves as one and does not jump over the windows of other apps
     private func restack(_ windows: RemoteWindows) {
-        let stack = windows.order.compactMap { shown[$0]?.window }.filter(\.isVisible)
+        // Child windows keep to their owners, which place them; only the windows of their own go in the stack
+        let stack = windows.order.compactMap { shown[$0]?.window }.filter { $0.isVisible && $0.parent == nil }
         for (upper, lower) in zip(stack, stack.dropFirst()) {
             lower.order(.below, relativeTo: upper.windowNumber)
         }
@@ -155,8 +169,8 @@ final class SeamWindows: NSObject, NSWindowDelegate {
 
     /// A window the user made key on the Mac goes forward on the host, unless it is there already
     func windowDidBecomeKey(_ notification: Notification) {
-        guard isActive, let window = notification.object as? SeamWindow, let id = window.remoteID,
-            id != foreground
+        guard isActive, let window = notification.object as? SeamWindow, window.takesKeyboard,
+            let id = window.remoteID, id != foreground
         else { return }
         onActivate(id)
     }
@@ -171,8 +185,9 @@ final class SeamWindows: NSObject, NSWindowDelegate {
 
     /// A frame the Mac gave a window goes to the host, which moves the window there and reports it back
     private func moved(_ notification: Notification) {
-        guard !placing, isActive, let window = notification.object as? SeamWindow, let id = window.remoteID,
-            let rect = geometry.remoteRect(of: window.frame)
+        // A popup moves only with its owner: the host places menus and tooltips itself
+        guard !placing, isActive, let window = notification.object as? SeamWindow, window.takesKeyboard,
+            let id = window.remoteID, let rect = geometry.remoteRect(of: window.frame)
         else { return }
         onMove(id, rect)
     }
@@ -187,7 +202,9 @@ final class SeamWindows: NSObject, NSWindowDelegate {
 final class SeamWindow: NSWindow {
     /// The window of the host this one shows; nil for the frameless desktop of a screen
     var remoteID: UInt64?
+    /// False for a menu, a tooltip or another popup of the host: it shows but never takes the keyboard
+    var takesKeyboard = true
 
-    override var canBecomeKey: Bool { true }
+    override var canBecomeKey: Bool { takesKeyboard }
     override var canBecomeMain: Bool { true }
 }

@@ -111,4 +111,22 @@ final class SeamWindowsTests: XCTestCase {
     private func becameKey(_ id: UInt64) {
         seam.windowDidBecomeKey(Notification(name: NSWindow.didBecomeKeyNotification, object: seam.window(for: id)))
     }
+
+    /// A popup with an owner rides on its window and never takes the keyboard
+    func testPopupRidesOnItsOwner() {
+        seam.activate(remote)
+        send(create(1, 0, 0))
+        send(.map([
+            ("type", .string("window.create")), ("id", .uint(9)), ("owner", .uint(1)), ("kind", .string("popup")),
+            ("rect", .array([.int(20), .int(40), .int(200), .int(300)])),
+        ]))
+        let owner = seam.window(for: 1)
+        let popup = seam.window(for: 9)
+        XCTAssertTrue(popup?.parent === owner)
+        XCTAssertEqual(popup?.canBecomeKey, false)
+        seam.windowDidBecomeKey(Notification(name: NSWindow.didBecomeKeyNotification, object: popup))
+        XCTAssertTrue(activated.isEmpty, "a popup does not bring itself forward on the host")
+        send(.map([("type", .string("window.destroy")), ("id", .uint(9))]))
+        XCTAssertEqual(owner?.childWindows?.isEmpty ?? true, true)
+    }
 }
