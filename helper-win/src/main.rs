@@ -13,15 +13,25 @@ mod commands;
 #[cfg(windows)]
 mod icons;
 #[cfg(windows)]
+mod instance;
+#[cfg(windows)]
 mod link;
 #[cfg(windows)]
 mod log;
+#[cfg(windows)]
+mod setup;
 #[cfg(windows)]
 mod tracker;
 
 #[cfg(windows)]
 fn main() {
-    helper::run();
+    use vibe_seam_helper::cli::Mode;
+    match Mode::parse(std::env::args().skip(1)) {
+        Mode::Run => helper::run(),
+        Mode::Install => setup::install(),
+        Mode::Uninstall => setup::uninstall(),
+        Mode::Unknown(argument) => setup::usage(&argument),
+    }
 }
 
 /// The helper lives in a Windows session: elsewhere the binary only builds, for the checks of the host
@@ -35,27 +45,25 @@ mod helper {
 
     use vibe_seam_helper::protocol::FrameReader;
     use vibe_seam_helper::session::{self, Peer, Session};
-    use windows_sys::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError};
-    use windows_sys::Win32::System::Threading::CreateMutexW;
 
     use crate::channel::{self, Reader};
     use crate::commands;
+    use crate::instance;
     use crate::link::Link;
     use crate::log;
     use crate::tracker::Tracker;
 
     const AGENT: &str = concat!("vibe-seam-helper ", env!("CARGO_PKG_VERSION"));
-    /// One helper per session: the Local namespace is the session's own
-    const INSTANCE_MUTEX: &str = "Local\\VibeSeamHelper";
     /// The wait before reopening grows from the first to the last value while the channel stays shut
     const RETRY_FIRST: Duration = Duration::from_secs(1);
     const RETRY_LAST: Duration = Duration::from_secs(30);
 
     pub fn run() {
-        if !single_instance() {
+        if !instance::claim() {
             return;
         }
         log::open();
+        instance::exit_on_request();
         log::line(&format!("{AGENT} started"));
         let link = Link::default();
         let tracker = Tracker::start(link.clone());
@@ -124,14 +132,5 @@ mod helper {
                 }
             }
         }
-    }
-
-    /// Takes the session's mutex; false when another helper already holds it
-    fn single_instance() -> bool {
-        let name: Vec<u16> = INSTANCE_MUTEX.encode_utf16().chain([0]).collect();
-        // SAFETY: the name is NUL-terminated; the handle is kept open for the life of the process on purpose
-        let mutex = unsafe { CreateMutexW(std::ptr::null(), 0, name.as_ptr()) };
-        // SAFETY: GetLastError right after the call it reports on
-        !mutex.is_null() && unsafe { GetLastError() } != ERROR_ALREADY_EXISTS
     }
 }

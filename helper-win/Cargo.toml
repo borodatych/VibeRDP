@@ -7,6 +7,8 @@ publish = false
 description = "Windows side of the VibeRDP Seam mode"
 
 [target.'cfg(windows)'.dependencies]
+# COM for the startup shortcut: IShellLinkW and IPersistFile, which windows-sys does not carry
+windows = { version = "0.62.2", features = ["Win32_System_Com", "Win32_UI_Shell"] }
 windows-sys = { version = "0.61.2", features = [
     "Win32_Foundation",
     "Win32_Graphics_Dwm",
