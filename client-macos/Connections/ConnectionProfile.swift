@@ -1,4 +1,5 @@
 import Foundation
+import VibeRDPCore
 
 /// A saved connection: where to connect, as whom, through which gateway, how the keyboard works there,
 /// and how large the desktop is
@@ -28,6 +29,8 @@ struct ConnectionProfile: Codable, Equatable, Identifiable, Sendable {
     /// On a Retina display the desktop takes its pixels, so the text is sharp; off, the display stretches it,
     /// with four times fewer pixels to send
     var sharpOnRetina: Bool
+    /// Where the sound of the remote computer plays
+    var audio: ProfileAudio
     /// Shown under Favourites in the sidebar
     var isFavorite: Bool
     /// When a session of the profile last got in, for sorting; nil before the first one
@@ -38,7 +41,7 @@ struct ConnectionProfile: Codable, Equatable, Identifiable, Sendable {
         remembersPassword: Bool = true, keyboard: ProfileKeyboard = .settings, gatewayAddress: String = "",
         gatewayUsesServerCredentials: Bool = true, gatewayUsername: String = "", gatewayBypassLocal: Bool = false,
         displayMode: ProfileDisplayMode = .window, fixedSize: DesktopSize = .standard, sharpOnRetina: Bool = true,
-        isFavorite: Bool = false, lastConnected: Date? = nil
+        audio: ProfileAudio = .local, isFavorite: Bool = false, lastConnected: Date? = nil
     ) {
         self.id = id
         self.name = name
@@ -53,6 +56,7 @@ struct ConnectionProfile: Codable, Equatable, Identifiable, Sendable {
         self.displayMode = displayMode
         self.fixedSize = fixedSize
         self.sharpOnRetina = sharpOnRetina
+        self.audio = audio
         self.isFavorite = isFavorite
         self.lastConnected = lastConnected
     }
@@ -80,6 +84,7 @@ struct ConnectionProfile: Codable, Equatable, Identifiable, Sendable {
             try container.decodeIfPresent(ProfileDisplayMode.self, forKey: .displayMode) ?? defaults.displayMode
         fixedSize = try container.decodeIfPresent(DesktopSize.self, forKey: .fixedSize) ?? defaults.fixedSize
         sharpOnRetina = try container.decodeIfPresent(Bool.self, forKey: .sharpOnRetina) ?? defaults.sharpOnRetina
+        audio = try container.decodeIfPresent(ProfileAudio.self, forKey: .audio) ?? defaults.audio
         isFavorite = try container.decodeIfPresent(Bool.self, forKey: .isFavorite) ?? defaults.isFavorite
         lastConnected = try container.decodeIfPresent(Date.self, forKey: .lastConnected)
     }
@@ -98,6 +103,27 @@ struct ConnectionProfile: Codable, Equatable, Identifiable, Sendable {
     /// The gateway field is empty or readable: an unreadable one must not quietly connect directly
     var hasValidGateway: Bool {
         gatewayAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || gateway != nil
+    }
+}
+
+/// Where the sound of the remote computer plays, as Windows App offers it
+enum ProfileAudio: String, Codable, CaseIterable, Identifiable, Sendable {
+    /// On this Mac
+    case local
+    /// On the remote computer itself
+    case remote
+    /// Nowhere
+    case off
+
+    var id: Self { self }
+
+    /// The mode of the core
+    var mode: VRCAudioMode {
+        switch self {
+        case .local: .local
+        case .remote: .remote
+        case .off: .off
+        }
     }
 }
 

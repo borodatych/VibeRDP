@@ -35,6 +35,10 @@
 #include <winpr/synch.h>
 #include <winpr/sysinfo.h>
 #include <winpr/thread.h>
+#include <winpr/wlog.h>
+
+/* The session in the diagnostics log, beside the lines the app writes under the same tag */
+#define TAG "com.vibebrains.viberdp.session"
 
 /* The public header keeps its own copies, since no FreeRDP type crosses it */
 _Static_assert(VRC_KEY_EXTENDED == KBDEXT, "the extended bit of a key must be that of FreeRDP");
@@ -171,6 +175,7 @@ static void notifyError(const VRCSession* session, UINT32 code)
 static void onChannelConnected(void* context, const ChannelConnectedEventArgs* event)
 {
     VRCSession* session = (VRCSession*)context;
+    WLog_INFO(TAG, "channel connected: %s", event->name);
     if (strcmp(event->name, CLIPRDR_SVC_CHANNEL_NAME) == 0)
         vrcClipboardAttach(&session->clipboard, (CliprdrClientContext*)event->pInterface);
     else if (strcmp(event->name, DISP_DVC_CHANNEL_NAME) == 0)
@@ -938,6 +943,16 @@ static BOOL applyGateway(rdpSettings* settings, const VRCConnectionParams* param
     return applied;
 }
 
+/*
+ * The sound of the session: on the Mac the engine loads the audio channel, which needs the device channel as well,
+ * and plays through AudioToolbox; on the remote computer the server keeps it; off, neither plays it
+ */
+static BOOL applyAudio(rdpSettings* settings, VRCAudioMode audio)
+{
+    return freerdp_settings_set_bool(settings, FreeRDP_AudioPlayback, audio == VRCAudioModeLocal) &&
+           freerdp_settings_set_bool(settings, FreeRDP_RemoteConsoleAudio, audio == VRCAudioModeRemote);
+}
+
 static BOOL applyParams(rdpSettings* settings, const VRCConnectionParams* params)
 {
     return freerdp_settings_set_string(settings, FreeRDP_ServerHostname, params->host) &&
@@ -946,7 +961,7 @@ static BOOL applyParams(rdpSettings* settings, const VRCConnectionParams* params
            (params->height == 0 || freerdp_settings_set_uint32(settings, FreeRDP_DesktopHeight, params->height)) &&
            freerdp_settings_set_uint32(settings, FreeRDP_DesktopScaleFactor, vrcDisplayDesktopScale(params->scale)) &&
            freerdp_settings_set_uint32(settings, FreeRDP_DeviceScaleFactor, vrcDisplayDeviceScale(params->scale)) &&
-           applyCredentials(settings, params) && applyGateway(settings, params);
+           applyAudio(settings, params->audio) && applyCredentials(settings, params) && applyGateway(settings, params);
 }
 
 /*
@@ -1037,7 +1052,7 @@ void VRCSessionDestroy(VRCSession* session)
 
 VRCResult VRCSessionConnect(VRCSession* session, const VRCConnectionParams* params)
 {
-    if (!session || !params || !params->host || params->host[0] == '\0')
+    if (!session || !params || !params->host || params->host[0] == '\0' || params->audio > VRCAudioModeRemote)
         return VRCResultInvalidArgument;
     if (atomic_exchange(&session->started, true))
         return VRCResultInvalidState;

@@ -87,7 +87,16 @@ struct RdpFile: Equatable {
             name: name, address: address, username: username, gatewayAddress: gatewayAddress,
             gatewayUsesServerCredentials: integer("promptcredentialonce").map { $0 != 0 } ?? true,
             gatewayBypassLocal: integer("gatewayusagemethod") == 2, displayMode: displayMode,
-            fixedSize: desktopSize ?? .standard)
+            fixedSize: desktopSize ?? .standard, audio: audio)
+    }
+
+    /// audiomode 0 plays on this computer, 1 on the remote one, 2 nowhere; without the key, on this computer
+    var audio: ProfileAudio {
+        switch integer("audiomode") {
+        case 1: .remote
+        case 2: .off
+        default: .local
+        }
     }
 
     /// screen mode id 2 is full screen; a desktop size with dynamic resolution off keeps that size;

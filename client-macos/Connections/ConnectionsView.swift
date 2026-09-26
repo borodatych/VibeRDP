@@ -573,6 +573,18 @@ private struct ProfileEditor: View {
                 }
             }
             displaySection
+            Section(Localization.text(.profileAudioSection)) {
+                Picker(
+                    Localization.text(.profileAudioLabel),
+                    selection: Binding(
+                        get: { model.selectedProfile?.audio ?? .local },
+                        set: { audio in model.update { $0.audio = audio } })
+                ) {
+                    ForEach(ProfileAudio.allCases) { audio in
+                        Text(Localization.text(Self.title(of: audio))).tag(audio)
+                    }
+                }
+            }
         }
         .formStyle(.grouped)
     }
@@ -639,6 +651,14 @@ private struct ProfileEditor: View {
 
     private static func label(of size: DesktopSize) -> String {
         "\(size.width) × \(size.height)"
+    }
+
+    private static func title(of audio: ProfileAudio) -> TextKey {
+        switch audio {
+        case .local: .profileAudioLocal
+        case .remote: .profileAudioRemote
+        case .off: .profileAudioOff
+        }
     }
 
     private static func title(of mode: ProfileDisplayMode) -> TextKey {

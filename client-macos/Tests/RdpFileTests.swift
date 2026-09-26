@@ -124,6 +124,17 @@ final class RdpFileTests: XCTestCase {
         XCTAssertEqual(try profile("").displayMode, .window)
     }
 
+    /// audiomode: 0 or none plays on this Mac, 1 on the remote computer, 2 nowhere
+    func testAudioMode() throws {
+        func audio(_ lines: String) throws -> ProfileAudio {
+            try XCTUnwrap(RdpFile(data: Data("full address:s:w\n\(lines)".utf8))?.profile(named: "x")).audio
+        }
+        XCTAssertEqual(try audio(""), .local)
+        XCTAssertEqual(try audio("audiomode:i:0\n"), .local)
+        XCTAssertEqual(try audio("audiomode:i:1\n"), .remote)
+        XCTAssertEqual(try audio("audiomode:i:2\n"), .off)
+    }
+
     /// A file without settings is no connection file, and one without an address makes no profile
     func testWhatIsNoConnection() throws {
         XCTAssertNil(RdpFile(data: Data()))

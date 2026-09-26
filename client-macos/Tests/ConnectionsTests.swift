@@ -73,6 +73,7 @@ final class ProfileStoreTests: XCTestCase {
         XCTAssertTrue(profile.sharpOnRetina, "a profile saved before is sharp on Retina, as new ones are")
         XCTAssertFalse(profile.isFavorite)
         XCTAssertNil(profile.lastConnected)
+        XCTAssertEqual(profile.audio, .local, "a profile saved before plays its sound on this Mac")
     }
 
     /// The display mode and the fixed size are saved with the profile

@@ -114,6 +114,13 @@ typedef VRC_ENUM(VRCPointerKind) {
     VRCPointerKindSystem = 2, /* The client's own arrow */
 } VRCPointerKind;
 
+/* Where the sound of the remote computer plays */
+typedef VRC_ENUM(VRCAudioMode) {
+    VRCAudioModeOff = 0,    /* Nowhere: the server does not send it */
+    VRCAudioModeLocal = 1,  /* On this Mac */
+    VRCAudioModeRemote = 2, /* On the remote computer itself */
+} VRCAudioMode;
+
 /* What a clipboard holds, in the form the app works with; the core converts to and from the formats of Windows */
 typedef VRC_ENUM(VRCClipboardFormat) {
     VRCClipboardFormatText = 1,  /* UTF-8, lines end in LF */
@@ -257,6 +264,7 @@ typedef struct VRCConnectionParams {
     uint32_t width;       /* Desktop size in pixels the client asks for; 0 keeps the engine default, 1024 */
     uint32_t height;      /* 0 keeps the engine default, 768 */
     uint32_t scale;       /* Scale of the desktop in percent, 200 on a Retina display at its pixels; 0 keeps 100 */
+    VRCAudioMode audio;   /* Where the sound plays; 0 plays none */
     const char* username; /* Optional; without a domain, DOMAIN\user is split and user@domain is kept whole */
     const char* domain;   /* Optional */
     const char* password; /* Optional; the engine settings keep it until VRCSessionDestroy */

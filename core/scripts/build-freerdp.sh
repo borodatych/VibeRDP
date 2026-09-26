@@ -232,7 +232,7 @@ build_freerdp() {
         -DWITH_SWSCALE=OFF \
         -DWITH_H264_VIDEOTOOLBOX=ON \
         -DWITH_OPUS=OFF \
-        -DWITH_MACAUDIO=OFF \
+        -DWITH_MACAUDIO=ON \
         -DWITH_PCSC=OFF \
         -DWITH_PKCS11=OFF \
         -DWITH_SMARTCARD_EMULATE=OFF \

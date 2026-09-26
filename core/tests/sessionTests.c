@@ -86,10 +86,13 @@ static bool testInvalidArguments(void)
     noHost.host = NULL;
     VRCConnectionParams emptyHost = params;
     emptyHost.host = "";
+    VRCConnectionParams unknownAudio = params;
+    unknownAudio.audio = (VRCAudioMode)3;
     CHECK(VRCSessionConnect(NULL, &params) == VRCResultInvalidArgument);
     CHECK(VRCSessionConnect(session, NULL) == VRCResultInvalidArgument);
     CHECK(VRCSessionConnect(session, &noHost) == VRCResultInvalidArgument);
     CHECK(VRCSessionConnect(session, &emptyHost) == VRCResultInvalidArgument);
+    CHECK(VRCSessionConnect(session, &unknownAudio) == VRCResultInvalidArgument);
 
     /* Rejected arguments leave the session idle, so the first valid connect still starts it */
     CHECK(VRCSessionConnect(session, &params) == VRCResultOK);

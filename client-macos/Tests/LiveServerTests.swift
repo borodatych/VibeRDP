@@ -35,6 +35,18 @@ final class LiveServerTests: XCTestCase {
         UserDefaults().removePersistentDomain(forName: suiteName)
     }
 
+    /// Sound on this Mac loads the audio channel and, as FreeRDP wants it, the device channel beside it:
+    /// the session connects, draws and ends cleanly; the sample server offers its formats and plays nothing,
+    /// so no audio device opens here
+    func testSoundChannelsLoad() async throws {
+        let session = try start(socketIn: "VIBERDP_TEST_SERVER_SOCKET", audio: .local)
+        let drawn = await session.wait("the first frame", timeout: Self.timeout) { session.frames > 0 }
+        XCTAssertTrue(drawn)
+        XCTAssertEqual(session.states, [.connecting, .connected])
+        XCTAssertEqual(session.failures, [])
+        await endsCleanly(session)
+    }
+
     func testRecordedDesktopArrivesInItsColors() async throws {
         guard let renderer = FrameRenderer() else {
             throw XCTSkip("no GPU that runs Metal Performance Shaders on this machine")
@@ -284,7 +296,7 @@ final class LiveServerTests: XCTestCase {
     }
 
     /// Connects to the server whose socket the environment names, accepting its certificate
-    private func start(socketIn variable: String) throws -> LiveSession {
+    private func start(socketIn variable: String, audio: VRCAudioMode = .off) throws -> LiveSession {
         guard let socket = ProcessInfo.processInfo.environment[variable] else {
             throw XCTSkip("no test server: build it with core/scripts/build-test-server.sh, build-client.sh starts it")
         }
@@ -292,7 +304,8 @@ final class LiveServerTests: XCTestCase {
         let trusted = TrustedCertificates(defaults: try XCTUnwrap(UserDefaults(suiteName: suiteName)))
         let session = LiveSession(trusted: trusted)
         let address = try XCTUnwrap(ServerAddress(socket))
-        XCTAssertTrue(session.controller.connect(to: address, username: "", password: "", desktop: Self.desktop))
+        XCTAssertTrue(
+            session.controller.connect(to: address, username: "", password: "", desktop: Self.desktop, audio: audio))
         return session
     }
 

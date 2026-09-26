@@ -44,7 +44,7 @@ final class SessionController {
     /// False when the core refuses the parameters or cannot start
     func connect(
         to address: ServerAddress, username: String, password: String, gateway: GatewayParameters? = nil,
-        desktop: DesktopRequest
+        desktop: DesktopRequest, audio: VRCAudioMode = .off
     ) -> Bool {
         guard handle == nil else { return false }
         let (stream, continuation) = AsyncStream.makeStream(of: CoreEvent.self)
@@ -68,6 +68,7 @@ final class SessionController {
         params.width = UInt32(desktop.size.width)
         params.height = UInt32(desktop.size.height)
         params.scale = desktop.scale
+        params.audio = audio
         params.username = strings.copy(username)
         params.password = strings.copy(password)
         if let gateway {

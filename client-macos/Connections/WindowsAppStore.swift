@@ -131,7 +131,7 @@ struct WindowsAppStore {
             gatewayUsesServerCredentials: sharesCredential,
             gatewayUsername: sharesCredential ? "" : bookmark.gatewayUsername ?? rdp?.string("gatewayusername") ?? "",
             gatewayBypassLocal: rdp?.integer("gatewayusagemethod") == 2, displayMode: rdp?.displayMode ?? .window,
-            fixedSize: rdp?.desktopSize ?? .standard)
+            fixedSize: rdp?.desktopSize ?? .standard, audio: rdp?.audio ?? .local)
     }
 
     private static func columns(of table: String, in handle: OpaquePointer) throws -> Set<String> {

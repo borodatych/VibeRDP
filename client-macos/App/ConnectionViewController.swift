@@ -197,7 +197,7 @@ final class ConnectionViewController: NSViewController {
         }
         let started = controller.connect(
             to: address, username: attempt.username, password: attempt.password ?? "", gateway: gateway,
-            desktop: window.desktopRequest)
+            desktop: window.desktopRequest, audio: profile.audio.mode)
         if !started {
             session = nil
             sessionWindow = nil
