@@ -3,5 +3,6 @@
 pub mod cli;
 pub mod desktop;
 pub mod icon;
+pub mod launcher;
 pub mod protocol;
 pub mod session;

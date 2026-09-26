@@ -6,7 +6,7 @@
 use crate::protocol::{self, Value};
 
 /// What this build of the helper does beyond keeping the channel: grows as the window stages land
-pub const CAPABILITIES: &[&str] = &["windows", "icons", "commands"];
+pub const CAPABILITIES: &[&str] = &["windows", "icons", "commands", "launcher"];
 
 /// Where the conversation is: the client greets once, and its version decides whether the two talk
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -47,11 +47,21 @@ pub struct Failure {
     pub message: String,
 }
 
+/// What the client asks of the Start menu, section 8 of the specification
+#[derive(Clone, Debug, PartialEq)]
+pub enum LauncherRequest {
+    /// The programs, answered with apps and then app.icon for each
+    List { seq: u64 },
+    /// Start the program of this id, answered with ack or error
+    Launch { seq: u64, id: String },
+}
+
 /// The answer to one message: bodies to send back, a command to carry out and a line for the log
 #[derive(Debug, Default, PartialEq)]
 pub struct Outcome {
     pub replies: Vec<Value>,
     pub command: Option<Command>,
+    pub launcher: Option<LauncherRequest>,
     pub note: Option<String>,
 }
 
@@ -134,6 +144,23 @@ impl Session {
                 None => Outcome::note("ping without seq skipped".to_string()),
             },
             "command" => command(body),
+            "apps.request" => match seq(body) {
+                Some(seq) => Outcome {
+                    launcher: Some(LauncherRequest::List { seq }),
+                    ..Outcome::default()
+                },
+                None => Outcome::note("apps.request without seq skipped".to_string()),
+            },
+            "launch" => match (seq(body), body.get("id").and_then(Value::as_str)) {
+                (Some(seq), Some(id)) => Outcome {
+                    launcher: Some(LauncherRequest::Launch {
+                        seq,
+                        id: id.to_string(),
+                    }),
+                    ..Outcome::default()
+                },
+                _ => Outcome::note("launch without seq or id skipped".to_string()),
+            },
             // Requests the helper has not announced still get an answer, so the client does not wait for one
             "input.layout" => match seq(body) {
                 Some(seq) => Outcome {
@@ -411,5 +438,28 @@ mod tests {
             assert!(outcome.replies.is_empty());
             assert!(outcome.note.is_some());
         }
+    }
+
+    #[test]
+    fn launcher_requests_are_handed_out() {
+        let outcome = ready().handle(&message("apps.request", vec![("seq", Value::UInt(5))]));
+        assert_eq!(outcome.launcher, Some(LauncherRequest::List { seq: 5 }));
+        let launch = message(
+            "launch",
+            vec![
+                ("seq", Value::UInt(6)),
+                ("id", Value::Str("common/Accessories/Notepad.lnk".into())),
+            ],
+        );
+        assert_eq!(
+            ready().handle(&launch).launcher,
+            Some(LauncherRequest::Launch {
+                seq: 6,
+                id: "common/Accessories/Notepad.lnk".into()
+            })
+        );
+        let without_id = ready().handle(&message("launch", vec![("seq", Value::UInt(7))]));
+        assert_eq!(without_id.launcher, None);
+        assert!(without_id.note.is_some());
     }
 }

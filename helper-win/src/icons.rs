@@ -22,7 +22,11 @@ const ICON_TIMEOUT_MS: u32 = 100;
 
 /// The icon of a window as PNG; None when it has none that can be read
 pub fn png(hwnd: HWND) -> Option<Vec<u8>> {
-    let icon = find(hwnd)?;
+    png_of(find(hwnd)?)
+}
+
+/// An icon as PNG; the icon stays the caller's
+pub fn png_of(icon: HICON) -> Option<Vec<u8>> {
     // SAFETY: ICONINFO is plain data filled by the call; both bitmaps it creates are deleted below
     unsafe {
         let mut info: ICONINFO = std::mem::zeroed();

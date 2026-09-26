@@ -1,7 +1,7 @@
 import CoreGraphics
 import Foundation
 
-/// The client side of a conversation over the Seam channel: greeting, versions and liveness, sections 4 and 8
+/// The client side of a conversation over the Seam channel: greeting, versions and liveness, sections 4 and 9
 /// of protocol/seam-protocol.md
 /// Pure: the caller gives it the bodies, the time and the ticks, and sends what it returns
 struct SeamLink {

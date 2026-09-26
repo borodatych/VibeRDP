@@ -21,6 +21,8 @@ mod log;
 #[cfg(windows)]
 mod setup;
 #[cfg(windows)]
+mod startmenu;
+#[cfg(windows)]
 mod tracker;
 
 #[cfg(windows)]
@@ -44,13 +46,14 @@ mod helper {
     use std::time::Duration;
 
     use vibe_seam_helper::protocol::FrameReader;
-    use vibe_seam_helper::session::{self, Peer, Session};
+    use vibe_seam_helper::session::{self, LauncherRequest, Peer, Session};
 
     use crate::channel::{self, Reader};
     use crate::commands;
     use crate::instance;
     use crate::link::Link;
     use crate::log;
+    use crate::startmenu;
     use crate::tracker::Tracker;
 
     const AGENT: &str = concat!("vibe-seam-helper ", env!("CARGO_PKG_VERSION"));
@@ -125,6 +128,17 @@ mod helper {
                     if !link.send(generation, &[session::reply(command.seq, result)]) {
                         return "reply not sent".to_string();
                     }
+                }
+                match outcome.launcher {
+                    Some(LauncherRequest::List { seq }) => {
+                        startmenu::send_list(link.clone(), generation, seq)
+                    }
+                    Some(LauncherRequest::Launch { seq, id })
+                        if !startmenu::launch(link, generation, seq, &id) =>
+                    {
+                        return "reply not sent".to_string();
+                    }
+                    _ => {}
                 }
                 // The client learns the windows once it has said hello in our version and shows them
                 if before != Peer::Ready && session.wants_windows() {
