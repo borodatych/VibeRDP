@@ -190,14 +190,15 @@ final class SessionWindowTests: XCTestCase {
     func testWindowKeepsItsFrame() throws {
         controller.end()
         let name = "SessionWindowTests-\(UUID().uuidString)"
-        defer { UserDefaults.standard.removeObject(forKey: "NSWindow Frame \(name)") }
+        defer { UserDefaults.standard.removeObject(forKey: WindowFrameKeeper.key(for: name)) }
         let first = SessionWindowController(
             desktop: DesktopView(renderer: renderer), title: "Test", mode: .window, fixedSize: .standard,
             sharp: false, screen: nil, frameName: name, onDisconnect: {}, onResize: { _ in })
         first.show()
         first.window?.setContentSize(NSSize(width: 1100, height: 700))
         first.end()
-        XCTAssertNotNil(UserDefaults.standard.string(forKey: "NSWindow Frame \(name)"), "the frame was not kept")
+        XCTAssertNotNil(
+            UserDefaults.standard.string(forKey: WindowFrameKeeper.key(for: name)), "the frame was not kept")
 
         controller = SessionWindowController(
             desktop: DesktopView(renderer: renderer), title: "Test", mode: .window, fixedSize: .standard,

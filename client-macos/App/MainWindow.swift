@@ -22,7 +22,7 @@ enum MainWindow {
         window.collectionBehavior.insert(.fullScreenPrimary)
         // The delegate owns the window; AppKit must not free it behind that reference when it closes
         window.isReleasedWhenClosed = false
-        WindowPlacement.restore(window, name: frameName, fallback: WindowPlacement.primaryScreen)
+        window.center()
         return window
     }
 }

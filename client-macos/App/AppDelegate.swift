@@ -4,6 +4,8 @@ import AppKit
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var mainWindow: NSWindow?
+    /// Keeps where the user leaves the main window, for the next launch
+    private var mainWindowFrame: WindowFrameKeeper?
     private(set) var settingsWindow: SettingsWindowController?
     let keyboard = KeyboardSettingsStore()
     /// Read at launch, before any text is shown: every window and menu speaks the language chosen for this launch
@@ -46,6 +48,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             trusted: TrustedCertificates(), keyboard: keyboard, profiles: profiles,
             sessionFrameName: SessionWindowController.frameName)
         let window = MainWindow.make(title: Self.mainWindowTitle, content: content)
+        mainWindowFrame = WindowFrameKeeper(
+            window: window, name: MainWindow.frameName, fallback: WindowPlacement.primaryScreen)
         window.makeKeyAndOrderFront(nil)
         mainWindow = window
         NSApp.activate()

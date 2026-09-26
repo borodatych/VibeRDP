@@ -33,6 +33,8 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
     private let onDisconnect: () -> Void
     private let onResize: (DesktopRequest) -> Void
     private var reconnecting: ReconnectingOverlay?
+    /// Keeps where the user leaves the window, in the window mode
+    private var frameKeeper: WindowFrameKeeper?
     private var resizeTimer: Timer?
 
     /// screen is the screen of the connections; nil takes the main one
@@ -69,10 +71,8 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
         let visible = self.screen?.visibleFrame
         switch mode {
         case .window:
-            // A frame whose screen is gone gives way to the screen of the connections
-            if let frameName {
-                WindowPlacement.restore(window, name: frameName, fallback: self.screen)
-            } else if let visible {
+            // The kept frame comes back after the controller takes the window; without one, the middle of the screen
+            if let visible {
                 window.setFrame(WindowPlacement.centered(window.frame.size, in: visible), display: false)
             }
         case .maximized:
@@ -96,8 +96,9 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
         // The frame is kept through the controller: a name set on the window alone the controller does not keep,
         // and a controller that cascades moves a new window off the place its frame names
         shouldCascadeWindows = false
+        // A frame whose screen is gone gives way to the screen of the connections
         if let frameName, keepsFrame {
-            windowFrameAutosaveName = frameName
+            frameKeeper = WindowFrameKeeper(window: window, name: frameName, fallback: self.screen)
         }
         if mode != .fixed {
             desktop.onResize = { [weak self] size in self?.desktopResized(to: size) }
@@ -162,6 +163,8 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
     func end() {
         resizeTimer?.invalidate()
         resizeTimer = nil
+        frameKeeper?.save()
+        frameKeeper?.stop()
         hideReconnecting()
         close()
     }

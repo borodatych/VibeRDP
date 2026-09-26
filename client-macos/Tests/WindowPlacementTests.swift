@@ -34,35 +34,51 @@ final class WindowPlacementTests: XCTestCase {
             "the title bar is above the top of the screen")
     }
 
-    /// A kept frame comes back as it was; one whose screen is gone gives way to the middle of the screen with the
-    /// menu bar: AppKit does not apply a frame off every screen, so the window keeps the size it was made with
-    func testRestoreKeepsTheFrameOrFallsBack() throws {
-        let name = "WindowPlacementTests-\(UUID().uuidString)"
-        defer { UserDefaults.standard.removeObject(forKey: "NSWindow Frame \(name)") }
+    /// A kept frame comes back exactly, on its screen; one whose screen is gone gives way to the middle of the
+    /// fallback screen; a frame AppKit kept before comes back too, so the place is not lost
+    func testKeeperRestoresTheFrameOrFallsBack() throws {
+        let suite = "tech.vibebrains.viberdp.tests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
         let screen = try XCTUnwrap(WindowPlacement.primaryScreen)
         let kept = WindowPlacement.centered(CGSize(width: 900, height: 600), in: screen.visibleFrame)
             .offsetBy(dx: 20, dy: -20)
 
-        // A shown window, as a kept frame always comes from one: AppKit keeps the frame with the screen it was on
         let first = makeWindow()
+        let keeper = WindowFrameKeeper(window: first, name: "Test", defaults: defaults, fallback: screen)
+        XCTAssertFalse(keeper.restored, "nothing was kept yet")
         first.setFrame(kept, display: false)
-        first.orderFront(nil)
-        first.saveFrame(usingName: name)
-        first.orderOut(nil)
-        // Where on the screens a frame comes back is for AppKit to say: with several screens it places the frame
-        // of a window never shown against the screen it takes for current; the size and the reach are ours
+        keeper.save()
+        keeper.stop()
         let second = makeWindow()
-        XCTAssertTrue(WindowPlacement.restore(second, name: name, fallback: screen))
-        XCTAssertEqual(second.frame.size, kept.size)
-        XCTAssertTrue(WindowPlacement.isReachable(second.frame, on: NSScreen.screens.map(\.visibleFrame)))
+        XCTAssertTrue(WindowFrameKeeper(window: second, name: "Test", defaults: defaults, fallback: screen).restored)
+        XCTAssertEqual(second.frame, kept)
 
-        let gone = makeWindow()
-        gone.setFrame(CGRect(x: 100_000, y: 100_000, width: 900, height: 600), display: false)
-        gone.saveFrame(usingName: name)
+        // Every screen that is there now takes its kept frame back, the second monitor as the first
+        for other in NSScreen.screens {
+            let place = WindowPlacement.centered(CGSize(width: 800, height: 500), in: other.visibleFrame)
+            defaults.set(NSStringFromRect(place), forKey: WindowFrameKeeper.key(for: "Test"))
+            let window = makeWindow()
+            let keeper = WindowFrameKeeper(window: window, name: "Test", defaults: defaults, fallback: screen)
+            XCTAssertTrue(keeper.restored)
+            keeper.stop()
+            XCTAssertEqual(window.frame, place, "\(other.localizedName)")
+        }
+
+        defaults.set(
+            NSStringFromRect(CGRect(x: 100_000, y: 100_000, width: 900, height: 600)),
+            forKey: WindowFrameKeeper.key(for: "Test"))
         let third = makeWindow()
-        XCTAssertFalse(WindowPlacement.restore(third, name: name, fallback: screen))
+        XCTAssertFalse(WindowFrameKeeper(window: third, name: "Test", defaults: defaults, fallback: screen).restored)
         XCTAssertEqual(third.frame, WindowPlacement.centered(third.frame.size, in: screen.visibleFrame))
-        XCTAssertTrue(WindowPlacement.isReachable(third.frame, on: [screen.visibleFrame]))
+
+        defaults.removeObject(forKey: WindowFrameKeeper.key(for: "Test"))
+        defaults.set(
+            "\(Int(kept.minX)) \(Int(kept.minY)) \(Int(kept.width)) \(Int(kept.height)) 0 0 1 1 ",
+            forKey: WindowFrameKeeper.legacyKey(for: "Test"))
+        let fourth = makeWindow()
+        XCTAssertTrue(WindowFrameKeeper(window: fourth, name: "Test", defaults: defaults, fallback: screen).restored)
+        XCTAssertEqual(fourth.frame, kept.integral)
     }
 
     private func makeWindow() -> NSWindow {
