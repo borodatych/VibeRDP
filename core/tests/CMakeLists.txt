@@ -140,6 +140,9 @@ target_compile_options(clipboardEchoTests PRIVATE -Wall -Wextra -Werror)
 add_test(NAME clipboardRoundTrip COMMAND clipboardEchoTests roundTrip)
 set_tests_properties(clipboardRoundTrip PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77
                                               ENVIRONMENT "${VRC_TEST_ENVIRONMENT}")
+add_test(NAME clipboardLargeRoundTrip COMMAND clipboardEchoTests largeRoundTrip)
+set_tests_properties(clipboardLargeRoundTrip PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77
+                                                   ENVIRONMENT "${VRC_TEST_ENVIRONMENT}")
 
 # The desktop that follows the window, against a stand-in for the Display Control channel
 add_executable(displayTests displayTests.c ${PROJECT_SOURCE_DIR}/src/display.c)

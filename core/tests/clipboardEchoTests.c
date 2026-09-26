@@ -3,6 +3,7 @@
  * The server asks for the text, HTML, RTF, CF_DIB and files the client offers and offers them back,
  * the text behind a prefix; files come over by their list and contents and go back the same way
  * The data so goes from the Mac to the server and back through both directions of CLIPRDR
+ * The large round trip carries text and an image of many chunks of the channel each, as a long copy does
  * Without the server every test skips itself
  * Usage: clipboardEchoTests <test name>; CTest registers every test separately
  */
@@ -50,6 +51,16 @@ static const Picture macImage = { 2, 2, { { 255, 0, 0, 255 }, { 0, 255, 0, 255 }
 static uint8_t* macPng;
 static size_t macPngLength;
 
+/* The large copy: lines enough for a hundred kilobytes, an image of noise that PNG cannot shrink */
+#define LARGE_LINES 1000
+#define LARGE_SIDE 128
+static const char largeLine[] = "Строка %04d: съешь же ещё этих мягких французских булок, да выпей чаю\n";
+
+/* What the Mac answers when the server pastes: the small copy or the large one */
+static const char* offeredText = macText;
+static const uint8_t* offeredPng;
+static size_t offeredPngLength;
+
 /* A folder with a file inside and a file beside it, the paths the Mac offers for them */
 static char macFiles[FILE_TREE_PATH];
 static char macPaths[2 * FILE_TREE_PATH];
@@ -75,7 +86,7 @@ static void onDataRequested(void* userData, VRCClipboardFormat format)
     pthread_mutex_unlock(&mutex);
     if (format == VRCClipboardFormatImage)
     {
-        (void)VRCSessionProvideClipboardData(current, format, macPng, macPngLength);
+        (void)VRCSessionProvideClipboardData(current, format, offeredPng, offeredPngLength);
         return;
     }
     if (format == VRCClipboardFormatFiles)
@@ -83,7 +94,8 @@ static void onDataRequested(void* userData, VRCClipboardFormat format)
         (void)VRCSessionProvideClipboardData(current, format, macPaths, macPathsLength);
         return;
     }
-    const char* data = format == VRCClipboardFormatHtml ? macHtml : format == VRCClipboardFormatRtf ? macRtf : macText;
+    const char* data =
+        format == VRCClipboardFormatHtml ? macHtml : format == VRCClipboardFormatRtf ? macRtf : offeredText;
     (void)VRCSessionProvideClipboardData(current, format, data, strlen(data));
 }
 
@@ -113,8 +125,9 @@ static bool waitForRemoteChange(int timeoutMs)
     return seen;
 }
 
-/* Connects to the echo server with the text offered before the connection, as the app does */
-static VRCSession* connectToEcho(Recorder* recorder, const char* socket)
+/* Connects to the echo server with the formats offered before the connection, as the app does */
+static VRCSession* connectToEcho(Recorder* recorder, const char* socket, const VRCClipboardFormat* offered,
+                                 size_t offeredCount)
 {
     VRCCallbacks callbacks = recorderCallbacks();
     callbacks.clipboardDataRequested = onDataRequested;
@@ -124,12 +137,9 @@ static VRCSession* connectToEcho(Recorder* recorder, const char* socket)
         return NULL;
     current = session;
 
-    const VRCClipboardFormat offered[OFFERED_COUNT] = { VRCClipboardFormatText, VRCClipboardFormatHtml,
-                                                        VRCClipboardFormatRtf, VRCClipboardFormatImage,
-                                                        VRCClipboardFormatFiles };
     /* The sample server has no logon of its own: a name and a password spare the question */
     const VRCConnectionParams params = { .host = socket, .username = "tester", .password = "unused" };
-    if (VRCSessionOfferClipboard(session, offered, OFFERED_COUNT) != VRCResultOK ||
+    if (VRCSessionOfferClipboard(session, offered, offeredCount) != VRCResultOK ||
         VRCSessionConnect(session, &params) != VRCResultOK || !recorderWaitForCertificate(recorder, STATE_TIMEOUT_MS) ||
         VRCSessionResolveCertificate(session, true) != VRCResultOK)
     {
@@ -145,7 +155,8 @@ static bool copyIs(VRCSession* session, VRCClipboardFormat format, const char* e
     void* data = NULL;
     size_t length = 0;
     CHECK(VRCSessionCopyRemoteClipboard(session, format, ECHO_TIMEOUT_MS, &data, &length) == VRCResultOK);
-    printf("format %d came back: %s\n", (int)format, (const char*)data);
+    /* A long copy is shown by its start */
+    printf("format %d came back: %zu bytes, %.60s\n", (int)format, length, (const char*)data);
     CHECK(length == strlen(expected));
     CHECK(strcmp(data, expected) == 0);
     free(data);
@@ -153,7 +164,7 @@ static bool copyIs(VRCSession* session, VRCClipboardFormat format, const char* e
 }
 
 /* The image went to the server as CF_DIB and comes back as PNG, pixel for pixel */
-static bool imageCameBack(VRCSession* session)
+static bool imageCameBack(VRCSession* session, const Picture* sent)
 {
     void* data = NULL;
     size_t length = 0;
@@ -164,9 +175,9 @@ static bool imageCameBack(VRCSession* session)
     free(data);
     CHECK(decoded);
     printf("image came back: %zux%zu\n", back.width, back.height);
-    CHECK(back.width == macImage.width && back.height == macImage.height);
-    for (size_t i = 0; i < macImage.width * macImage.height; i++)
-        CHECK(pictureNear(back.pixels[i], macImage.pixels[i]));
+    CHECK(back.width == sent->width && back.height == sent->height);
+    for (size_t i = 0; i < sent->width * sent->height; i++)
+        CHECK(pictureNear(back.pixels[i], sent->pixels[i]));
     return true;
 }
 
@@ -199,6 +210,8 @@ static bool filesCameBack(VRCSession* session)
 static bool testRoundTrip(const char* socket)
 {
     CHECK(pictureEncodePng(&macImage, &macPng, &macPngLength));
+    offeredPng = macPng;
+    offeredPngLength = macPngLength;
     CHECK(fileTreeMake(macFiles));
     CHECK(fileTreeWrite(macFiles, "Папка/отчёт.txt", "квартал"));
     CHECK(fileTreeWrite(macFiles, "Папка/пусто", ""));
@@ -207,7 +220,10 @@ static bool testRoundTrip(const char* socket)
     const int file = snprintf(macPaths + folder, sizeof(macPaths) - (size_t)folder, "%s/note.txt", macFiles) + 1;
     macPathsLength = (size_t)(folder + file);
     Recorder* recorder = recorderNew();
-    VRCSession* session = connectToEcho(recorder, socket);
+    const VRCClipboardFormat offered[OFFERED_COUNT] = { VRCClipboardFormatText, VRCClipboardFormatHtml,
+                                                        VRCClipboardFormatRtf, VRCClipboardFormatImage,
+                                                        VRCClipboardFormatFiles };
+    VRCSession* session = connectToEcho(recorder, socket, offered, OFFERED_COUNT);
     CHECK(session != NULL);
     CHECK(recorderWaitForState(recorder, VRCSessionStateConnected, STATE_TIMEOUT_MS));
     CHECK(waitForRemoteChange(ECHO_TIMEOUT_MS));
@@ -231,7 +247,7 @@ static bool testRoundTrip(const char* socket)
     CHECK(copyIs(session, VRCClipboardFormatText, text));
     CHECK(copyIs(session, VRCClipboardFormatHtml, htmlBack));
     CHECK(copyIs(session, VRCClipboardFormatRtf, macRtf));
-    CHECK(imageCameBack(session));
+    CHECK(imageCameBack(session, &macImage));
     CHECK(filesCameBack(session));
 
     void* data = NULL;
@@ -252,6 +268,57 @@ static bool testRoundTrip(const char* socket)
     return true;
 }
 
+/*
+ * A copy larger than one chunk of the channel, 1600 bytes, goes and comes back whole, and the session stays
+ * The engine gathers such a message from its chunks; a wrong count there ended the session with a channel error
+ */
+static bool testLargeRoundTrip(const char* socket)
+{
+    static char text[LARGE_LINES * sizeof(largeLine)];
+    size_t used = 0;
+    for (int line = 0; line < LARGE_LINES; line++)
+        used += (size_t)snprintf(text + used, sizeof(text) - used, largeLine, line);
+    offeredText = text;
+    static Picture noise;
+    noise.width = LARGE_SIDE;
+    noise.height = LARGE_SIDE;
+    for (size_t i = 0; i < LARGE_SIDE * LARGE_SIDE; i++)
+        noise.pixels[i] = (Rgba){ (uint8_t)(i * 37), (uint8_t)(i * 101 + 7), (uint8_t)((i * 13) ^ (i >> 7)), 255 };
+    uint8_t* png = NULL;
+    size_t pngLength = 0;
+    CHECK(pictureEncodePng(&noise, &png, &pngLength));
+    offeredPng = png;
+    offeredPngLength = pngLength;
+    printf("large copy: text %zu bytes, image %zu bytes as PNG\n", used, pngLength);
+
+    Recorder* recorder = recorderNew();
+    const VRCClipboardFormat offered[] = { VRCClipboardFormatText, VRCClipboardFormatImage };
+    VRCSession* session = connectToEcho(recorder, socket, offered, sizeof(offered) / sizeof(offered[0]));
+    CHECK(session != NULL);
+    CHECK(recorderWaitForState(recorder, VRCSessionStateConnected, STATE_TIMEOUT_MS));
+    CHECK(waitForRemoteChange(ECHO_TIMEOUT_MS));
+
+    char* expected = malloc(strlen(echoPrefix) + used + 1);
+    CHECK(expected != NULL);
+    (void)snprintf(expected, strlen(echoPrefix) + used + 1, "%s%s", echoPrefix, text);
+    const bool textBack = copyIs(session, VRCClipboardFormatText, expected);
+    free(expected);
+    const bool imageBack = textBack && imageCameBack(session, &noise);
+
+    /* The session goes before the checks: a failed copy must not leave its thread running as the test exits */
+    VRCSessionDisconnect(session);
+    const bool ended = recorderWaitForState(recorder, VRCSessionStateDisconnected, STATE_TIMEOUT_MS);
+    const RecorderSnapshot snapshot = recorderSnapshot(recorder);
+    VRCSessionDestroy(session);
+    recorderFree(recorder);
+    free(png);
+    CHECK(textBack);
+    CHECK(imageBack);
+    CHECK(ended);
+    CHECK(snapshot.errorCount == 0);
+    return true;
+}
+
 int main(int argc, char* argv[])
 {
     if (argc != 2)
@@ -259,7 +326,12 @@ int main(int argc, char* argv[])
         fprintf(stderr, "usage: %s <test name>\n", argv[0]);
         return 2;
     }
-    if (strcmp(argv[1], "roundTrip") != 0)
+    bool (*test)(const char* socket) = NULL;
+    if (strcmp(argv[1], "roundTrip") == 0)
+        test = testRoundTrip;
+    else if (strcmp(argv[1], "largeRoundTrip") == 0)
+        test = testLargeRoundTrip;
+    else
     {
         fprintf(stderr, "unknown test: %s\n", argv[1]);
         return 2;
@@ -270,5 +342,5 @@ int main(int argc, char* argv[])
         printf("no clipboard test server: build-test-server.sh builds it, build-core.sh starts it\n");
         return SKIPPED;
     }
-    return testRoundTrip(socket) ? 0 : 1;
+    return test(socket) ? 0 : 1;
 }

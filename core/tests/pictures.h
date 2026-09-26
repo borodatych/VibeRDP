@@ -9,8 +9,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* The largest picture of the tests */
-#define PICTURE_MAX_PIXELS 16
+/* The largest picture of the tests: the large one crosses many chunks of the channel as CF_DIB and as PNG */
+#define PICTURE_MAX_PIXELS (128 * 128)
 
 typedef struct Rgba {
     uint8_t r, g, b, a;
