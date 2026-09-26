@@ -29,6 +29,11 @@ final class ConnectionViewController: NSViewController {
     /// a drag of the corner would otherwise make the server redraw at every step
     static let resizeDelay: TimeInterval = 0.3
     private var resizeTimer: Timer?
+    /// Disconnect in the title bar while connected, where it shows in full screen too, when the menu bar hides
+    private var disconnectAccessory: NSTitlebarAccessoryViewController?
+    /// The button sits in the title bar of a standard window: its height, and air from the right edge
+    static let titleBarHeight: CGFloat = 28
+    static let titleBarMargin: CGFloat = 8
 
     init(trusted: TrustedCertificates, keyboard: KeyboardSettingsStore, profiles: ProfileStore) {
         self.trusted = trusted
@@ -332,6 +337,7 @@ final class ConnectionViewController: NSViewController {
             view.window?.subtitle = profile.title
         }
         view.window?.makeFirstResponder(desktop)
+        showDisconnectButton()
     }
 
     private func showReconnecting() {
@@ -361,9 +367,39 @@ final class ConnectionViewController: NSViewController {
         }
     }
 
+    private func showDisconnectButton() {
+        guard disconnectAccessory == nil, let window = view.window else { return }
+        let button = NSButton(
+            title: Localization.text(.connectionActionDisconnect),
+            image: NSImage(systemSymbolName: "xmark.circle", accessibilityDescription: nil) ?? NSImage(),
+            target: self, action: #selector(disconnect(_:)))
+        button.bezelStyle = .accessoryBarAction
+        button.imagePosition = .imageLeading
+        let accessory = NSTitlebarAccessoryViewController()
+        let holder = NSView()
+        holder.addSubview(button)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            button.centerYAnchor.constraint(equalTo: holder.centerYAnchor),
+            button.leadingAnchor.constraint(equalTo: holder.leadingAnchor),
+            button.trailingAnchor.constraint(equalTo: holder.trailingAnchor, constant: -Self.titleBarMargin),
+        ])
+        holder.frame.size = NSSize(width: button.fittingSize.width + Self.titleBarMargin, height: Self.titleBarHeight)
+        accessory.view = holder
+        accessory.layoutAttribute = .trailing
+        window.addTitlebarAccessoryViewController(accessory)
+        disconnectAccessory = accessory
+    }
+
+    private func hideDisconnectButton() {
+        disconnectAccessory?.removeFromParent()
+        disconnectAccessory = nil
+    }
+
     private func hideDesktop() {
         resizeTimer?.invalidate()
         resizeTimer = nil
+        hideDisconnectButton()
         desktop?.removeFromSuperview()
         desktop = nil
         connections?.isHidden = false
