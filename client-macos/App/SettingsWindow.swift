@@ -5,7 +5,10 @@ import SwiftUI
 /// The window and its tabs are AppKit, as the rest of the app, and each tab is a SwiftUI view
 @MainActor
 final class SettingsWindowController: NSWindowController {
-    init(keyboard: KeyboardSettingsStore, languages: LanguageSettings, diagnostics: DiagnosticsSettings) {
+    init(
+        keyboard: KeyboardSettingsStore, languages: LanguageSettings, diagnostics: DiagnosticsSettings,
+        session: SessionSettings
+    ) {
         let tabs = NSTabViewController()
         tabs.tabStyle = .toolbar
         let keyboardTab = NSTabViewItem(
@@ -13,6 +16,11 @@ final class SettingsWindowController: NSWindowController {
         keyboardTab.label = Localization.text(.settingsKeyboardTab)
         keyboardTab.image = NSImage(systemSymbolName: "keyboard", accessibilityDescription: nil)
         tabs.addTabViewItem(keyboardTab)
+        let sessionTab = NSTabViewItem(
+            viewController: NSHostingController(rootView: SessionSettingsView(settings: session)))
+        sessionTab.label = Localization.text(.settingsSessionTab)
+        sessionTab.image = NSImage(systemSymbolName: "display", accessibilityDescription: nil)
+        tabs.addTabViewItem(sessionTab)
         let languageTab = NSTabViewItem(
             viewController: NSHostingController(rootView: LanguageSettingsView(settings: languages)))
         languageTab.label = Localization.text(.settingsLanguageTab)
@@ -180,6 +188,50 @@ struct LanguageSettingsView: View {
                 }
             } footer: {
                 Text(Localization.text(.settingsLanguageFolderHint, ["folder": settings.folder.url.path]))
+            }
+        }
+        .formStyle(.grouped)
+        .frame(width: KeyboardSettingsView.size.width, height: KeyboardSettingsView.size.height)
+    }
+}
+
+/// The session tab: the speed of trackpad scrolling, how often the Mac clipboard is looked at, and the mode
+/// a new connection gets
+struct SessionSettingsView: View {
+    @Bindable var settings: SessionSettings
+
+    var body: some View {
+        Form {
+            Section {
+                LabeledContent(Localization.text(.settingsSessionScroll)) {
+                    HStack {
+                        Slider(value: $settings.scrollSpeed, in: SessionSettings.scrollSpeedRange, step: 0.25)
+                        Text(Localization.text(.settingsSessionTimes, ["value": settings.scrollSpeed.formatted()]))
+                            .monospacedDigit()
+                            .frame(minWidth: 44, alignment: .trailing)
+                    }
+                }
+            } footer: {
+                Text(Localization.text(.settingsSessionScrollHint))
+            }
+            Section {
+                LabeledContent(Localization.text(.settingsSessionClipboard)) {
+                    HStack {
+                        Slider(value: $settings.clipboardInterval, in: SessionSettings.clipboardIntervalRange, step: 0.05)
+                        Text(Localization.text(.settingsSessionSeconds, ["value": settings.clipboardInterval.formatted()]))
+                            .monospacedDigit()
+                            .frame(minWidth: 44, alignment: .trailing)
+                    }
+                }
+            } footer: {
+                Text(Localization.text(.settingsSessionClipboardHint))
+            }
+            Section {
+                Picker(Localization.text(.settingsSessionNewMode), selection: $settings.newConnectionMode) {
+                    ForEach(ProfileDisplayMode.allCases) { mode in
+                        Text(Localization.text(ProfileDisplayMode.titleKey(of: mode))).tag(mode)
+                    }
+                }
             }
         }
         .formStyle(.grouped)

@@ -104,8 +104,11 @@ final class ConnectionsModel {
         store.update(profile)
     }
 
+    /// The display mode a new connection gets: the settings give it
+    var newConnectionMode: () -> ProfileDisplayMode = { SessionSettings.defaultNewConnectionMode }
+
     func addProfile() {
-        let profile = ConnectionProfile(name: Localization.text(.connectionsNewName))
+        let profile = ConnectionProfile(name: Localization.text(.connectionsNewName), displayMode: newConnectionMode())
         store.add(profile)
         selection = profile.id
     }

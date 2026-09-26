@@ -48,6 +48,8 @@ final class ClipboardBridge: NSObject {
     private let waiter: FileCopyWaiter
     private let staging: FileStaging
     private var timer: Timer?
+    /// Seconds between two looks at the change count: the settings give it, pollInterval by default
+    private let interval: TimeInterval
     /// The change count the bridge has dealt with
     private var seenChangeCount: Int
     /// The change count of the item the bridge wrote for the remote clipboard, while it is the current one
@@ -61,9 +63,10 @@ final class ClipboardBridge: NSObject {
 
     init(
         pasteboard: NSPasteboard = .general, channel: ClipboardChannel, waiter: FileCopyWaiter = FileCopyPanel(),
-        staging: FileStaging = FileStaging()
+        staging: FileStaging = FileStaging(), interval: TimeInterval = ClipboardBridge.pollInterval
     ) {
         self.pasteboard = pasteboard
+        self.interval = interval
         self.channel = channel
         self.waiter = waiter
         self.staging = staging
@@ -76,7 +79,7 @@ final class ClipboardBridge: NSObject {
         seenChangeCount = pasteboard.changeCount
         channel?.offerClipboard(Self.formats(of: pasteboard))
         // The common modes keep the timer running while a menu is open
-        let timer = Timer(timeInterval: Self.pollInterval, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.poll() }
         }
         RunLoop.main.add(timer, forMode: .common)

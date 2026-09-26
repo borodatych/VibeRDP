@@ -26,6 +26,9 @@ final class DesktopView: NSView {
     /// The session the mouse and the keyboard go to
     weak var input: DesktopInput?
 
+    /// The speed of trackpad scrolling from the settings, read at each event so a change applies at once
+    var scrollSpeed: () -> Double = { 1 }
+
     /// How keys are translated; without settings the keyboard stays with the Mac
     var keyboard: KeyboardSettingsSource? {
         didSet { updateKeyboard() }
@@ -194,7 +197,8 @@ final class DesktopView: NSView {
     override func scrollWheel(with event: NSEvent) {
         guard let point = desktopPoint(of: event) else { return }
         let units = wheel.units(
-            deltaX: event.scrollingDeltaX, deltaY: event.scrollingDeltaY, precise: event.hasPreciseScrollingDeltas)
+            deltaX: event.scrollingDeltaX, deltaY: event.scrollingDeltaY, precise: event.hasPreciseScrollingDeltas,
+            speed: scrollSpeed())
         if units.vertical != 0 {
             input?.mouseWheel(.vertical, delta: units.vertical, at: point)
         }

@@ -622,7 +622,7 @@ private struct ProfileEditor: View {
                 selection: Binding(get: { mode }, set: { mode in model.update { $0.displayMode = mode } })
             ) {
                 ForEach(ProfileDisplayMode.allCases) { mode in
-                    Text(Localization.text(Self.title(of: mode))).tag(mode)
+                    Text(Localization.text(ProfileDisplayMode.titleKey(of: mode))).tag(mode)
                 }
             }
             if mode == .fullScreen {
@@ -706,15 +706,6 @@ private struct ProfileEditor: View {
         }
     }
 
-    private static func title(of mode: ProfileDisplayMode) -> TextKey {
-        switch mode {
-        case .window: .profileDisplayWindow
-        case .maximized: .profileDisplayMaximized
-        case .fullScreen: .profileDisplayFullScreen
-        case .fixed: .profileDisplayFixed
-        case .seam: .profileDisplaySeam
-        }
-    }
 
     private static func hint(of mode: ProfileDisplayMode) -> String {
         switch mode {
@@ -746,6 +737,19 @@ private struct ProfileEditor: View {
         case .settings: .profileKeyboardSettings
         case .mac: .settingsKeyboardPresetMac
         case .pc: .settingsKeyboardPresetPC
+        }
+    }
+}
+
+extension ProfileDisplayMode {
+    /// The name of a mode in the lists of the editor and of the settings
+    static func titleKey(of mode: ProfileDisplayMode) -> TextKey {
+        switch mode {
+        case .window: .profileDisplayWindow
+        case .maximized: .profileDisplayMaximized
+        case .fullScreen: .profileDisplayFullScreen
+        case .fixed: .profileDisplayFixed
+        case .seam: .profileDisplaySeam
         }
     }
 }

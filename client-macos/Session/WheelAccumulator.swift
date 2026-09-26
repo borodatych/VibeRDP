@@ -3,7 +3,7 @@
 struct WheelAccumulator {
     /// A classic wheel reports lines, and one line is one notch
     static let unitsPerLine = 120.0
-    /// Trackpads and the Magic Mouse report points: this is the speed of their scrolling, a setting with task 8.1
+    /// Trackpads and the Magic Mouse report points: the units of a point at the speed 1, which the settings multiply
     static let unitsPerPoint = 2.0
 
     private var vertical = 0.0
@@ -11,8 +11,11 @@ struct WheelAccumulator {
 
     /// macOS deltas are positive when the content moves down or right, the natural scrolling setting included
     /// Windows scrolls up for a positive vertical rotation and right for a positive horizontal one
-    mutating func units(deltaX: Double, deltaY: Double, precise: Bool) -> (vertical: Int32, horizontal: Int32) {
-        let scale = precise ? Self.unitsPerPoint : Self.unitsPerLine
+    /// speed multiplies the precise scrolling of trackpads; a wheel keeps a notch a line
+    mutating func units(deltaX: Double, deltaY: Double, precise: Bool, speed: Double = 1)
+        -> (vertical: Int32, horizontal: Int32)
+    {
+        let scale = precise ? Self.unitsPerPoint * speed : Self.unitsPerLine
         vertical += deltaY * scale
         horizontal -= deltaX * scale
         let whole = (vertical: vertical.rounded(.towardZero), horizontal: horizontal.rounded(.towardZero))

@@ -283,15 +283,17 @@ final class KeyboardSettingsViewTests: XCTestCase {
         let diagnostics = DiagnosticsSettings(
             folder: folder.url.appending(path: "logs"), defaults: try XCTUnwrap(UserDefaults(suiteName: suiteName)),
             openLog: { _ in false })
-        let controller = SettingsWindowController(keyboard: store, languages: languages, diagnostics: diagnostics)
+        let session = SessionSettings(defaults: try XCTUnwrap(UserDefaults(suiteName: suiteName)))
+        let controller = SettingsWindowController(
+            keyboard: store, languages: languages, diagnostics: diagnostics, session: session)
         let window = try XCTUnwrap(controller.window)
         XCTAssertEqual(window.title, Localization.text(.settingsTitle))
         let tabs = try XCTUnwrap(window.contentViewController as? NSTabViewController)
         XCTAssertEqual(
             tabs.tabViewItems.map(\.label),
             [
-                Localization.text(.settingsKeyboardTab), Localization.text(.settingsLanguageTab),
-                Localization.text(.settingsDiagnosticsTab),
+                Localization.text(.settingsKeyboardTab), Localization.text(.settingsSessionTab),
+                Localization.text(.settingsLanguageTab), Localization.text(.settingsDiagnosticsTab),
             ])
 
         let content = try XCTUnwrap(window.contentView)

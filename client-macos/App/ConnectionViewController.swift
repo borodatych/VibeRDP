@@ -12,6 +12,7 @@ final class ConnectionViewController: NSViewController {
 
     private let trusted: TrustedCertificates
     private let keyboard: KeyboardSettingsStore
+    private let sessionSettings: SessionSettings
     /// The name the session window keeps its frame under, nil for none
     private let sessionFrameName: String?
     private var session: SessionController?
@@ -46,13 +47,16 @@ final class ConnectionViewController: NSViewController {
     private var remoteWindows = RemoteWindows()
 
     init(
-        trusted: TrustedCertificates, keyboard: KeyboardSettingsStore, profiles: ProfileStore, sessionFrameName: String?
+        trusted: TrustedCertificates, keyboard: KeyboardSettingsStore, profiles: ProfileStore, sessionFrameName: String?,
+        sessionSettings: SessionSettings = SessionSettings()
     ) {
         self.trusted = trusted
         self.keyboard = keyboard
+        self.sessionSettings = sessionSettings
         self.sessionFrameName = sessionFrameName
         model = ConnectionsModel(store: profiles)
         super.init(nibName: nil, bundle: nil)
+        model.newConnectionMode = { [sessionSettings] in sessionSettings.newConnectionMode }
         model.onConnect = { [weak self] id in self?.connect(id) }
         model.onDisconnect = { [weak self] in self?.session?.disconnect() }
         model.onImportWindowsApp = { [weak self] in self?.importWindowsAppConnections(nil) }
@@ -220,10 +224,12 @@ final class ConnectionViewController: NSViewController {
         session = controller
         let desktop = DesktopView(renderer: renderer)
         desktop.input = controller
+        desktop.scrollSpeed = { [sessionSettings] in sessionSettings.scrollSpeed }
         desktop.keyboard = ProfileKeyboardSettings(store: keyboard, keyboard: profile.keyboard)
-        let makeDesktop = { [keyboard] in
+        let makeDesktop = { [keyboard, sessionSettings] in
             let other = DesktopView(renderer: renderer)
             other.input = controller
+            other.scrollSpeed = { sessionSettings.scrollSpeed }
             other.keyboard = ProfileKeyboardSettings(store: keyboard, keyboard: profile.keyboard)
             return other
         }
@@ -271,7 +277,7 @@ final class ConnectionViewController: NSViewController {
             return
         }
         // The core keeps the offer until the clipboard channel starts
-        let bridge = ClipboardBridge(channel: controller)
+        let bridge = ClipboardBridge(channel: controller, interval: sessionSettings.clipboardInterval)
         bridge.start()
         clipboard = bridge
     }

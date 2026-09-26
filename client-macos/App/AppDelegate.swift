@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var mainWindowFrame: WindowFrameKeeper?
     private(set) var settingsWindow: SettingsWindowController?
     let keyboard = KeyboardSettingsStore()
+    let sessionSettings = SessionSettings()
     /// Read at launch, before any text is shown: every window and menu speaks the language chosen for this launch
     private(set) var languages: LanguageSettings?
     /// Started first of all, so the log holds everything the launch does
@@ -49,7 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let profiles = ProfileStore(passwords: KeychainPasswordStore())
         let content = ConnectionViewController(
             trusted: TrustedCertificates(), keyboard: keyboard, profiles: profiles,
-            sessionFrameName: SessionWindowController.frameName)
+            sessionFrameName: SessionWindowController.frameName, sessionSettings: sessionSettings)
         // The switch works from any window of the session, and the windows of Windows are not in a responder chain
         // that reaches the list of connections
         menu.windowsDesktopItem.target = content
@@ -89,7 +90,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let languages else { return }
         let controller =
             settingsWindow
-            ?? SettingsWindowController(keyboard: keyboard, languages: languages, diagnostics: diagnostics)
+            ?? SettingsWindowController(
+                keyboard: keyboard, languages: languages, diagnostics: diagnostics, session: sessionSettings)
         settingsWindow = controller
         controller.showWindow(sender)
     }
