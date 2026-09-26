@@ -14,6 +14,7 @@
 #include "input.h"
 #include "kerberos.h"
 #include "pointer.h"
+#include "seam.h"
 
 #include <pthread.h>
 #include <stdatomic.h>
@@ -108,6 +109,9 @@ struct VRCSession {
 
     /* The Display Control channel: the desktop follows the window */
     VRCDisplay display;
+
+    /* The Seam channel of the helper on Windows */
+    VRCSeam seam;
 };
 
 /* The pointer FreeRDP allocates with the size the core registers: the converted image rides along */
@@ -835,6 +839,7 @@ static BOOL clientNew(freerdp* instance, rdpContext* context)
     const bool gatewayConsent = vrcDecisionInit(&session->gatewayConsent);
     const bool clipboard = vrcClipboardInit(&session->clipboard, &session->callbacks, &session->userData);
     vrcDisplayInit(&session->display);
+    vrcSeamInit(&session->seam, &session->callbacks, &session->userData);
     atomic_init(&session->certificateRejected, false);
     /* A static initializer cannot fail, so ClientFree always meets a valid mutex */
     session->credentialsMutex = (pthread_mutex_t)PTHREAD_MUTEX_INITIALIZER;
@@ -892,6 +897,7 @@ static void clientFree(freerdp* instance, rdpContext* context)
     vrcKerberosCacheDestroy(freerdp_settings_get_string(context->settings, FreeRDP_KerberosCache));
     vrcClipboardDestroy(&session->clipboard);
     vrcDisplayDestroy(&session->display);
+    vrcSeamDestroy(&session->seam);
 }
 
 static int clientStart(rdpContext* context)
@@ -1157,9 +1163,19 @@ VRCResult VRCSessionConnect(VRCSession* session, const VRCConnectionParams* para
     rdpSettings* settings = session->common.context.settings;
     if (!applyParams(settings, params) || !applySecurity(settings) || !applyKerberos(settings) ||
         !applyReconnection(settings) || !applyGraphics(settings) ||
-        !applyNetwork(settings) || freerdp_client_start(&session->common.context) != 0)
+        !applyNetwork(settings) || !vrcSeamApply(settings) || freerdp_client_start(&session->common.context) != 0)
         return VRCResultFailure;
     return VRCResultOK;
+}
+
+VRCSeam* vrcSessionSeam(rdpContext* context)
+{
+    return &((VRCSession*)context)->seam;
+}
+
+VRCResult VRCSessionSendSeam(VRCSession* session, const uint8_t* body, size_t length)
+{
+    return session ? vrcSeamSend(&session->seam, body, length) : VRCResultInvalidArgument;
 }
 
 void VRCSessionDisconnect(VRCSession* session)

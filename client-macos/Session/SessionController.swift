@@ -27,12 +27,22 @@ final class SessionController {
         case remoteClipboard([VRCClipboardFormat])
         /// Something on the remote computer pastes the Mac clipboard: answer with provideClipboardData
         case clipboardDataRequested(VRCClipboardFormat)
+        /// The Seam channel of the helper on Windows changed state
+        case seam(SeamLink.State)
+        /// A message of the helper beyond the greeting and the pings: windows, icons, answers to commands
+        case seamMessage(MessagePackValue)
     }
+
+    /// How often the Seam link looks at its clock: the shortest of its intervals, the hello timeout, is 2 seconds
+    private static let seamTick: TimeInterval = 0.5
 
     private let trusted: TrustedCertificates
     private let onEvent: (Event) -> Void
     private var handle: SessionHandle?
     private var pendingCertificate: ServerCertificate?
+    /// The client says it shows no windows of its own yet: the Seam capability comes with the window manager
+    private var seam = SeamLink(agent: "VibeRDP \(AppDelegate.appVersion)", capabilities: [])
+    private var seamTimer: Timer?
 
     init(trusted: TrustedCertificates, onEvent: @escaping (Event) -> Void) {
         self.trusted = trusted
@@ -176,6 +186,27 @@ final class SessionController {
             onEvent(.remoteClipboard(formats))
         case .clipboardDataRequested(let format):
             onEvent(.clipboardDataRequested(format))
+        case .seamOpened:
+            send(seam.opened(at: Date()))
+            startSeamTimer()
+            onEvent(.seam(seam.state))
+        case .seamReceived(let body):
+            let before = seam.state
+            let outcome = seam.received(body, at: Date())
+            if let note = outcome.note {
+                Diagnostics.info("seam", note)
+            }
+            if seam.state != before {
+                onEvent(.seam(seam.state))
+            }
+            if let message = outcome.message {
+                onEvent(.seamMessage(message))
+            }
+        case .seamClosed:
+            seamTimer?.invalidate()
+            seamTimer = nil
+            seam.closed()
+            onEvent(.seam(seam.state))
         case .certificate(let host, let port, let pem):
             Task { [weak self] in
                 let examined = await Task.detached(priority: .userInitiated) {
@@ -183,6 +214,42 @@ final class SessionController {
                 }.value
                 self?.certificateExamined(examined)
             }
+        }
+    }
+
+    /// Bodies for the helper, each framed by the core
+    private func send(_ bodies: [MessagePackValue]) {
+        guard let handle else { return }
+        for body in bodies {
+            let bytes = MessagePack.encode(body)
+            let result = bytes.withUnsafeBytes {
+                VRCSessionSendSeam(handle.session, $0.bindMemory(to: UInt8.self).baseAddress, bytes.count)
+            }
+            if result != .OK {
+                Diagnostics.warning("seam", "body not sent: \(result.rawValue)")
+            }
+        }
+    }
+
+    private func startSeamTimer() {
+        seamTimer?.invalidate()
+        seamTimer = Timer.scheduledTimer(withTimeInterval: Self.seamTick, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.seamTicked() }
+        }
+    }
+
+    private func seamTicked() {
+        let before = seam.state
+        send(seam.tick(at: Date()))
+        if seam.state != before {
+            onEvent(.seam(seam.state))
+        }
+        switch seam.state {
+        case .silent, .lost, .incompatible, .closed:
+            seamTimer?.invalidate()
+            seamTimer = nil
+        case .greeting, .ready:
+            break
         }
     }
 
@@ -242,6 +309,9 @@ private enum CoreEvent: Sendable {
     case reconnecting(attempt: UInt32, of: UInt32)
     case remoteClipboard([VRCClipboardFormat])
     case clipboardDataRequested(VRCClipboardFormat)
+    case seamOpened
+    case seamReceived(Data)
+    case seamClosed
 }
 
 /// The userData of the session: the callbacks run on the session thread and only enqueue, never block
@@ -298,6 +368,16 @@ private final class EventSink: Sendable {
             },
             clipboardDataRequested: { userData, format in
                 eventSink(userData).continuation.yield(.clipboardDataRequested(format))
+            },
+            seamOpened: { userData in
+                eventSink(userData).continuation.yield(.seamOpened)
+            },
+            seamReceived: { userData, body, length in
+                let copy = body.map { Data(bytes: $0, count: length) } ?? Data()
+                eventSink(userData).continuation.yield(.seamReceived(copy))
+            },
+            seamClosed: { userData in
+                eventSink(userData).continuation.yield(.seamClosed)
             })
     }
 }

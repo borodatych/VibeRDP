@@ -155,6 +155,17 @@ foreach(test IN ITEMS layoutLimits waitsForCapabilities onlyNewSizesGo detachSto
   set_tests_properties(${test} PROPERTIES TIMEOUT 60 ENVIRONMENT "${VRC_TEST_ENVIRONMENT}")
 endforeach()
 
+# The Seam channel: frames both ways, against a stand-in for the dynamic channel
+add_executable(seamTests seamTests.c ${PROJECT_SOURCE_DIR}/src/seam.c)
+target_include_directories(seamTests PRIVATE ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/include)
+target_link_libraries(seamTests PRIVATE freerdp-client)
+target_compile_options(seamTests PRIVATE -Wall -Wextra -Werror)
+foreach(test IN ITEMS frameSplitAcrossChunks framesInOneChunk longFrameBreaksOnce sendPutsLengthInFront
+                      closedChannelRefusesSends reopenDropsHalfAFrame)
+  add_test(NAME ${test} COMMAND seamTests ${test})
+  set_tests_properties(${test} PROPERTIES TIMEOUT 60 ENVIRONMENT "${VRC_TEST_ENVIRONMENT}")
+endforeach()
+
 # The diagnostics log through the framework, as the app calls it
 add_executable(logTests logTests.c)
 target_link_libraries(logTests PRIVATE VibeRDPCore)

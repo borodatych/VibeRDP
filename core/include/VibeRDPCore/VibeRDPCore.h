@@ -130,6 +130,9 @@ typedef struct VRCMonitor {
 /* The most monitors a desktop may spread over, as the protocol allows */
 #define VRC_MAX_MONITORS 16
 
+/* The longest body a Seam frame may carry, protocol/seam-protocol.md, section 2 */
+#define VRC_SEAM_MAX_BODY (1u << 20)
+
 /* Where the sound of the remote computer plays */
 typedef VRC_ENUM(VRCAudioMode) {
     VRCAudioModeOff = 0,    /* Nowhere: the server does not send it */
@@ -268,6 +271,16 @@ typedef struct VRCCallbacks {
      * Answer with VRCSessionProvideClipboardData; without this callback the remote side gets no data
      */
     void (*clipboardDataRequested)(void* userData, VRCClipboardFormat format);
+
+    /*
+     * The Seam channel, protocol/seam-protocol.md: the helper on Windows opened it, it closed, or a body came
+     * The body is one MessagePack map without the length in front; it stays valid only during the call
+     * All three come on the channel thread of the engine, not on the thread the app calls from
+     * A frame longer than VRC_SEAM_MAX_BODY breaks the channel: seamClosed comes then and nothing more from it
+     */
+    void (*seamOpened)(void* userData);
+    void (*seamReceived)(void* userData, const uint8_t* body, size_t length);
+    void (*seamClosed)(void* userData);
 } VRCCallbacks;
 
 /*
@@ -449,6 +462,12 @@ VRCResult VRCSessionRefresh(VRCSession* session);
  * Requests go in order with the input, so a burst of them ends with the last one; InvalidState before Connected
  */
 VRCResult VRCSessionResizeDesktop(VRCSession* session, uint32_t width, uint32_t height, uint32_t scale);
+
+/*
+ * Sends one MessagePack body on the Seam channel; the core puts the length in front
+ * Callable from any thread; InvalidState while the channel is not open, InvalidArgument above VRC_SEAM_MAX_BODY
+ */
+VRCResult VRCSessionSendSeam(VRCSession* session, const uint8_t* body, size_t length);
 
 /*
  * Diagnostics log: the lines of the engine and of the app in one file, for someone to read when something goes wrong

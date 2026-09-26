@@ -260,6 +260,9 @@ final class ConnectionViewController: NSViewController {
             clipboard?.remoteClipboardChanged(formats)
         case .clipboardDataRequested(let format):
             clipboard?.dataRequested(format)
+        // The window manager of the Seam mode takes these: until then the session stays a desktop
+        case .seam, .seamMessage:
+            break
         }
     }
 
@@ -281,6 +284,8 @@ final class ConnectionViewController: NSViewController {
             Diagnostics.info(
                 "frame", "first update since the resize, desktop view \(desktop == nil ? "missing" : "present")")
             frameUpdateLogged = true
+        case .seam(let state):
+            Diagnostics.info("seam", "state \(state)")
         default:
             break
         }

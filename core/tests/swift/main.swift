@@ -54,7 +54,10 @@ var callbacks = VRCCallbacks(
     gatewayMessage: nil,
     reconnecting: nil,
     remoteClipboardChanged: nil,
-    clipboardDataRequested: nil)
+    clipboardDataRequested: nil,
+    seamOpened: nil,
+    seamReceived: nil,
+    seamClosed: nil)
 
 guard let session = VRCSessionCreate(&callbacks, Unmanaged.passUnretained(watched).toOpaque()) else {
     fatalError("VRCSessionCreate returned nil")

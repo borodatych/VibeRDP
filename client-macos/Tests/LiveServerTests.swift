@@ -442,6 +442,8 @@ private final class LiveSession {
             clipboard?.remoteClipboardChanged(formats)
         case .clipboardDataRequested(let format):
             clipboard?.dataRequested(format)
+        case .seam, .seamMessage:
+            break
         }
         check?()
     }

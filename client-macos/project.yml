@@ -31,6 +31,7 @@ targets:
       - path: App
       - path: Clipboard
       - path: Connections
+      - path: Seam
       - path: Session
       # The languages the app seeds into the user's folder, and the Info.plist strings macOS itself shows
       - path: Resources/lang

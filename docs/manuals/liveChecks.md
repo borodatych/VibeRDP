@@ -633,20 +633,22 @@
 **Результаты:**
 - _ещё не проверялось_
 
-## 23. Хелпер Seam: установка и удаление (задачи 4.2–4.6)
+## 23. Хелпер Seam: установка, канал и удаление (задачи 4.2–4.7)
 
 **Шаги** — по [seamHelper.md](seamHelper.md), exe — артефакт CI:
 1. На Windows запустить `vibe-seam-helper.exe --install`
    Ожидается: окно «установлен и запущен» с путём; в «Диспетчере задач» процесс `vibe-seam-helper.exe`; ярлык «VibeRDP Seam» в `shell:startup`
 2. Открыть `%LOCALAPPDATA%\VibeRDP\seam-helper.log`
-   Ожидается: строка `started` и `channel not available` — клиент ещё не слушает канал, это задача 4.7
-3. Запустить установленный exe ещё раз двойным щелчком
+   Ожидается: `started`; после подключения VibeRDP — `channel open`, `client VibeRDP … speaks version 1`, `snapshot sent: N windows`
+3. На Маке включить журнал ([diagnostics.md](diagnostics.md)) и подключиться к этой Windows
+   Ожидается: в журнале VibeRDP категория `seam` — состояние `greeting`, затем `helper vibe-seam-helper 0.1.0 is ready: commands, icons, windows`; через минуту нет `lost`
+4. Запустить установленный exe ещё раз двойным щелчком
    Ожидается: второго процесса нет
-4. Выйти из Windows и войти снова
+5. Выйти из Windows и войти снова
    Ожидается: процесс снова запущен
-5. Запустить `--install` ещё раз
+6. Запустить `--install` ещё раз
    Ожидается: окно «установлен и запущен», процесс один, в журнале прежнего — `stopped by the installer`
-6. Запустить скачанную копию с `--uninstall`
+7. Запустить скачанную копию с `--uninstall`
    Ожидается: окно «остановлен и удалён», процесса нет, ярлыка и exe в `%LOCALAPPDATA%\VibeRDP` нет
 
 **Результаты:**
