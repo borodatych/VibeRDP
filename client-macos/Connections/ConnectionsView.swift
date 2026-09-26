@@ -169,8 +169,89 @@ private struct ProfileEditor: View {
                     }
                 }
             }
+            displaySection
         }
         .formStyle(.grouped)
+    }
+
+    /// The desktop of the connection: by the window, in full screen, or of a fixed size chosen from the list or typed
+    private var displaySection: some View {
+        let mode = model.selectedProfile?.displayMode ?? .window
+        let fixed = model.selectedProfile?.fixedSize ?? .standard
+        return Section {
+            Picker(
+                Localization.text(.profileDisplayMode),
+                selection: Binding(get: { mode }, set: { mode in model.update { $0.displayMode = mode } })
+            ) {
+                ForEach(ProfileDisplayMode.allCases) { mode in
+                    Text(Localization.text(Self.title(of: mode))).tag(mode)
+                }
+            }
+            if mode == .fixed {
+                // A size not in the list shows as the custom one; choosing it keeps the size for the fields below
+                Picker(
+                    Localization.text(.profileDisplaySize),
+                    selection: Binding<DesktopSize?>(
+                        get: { DesktopSize.presets.contains(fixed) ? fixed : nil },
+                        set: { size in
+                            if let size {
+                                model.update { $0.fixedSize = size }
+                            }
+                        })
+                ) {
+                    ForEach(DesktopSize.presets, id: \.self) { size in
+                        Text(Self.label(of: size)).tag(Optional(size))
+                    }
+                    Text(Localization.text(.profileDisplayCustom)).tag(DesktopSize?.none)
+                }
+                TextField(
+                    Localization.text(.profileDisplayWidth),
+                    value: side(\.width), format: .number.grouping(.never))
+                TextField(
+                    Localization.text(.profileDisplayHeight),
+                    value: side(\.height), format: .number.grouping(.never))
+            }
+        } header: {
+            Text(Localization.text(.profileDisplaySection))
+        } footer: {
+            Text(Self.hint(of: mode))
+        }
+    }
+
+    /// A side of the fixed size; what is typed goes within the limits of the protocol as it is saved
+    private func side(_ keyPath: WritableKeyPath<DesktopSize, Int>) -> Binding<Int> {
+        Binding(
+            get: { model.selectedProfile?.fixedSize[keyPath: keyPath] ?? DesktopSize.standard[keyPath: keyPath] },
+            set: { value in
+                model.update { profile in
+                    var size = profile.fixedSize
+                    size[keyPath: keyPath] = value
+                    profile.fixedSize = size.clamped
+                }
+            })
+    }
+
+    private static func label(of size: DesktopSize) -> String {
+        "\(size.width) × \(size.height)"
+    }
+
+    private static func title(of mode: ProfileDisplayMode) -> TextKey {
+        switch mode {
+        case .window: .profileDisplayWindow
+        case .fullScreen: .profileDisplayFullScreen
+        case .fixed: .profileDisplayFixed
+        }
+    }
+
+    private static func hint(of mode: ProfileDisplayMode) -> String {
+        switch mode {
+        case .window: Localization.text(.profileDisplayWindowHint)
+        case .fullScreen: Localization.text(.profileDisplayFullScreenHint)
+        case .fixed:
+            Localization.text(
+                .profileDisplayFixedHint,
+                ["min": String(DesktopSize.minimumSide), "max": String(DesktopSize.maximumSide)])
+        }
     }
 
     private func field(_ keyPath: WritableKeyPath<ConnectionProfile, String>) -> Binding<String> {

@@ -103,6 +103,27 @@ final class RdpFileTests: XCTestCase {
         XCTAssertEqual(noMethod.profile(named: "x")?.gatewayAddress, "")
     }
 
+    /// Full screen comes from screen mode id 2, a fixed desktop from its size with dynamic resolution off,
+    /// the rest follows the window
+    func testDisplaySettings() throws {
+        func profile(_ lines: String) throws -> ConnectionProfile {
+            try XCTUnwrap(RdpFile(data: Data("full address:s:w\n\(lines)".utf8))?.profile(named: "x"))
+        }
+        let fullScreen = try profile("screen mode id:i:2\ndesktopwidth:i:1600\ndesktopheight:i:900\n")
+        XCTAssertEqual(fullScreen.displayMode, .fullScreen)
+        XCTAssertEqual(fullScreen.fixedSize, DesktopSize(width: 1600, height: 900))
+        let fixed = try profile(
+            "screen mode id:i:1\ndynamic resolution:i:0\ndesktopwidth:i:1367\ndesktopheight:i:768\n")
+        XCTAssertEqual(fixed.displayMode, .fixed)
+        XCTAssertEqual(fixed.fixedSize, DesktopSize(width: 1366, height: 768), "the width goes even")
+        let dynamic = try profile("screen mode id:i:1\ndynamic resolution:i:1\ndesktopwidth:i:1600\n")
+        XCTAssertEqual(dynamic.displayMode, .window)
+        let noSize = try profile("screen mode id:i:1\ndynamic resolution:i:0\n")
+        XCTAssertEqual(noSize.displayMode, .window, "a fixed desktop needs its size")
+        XCTAssertEqual(noSize.fixedSize, .standard)
+        XCTAssertEqual(try profile("").displayMode, .window)
+    }
+
     /// A file without settings is no connection file, and one without an address makes no profile
     func testWhatIsNoConnection() throws {
         XCTAssertNil(RdpFile(data: Data()))

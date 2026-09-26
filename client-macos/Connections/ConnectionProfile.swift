@@ -1,6 +1,7 @@
 import Foundation
 
-/// A saved connection: where to connect, as whom, through which gateway, and how the keyboard works there
+/// A saved connection: where to connect, as whom, through which gateway, how the keyboard works there,
+/// and how large the desktop is
 /// The passwords are not here: the Keychain keeps them under the id of the profile
 struct ConnectionProfile: Codable, Equatable, Identifiable, Sendable {
     let id: UUID
@@ -21,11 +22,15 @@ struct ConnectionProfile: Codable, Equatable, Identifiable, Sendable {
     var gatewayUsername: String
     /// Addresses of the local network skip the gateway
     var gatewayBypassLocal: Bool
+    var displayMode: ProfileDisplayMode
+    /// The desktop of the fixed mode; the other modes keep it for when the mode comes back
+    var fixedSize: DesktopSize
 
     init(
         id: UUID = UUID(), name: String = "", address: String = "", username: String = "",
         remembersPassword: Bool = true, keyboard: ProfileKeyboard = .settings, gatewayAddress: String = "",
-        gatewayUsesServerCredentials: Bool = true, gatewayUsername: String = "", gatewayBypassLocal: Bool = false
+        gatewayUsesServerCredentials: Bool = true, gatewayUsername: String = "", gatewayBypassLocal: Bool = false,
+        displayMode: ProfileDisplayMode = .window, fixedSize: DesktopSize = .standard
     ) {
         self.id = id
         self.name = name
@@ -37,6 +42,8 @@ struct ConnectionProfile: Codable, Equatable, Identifiable, Sendable {
         self.gatewayUsesServerCredentials = gatewayUsesServerCredentials
         self.gatewayUsername = gatewayUsername
         self.gatewayBypassLocal = gatewayBypassLocal
+        self.displayMode = displayMode
+        self.fixedSize = fixedSize
     }
 
     /// A setting missing from stored data, as in profiles saved before it existed, takes its default
@@ -58,6 +65,9 @@ struct ConnectionProfile: Codable, Equatable, Identifiable, Sendable {
             try container.decodeIfPresent(String.self, forKey: .gatewayUsername) ?? defaults.gatewayUsername
         gatewayBypassLocal =
             try container.decodeIfPresent(Bool.self, forKey: .gatewayBypassLocal) ?? defaults.gatewayBypassLocal
+        displayMode =
+            try container.decodeIfPresent(ProfileDisplayMode.self, forKey: .displayMode) ?? defaults.displayMode
+        fixedSize = try container.decodeIfPresent(DesktopSize.self, forKey: .fixedSize) ?? defaults.fixedSize
     }
 
     /// The name, or the address for a profile without one
@@ -74,6 +84,50 @@ struct ConnectionProfile: Codable, Equatable, Identifiable, Sendable {
     /// The gateway field is empty or readable: an unreadable one must not quietly connect directly
     var hasValidGateway: Bool {
         gatewayAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || gateway != nil
+    }
+}
+
+/// How large the remote desktop is, and how the session window shows it
+enum ProfileDisplayMode: String, Codable, CaseIterable, Identifiable, Sendable {
+    /// The desktop follows the session window as it changes
+    case window
+    /// The session opens in full screen; out of it, the desktop follows the window as in the window mode
+    case fullScreen
+    /// The desktop keeps its size, and the window scales it with bars at the sides
+    case fixed
+
+    var id: Self { self }
+}
+
+/// A desktop size in pixels of Windows
+struct DesktopSize: Codable, Hashable, Sendable {
+    var width: Int
+    var height: Int
+
+    /// The limits of the protocol for a monitor, on each side
+    static let minimumSide = 200
+    static let maximumSide = 8192
+    /// The size a fixed desktop starts with
+    static let standard = DesktopSize(width: 1920, height: 1080)
+    /// The sizes the editor offers, the common ones of monitors and laptops
+    static let presets = [
+        DesktopSize(width: 1280, height: 720), DesktopSize(width: 1280, height: 800),
+        DesktopSize(width: 1366, height: 768), DesktopSize(width: 1440, height: 900),
+        DesktopSize(width: 1600, height: 900), DesktopSize(width: 1680, height: 1050),
+        DesktopSize(width: 1920, height: 1080), DesktopSize(width: 1920, height: 1200),
+        DesktopSize(width: 2560, height: 1440), DesktopSize(width: 2560, height: 1600),
+        DesktopSize(width: 3840, height: 2160),
+    ]
+
+    /// Within the limits of the protocol, the width even: the server takes no other
+    var clamped: DesktopSize {
+        let width = min(max(width, Self.minimumSide), Self.maximumSide) & ~1
+        let height = min(max(height, Self.minimumSide), Self.maximumSide)
+        return DesktopSize(width: width, height: height)
+    }
+
+    var cgSize: CGSize {
+        CGSize(width: width, height: height)
     }
 }
 

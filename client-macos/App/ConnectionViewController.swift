@@ -180,7 +180,8 @@ final class ConnectionViewController: NSViewController {
         desktop.input = controller
         desktop.keyboard = ProfileKeyboardSettings(store: keyboard, keyboard: profile.keyboard)
         let window = SessionWindowController(
-            desktop: desktop, title: profile.title, frameName: sessionFrameName,
+            desktop: desktop, title: profile.title, mode: profile.displayMode, fixedSize: profile.fixedSize,
+            frameName: sessionFrameName,
             onDisconnect: { [weak controller] in controller?.disconnect() },
             onResize: { [weak controller] size in controller?.resizeDesktop(to: size) })
         sessionWindow = window

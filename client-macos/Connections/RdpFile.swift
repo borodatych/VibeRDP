@@ -86,7 +86,23 @@ struct RdpFile: Equatable {
         return ConnectionProfile(
             name: name, address: address, username: username, gatewayAddress: gatewayAddress,
             gatewayUsesServerCredentials: integer("promptcredentialonce").map { $0 != 0 } ?? true,
-            gatewayBypassLocal: integer("gatewayusagemethod") == 2)
+            gatewayBypassLocal: integer("gatewayusagemethod") == 2, displayMode: displayMode,
+            fixedSize: desktopSize ?? .standard)
+    }
+
+    /// screen mode id 2 is full screen; a desktop size with dynamic resolution off keeps that size;
+    /// anything else follows the window
+    var displayMode: ProfileDisplayMode {
+        if integer("screen mode id") == 2 {
+            return .fullScreen
+        }
+        return integer("dynamic resolution") == 0 && desktopSize != nil ? .fixed : .window
+    }
+
+    /// desktopwidth and desktopheight, within the limits of the protocol; nil unless the file names both
+    var desktopSize: DesktopSize? {
+        guard let width = integer("desktopwidth"), let height = integer("desktopheight") else { return nil }
+        return DesktopSize(width: width, height: height).clamped
     }
 }
 

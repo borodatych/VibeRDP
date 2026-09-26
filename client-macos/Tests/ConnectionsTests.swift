@@ -68,6 +68,30 @@ final class ProfileStoreTests: XCTestCase {
         XCTAssertNil(profile.gateway)
         XCTAssertTrue(profile.gatewayUsesServerCredentials)
         XCTAssertTrue(profile.hasValidGateway)
+        XCTAssertEqual(profile.displayMode, .window, "a profile saved before the modes follows the window, as then")
+        XCTAssertEqual(profile.fixedSize, .standard)
+    }
+
+    /// The display mode and the fixed size are saved with the profile
+    func testDisplaySettingsAreKept() throws {
+        let store = ProfileStore(defaults: defaults, passwords: MemoryPasswordStore())
+        let profile = ConnectionProfile(
+            address: "win", displayMode: .fixed, fixedSize: DesktopSize(width: 1600, height: 900))
+        store.add(profile)
+        let read = try XCTUnwrap(ProfileStore(defaults: defaults, passwords: MemoryPasswordStore()).profile(profile.id))
+        XCTAssertEqual(read.displayMode, .fixed)
+        XCTAssertEqual(read.fixedSize, DesktopSize(width: 1600, height: 900))
+    }
+
+    /// A size goes within the limits of the protocol, its width even
+    func testDesktopSizeStaysWithinTheProtocol() {
+        XCTAssertEqual(DesktopSize(width: 199, height: 9000).clamped, DesktopSize(width: 200, height: 8192))
+        XCTAssertEqual(DesktopSize(width: 1367, height: 767).clamped, DesktopSize(width: 1366, height: 767))
+        XCTAssertEqual(DesktopSize(width: 8193, height: 100).clamped, DesktopSize(width: 8192, height: 200))
+        for preset in DesktopSize.presets {
+            XCTAssertEqual(preset.clamped, preset, "every preset is a size the server takes")
+        }
+        XCTAssertTrue(DesktopSize.presets.contains(.standard))
     }
 
     func testUnreadableProfilesLeaveTheListEmpty() {

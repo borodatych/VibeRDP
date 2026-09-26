@@ -3,6 +3,10 @@ import AppKit
 /// The window of a running session, as Windows App opens one: the remote desktop, Disconnect in the title bar,
 /// and the overlay while a dropped connection is being restored
 /// The window of the connections keeps its size and place: the session opens beside it and goes with the session
+///
+/// The display mode of the connection sets the rest:
+/// By the window, the desktop follows the window; in full screen, the window opens in full screen and follows it too;
+/// a fixed desktop keeps its size, the window opens as large as the screen lets, and the frame scales into it
 @MainActor
 final class SessionWindowController: NSWindowController, NSWindowDelegate {
     /// The name the window keeps its frame under, so the next session opens where and as large as the last one
@@ -17,17 +21,22 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
     static let titleBarMargin: CGFloat = 8
 
     let desktop: DesktopView
+    private let mode: ProfileDisplayMode
+    private let fixedSize: DesktopSize
     private let onDisconnect: () -> Void
     private let onResize: (CGSize) -> Void
     private var reconnecting: ReconnectingOverlay?
     private var resizeTimer: Timer?
 
     /// frameName nil keeps no frame: the tests must not move the window of the app itself
+    /// A fixed desktop keeps no frame either: its window is as large as the desktop, not as the last window was
     init(
-        desktop: DesktopView, title: String, frameName: String?, onDisconnect: @escaping () -> Void,
-        onResize: @escaping (CGSize) -> Void
+        desktop: DesktopView, title: String, mode: ProfileDisplayMode, fixedSize: DesktopSize, frameName: String?,
+        onDisconnect: @escaping () -> Void, onResize: @escaping (CGSize) -> Void
     ) {
         self.desktop = desktop
+        self.mode = mode
+        self.fixedSize = fixedSize
         self.onDisconnect = onDisconnect
         self.onResize = onResize
         let window = NSWindow(
@@ -44,7 +53,12 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
         desktop.autoresizingMask = [.width, .height]
         content.addSubview(desktop)
         window.contentView = content
-        if let frameName {
+        if mode == .fixed {
+            let screen = window.screen ?? NSScreen.main
+            let visible = screen.map { window.contentRect(forFrameRect: $0.visibleFrame).size }
+            window.setContentSize(Self.contentSize(for: fixedSize, within: visible))
+            window.center()
+        } else if let frameName {
             if !window.setFrameUsingName(frameName) {
                 window.center()
             }
@@ -54,7 +68,9 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
         }
         super.init(window: window)
         window.delegate = self
-        desktop.onResize = { [weak self] size in self?.desktopResized(to: size) }
+        if mode != .fixed {
+            desktop.onResize = { [weak self] size in self?.desktopResized(to: size) }
+        }
     }
 
     @available(*, unavailable)
@@ -62,16 +78,46 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
         fatalError("the window is built in code")
     }
 
-    /// The desktop the session asks for when it connects: the window in points; the pixels of the display are task 3.2
+    /// The desktop the session asks for when it connects, so it needs no change once the window shows
     var desktopSize: CGSize {
-        let size = window?.contentLayoutRect.size ?? Self.defaultSize
-        return CGSize(width: size.width.rounded(), height: size.height.rounded())
+        let screen = window?.screen ?? NSScreen.main
+        return Self.desktopSize(
+            mode: mode, fixed: fixedSize, content: window?.contentLayoutRect.size ?? Self.defaultSize,
+            fullScreen: screen.map(Self.fullScreenSize(of:)) ?? Self.defaultSize)
     }
 
-    /// The user is in: the window comes up with the keyboard on the desktop
+    /// The desktop of a mode: the content of the window, the screen in full screen, or the fixed size
+    /// Sizes are in points of the Mac; the pixels of the display are task 3.2
+    static func desktopSize(
+        mode: ProfileDisplayMode, fixed: DesktopSize, content: CGSize, fullScreen: CGSize
+    ) -> CGSize {
+        switch mode {
+        case .window: CGSize(width: content.width.rounded(), height: content.height.rounded())
+        case .fullScreen: CGSize(width: fullScreen.width.rounded(), height: fullScreen.height.rounded())
+        case .fixed: fixed.clamped.cgSize
+        }
+    }
+
+    /// What a window in full screen shows of a screen: all of it but the strip of a camera housing at the top
+    static func fullScreenSize(of screen: NSScreen) -> CGSize {
+        CGSize(width: screen.frame.width, height: screen.frame.height - screen.safeAreaInsets.top)
+    }
+
+    /// The window of a fixed desktop: as large as the desktop, or smaller in its proportions on a smaller screen
+    static func contentSize(for fixed: DesktopSize, within visible: CGSize?) -> CGSize {
+        let size = fixed.clamped.cgSize
+        guard let visible, visible.width > 0, visible.height > 0 else { return size }
+        let scale = min(1, visible.width / size.width, visible.height / size.height)
+        return CGSize(width: (size.width * scale).rounded(.down), height: (size.height * scale).rounded(.down))
+    }
+
+    /// The user is in: the window comes up with the keyboard on the desktop, in full screen when the mode says so
     func show() {
         guard let window, !window.isVisible else { return }
         showWindow(nil)
+        if mode == .fullScreen && !window.styleMask.contains(.fullScreen) {
+            window.toggleFullScreen(nil)
+        }
         window.makeFirstResponder(desktop)
         showDisconnectButton()
         Diagnostics.info(
