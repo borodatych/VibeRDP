@@ -36,11 +36,14 @@
 **Суть:**
 - `MPSSupportsMTLDevice` отвечает, работает ли Metal Performance Shaders с устройством (`MetalPerformanceShaders.framework/Headers/MetalPerformanceShaders.h:26-34`)
 - Виртуальная GPU раннера GitHub `macos-26` MPS поддерживает: там тесты рендера не пропускаются — [ci/githubActions.md](../ci/githubActions.md); про другие виртуальные машины _не проверено_
-- Слой, чей `layerContentsRedrawPolicy = .onSetNeedsDisplay` и `wantsUpdateLayer = true`, перерисовывается в `updateLayer`: сколько раз ни ставь `needsDisplay` между обновлениями экрана, AppKit рисует один раз
+- **Вид, чей слой — `CAMetalLayer` из `makeBackingLayer`, AppKit сам не рисует:** `needsDisplay` не доводит его до `updateLayer`, даже с `wantsUpdateLayer = true` и `layerContentsRedrawPolicy = .onSetNeedsDisplay`; в задаче 1.2 так считалось, и тест это «подтверждал», потому что звал отрисовку напрямую, а на настоящем Windows окно сессии осталось пустым при идущих кадрах (живая проверка владельца, 2026-09-25, решение 33)
+- Рисовать такой слой должен сам вид — по своему таймеру экрана: `NSView.displayLink(target:selector:)` (macOS 14) даёт `CADisplayLink`, который следует за экраном окна, зовёт на главном потоке и ставится на паузу через `isPaused`
+- Ссылку экрана создают, когда вид попал в окно (`viewDidMoveToWindow`), и снимают, когда ушёл: она держит вид
 
 **Применение:**
 - `FrameRenderer` возвращает `nil` без GPU или без поддержки MPS: приложение пишет «нет доступа к Metal», тесты рендера пропускаются с причиной
-- `DesktopView.frameChanged` только ставит `needsDisplay`: поток кадров от движка стоит одной отрисовки за обновление экрана
+- `DesktopView.frameChanged` ставит флаг и снимает ссылку экрана с паузы; шаг ссылки рисует один кадр и засыпает, если нового изменения нет: поток кадров стоит одной отрисовки за обновление экрана, неподвижный стол — ни одной
+- `DesktopViewTests.testChangedFramesReachTheScreen` считает кадры, выведенные на экран через ссылку экрана, а не вызов отрисовки напрямую — так дефект 1.2 ловится тестом
 
 ## Полноэкранный режим
 
@@ -52,4 +55,5 @@
 
 **Источники:**
 - `QuartzCore.framework/Headers/CAMetalLayer.h`, `Metal.framework/Headers/MTLDevice.h:709-717`, `MetalPerformanceShaders.framework/Headers/MetalPerformanceShaders.h` из SDK macOS 27.0
-- `client-macos/Tests/FrameRendererTests.swift`, `FrameGeometryTests.swift`, `LiveServerTests.swift`, `MainWindowTests.swift`
+- `client-macos/Tests/FrameRendererTests.swift`, `FrameGeometryTests.swift`, `LiveServerTests.swift`, `MainWindowTests.swift`, `DesktopViewTests.swift`
+- `AppKit.framework/Headers/NSView.h:662` — `displayLinkWithTarget:selector:`, SDK macOS 27.0
