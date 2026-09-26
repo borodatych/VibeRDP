@@ -114,6 +114,14 @@ final class SessionController {
         }
     }
 
+    /// The desktop follows the window: the server redraws it at this size, and frameResized follows
+    func resizeDesktop(to size: CGSize) {
+        if let handle {
+            _ = VRCSessionResizeDesktop(
+                handle.session, UInt32(clamping: Int(size.width)), UInt32(clamping: Int(size.height)))
+        }
+    }
+
     /// The user's answer to a gateway message that needs consent
     func answerGatewayMessage(accept: Bool) {
         if let handle {

@@ -25,6 +25,10 @@ final class ConnectionViewController: NSViewController {
     private var failure: (kind: VRCErrorKind, message: String)?
     /// The first update after each change of size is logged, the rest are too many to read
     private var frameUpdateLogged = false
+    /// The desktop follows the window once the window has stopped for this long:
+    /// a drag of the corner would otherwise make the server redraw at every step
+    static let resizeDelay: TimeInterval = 0.3
+    private var resizeTimer: Timer?
 
     init(trusted: TrustedCertificates, keyboard: KeyboardSettingsStore, profiles: ProfileStore) {
         self.trusted = trusted
@@ -177,6 +181,7 @@ final class ConnectionViewController: NSViewController {
         let desktop = DesktopView(renderer: renderer)
         desktop.input = controller
         desktop.keyboard = ProfileKeyboardSettings(store: keyboard, keyboard: profile.keyboard)
+        desktop.onResize = { [weak self] size in self?.desktopResized(to: size) }
         self.desktop = desktop
         model.isBusy = true
         // The desktop is as large as the window in points; scaling it to the pixels of the display is task 3.2
@@ -343,7 +348,22 @@ final class ConnectionViewController: NSViewController {
         reconnecting = nil
     }
 
+    /// The window stopped changing: the server gets its size, the frame scales into the window meanwhile
+    private func desktopResized(to size: CGSize) {
+        resizeTimer?.invalidate()
+        resizeTimer = Timer.scheduledTimer(withTimeInterval: Self.resizeDelay, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, let session = self.session, self.desktop?.superview != nil else { return }
+                let rounded = CGSize(width: size.width.rounded(), height: size.height.rounded())
+                Diagnostics.info("frame", "asking for a desktop of \(rounded)")
+                session.resizeDesktop(to: rounded)
+            }
+        }
+    }
+
     private func hideDesktop() {
+        resizeTimer?.invalidate()
+        resizeTimer = nil
         desktop?.removeFromSuperview()
         desktop = nil
         connections?.isHidden = false

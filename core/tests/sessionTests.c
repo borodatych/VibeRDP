@@ -133,6 +133,9 @@ static bool testInputNeedsAConnection(void)
     CHECK(VRCSessionReleaseKeys(session) == VRCResultInvalidState);
     CHECK(VRCSessionRefresh(session) == VRCResultInvalidState);
     CHECK(VRCSessionRefresh(NULL) == VRCResultInvalidArgument);
+    CHECK(VRCSessionResizeDesktop(session, 1920, 1200) == VRCResultInvalidState);
+    CHECK(VRCSessionResizeDesktop(session, 0, 1200) == VRCResultInvalidArgument);
+    CHECK(VRCSessionResizeDesktop(NULL, 1920, 1200) == VRCResultInvalidArgument);
 
     VRCSessionDestroy(session);
     recorderFree(recorder);

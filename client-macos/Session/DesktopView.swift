@@ -52,6 +52,9 @@ final class DesktopView: NSView {
     /// Frames the view put on screen
     private(set) var presentedFrames = 0
 
+    /// The view changed its size, in points: the desktop may follow it
+    var onResize: ((CGSize) -> Void)?
+
     /// The pointer of the server, shown as the cursor over the desktop
     var pointer = RemotePointer.system {
         didSet { updateCursor() }
@@ -104,8 +107,12 @@ final class DesktopView: NSView {
     }
 
     override func setFrameSize(_ newSize: NSSize) {
+        let changed = newSize != frame.size
         super.setFrameSize(newSize)
         updateDrawableSize()
+        if changed && newSize.width > 0 && newSize.height > 0 {
+            onResize?(newSize)
+        }
     }
 
     override func viewDidChangeBackingProperties() {

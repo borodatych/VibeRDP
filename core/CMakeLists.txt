@@ -33,8 +33,8 @@ set(VRC_MODULE_MAP ${CMAKE_CURRENT_SOURCE_DIR}/framework/module.modulemap)
 set(VRC_EXPORTS ${CMAKE_CURRENT_SOURCE_DIR}/framework/exports.txt)
 
 add_library(VibeRDPCore SHARED src/session.c src/clipboard.c src/clipfiles.c src/cliphtml.c src/clipimage.c
-            src/cliptext.c src/decision.c src/frame.c src/input.c src/kerberos.c src/log.c src/pointer.c
-            ${VRC_PUBLIC_HEADER} ${VRC_MODULE_MAP})
+            src/cliptext.c src/decision.c src/display.c src/frame.c src/input.c src/kerberos.c src/log.c
+            src/pointer.c ${VRC_PUBLIC_HEADER} ${VRC_MODULE_MAP})
 set_source_files_properties(${VRC_MODULE_MAP} PROPERTIES MACOSX_PACKAGE_LOCATION Modules)
 set_target_properties(VibeRDPCore PROPERTIES
   FRAMEWORK TRUE

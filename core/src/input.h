@@ -33,6 +33,8 @@ typedef enum VRCInputKind {
     VRCInputKindReleaseKeys,
     /* The server sends the whole desktop again */
     VRCInputKindRefresh,
+    /* The desktop follows the window: x and y carry the width and the height */
+    VRCInputKindResize,
 } VRCInputKind;
 
 typedef struct VRCInputEvent {

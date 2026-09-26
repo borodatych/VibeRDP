@@ -53,6 +53,16 @@ final class DesktopViewTests: XCTestCase {
         XCTAssertTrue(second, "the changed frame was never drawn")
     }
 
+    /// A new size of the view is reported for the desktop to follow; the same size again is not
+    func testResizeIsReported() {
+        var sizes: [CGSize] = []
+        view.onResize = { sizes.append($0) }
+        view.setFrameSize(NSSize(width: 1280, height: 800))
+        view.setFrameSize(NSSize(width: 1280, height: 800))
+        view.setFrameSize(NSSize(width: 1920, height: 1200))
+        XCTAssertEqual(sizes, [CGSize(width: 1280, height: 800), CGSize(width: 1920, height: 1200)])
+    }
+
     /// Waits up to two seconds for the view to put more frames on screen than it had
     private func drawn(after count: Int) async -> Bool {
         for _ in 0..<200 where view.presentedFrames <= count {

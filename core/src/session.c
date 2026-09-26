@@ -8,6 +8,7 @@
 
 #include "VibeRDPCore/VibeRDPCore.h"
 #include "clipboard.h"
+#include "display.h"
 #include "decision.h"
 #include "frame.h"
 #include "input.h"
@@ -97,6 +98,9 @@ struct VRCSession {
 
     /* The clipboard channel and what each side offers */
     VRCClipboard clipboard;
+
+    /* The Display Control channel: the desktop follows the window */
+    VRCDisplay display;
 };
 
 /* The pointer FreeRDP allocates with the size the core registers: the converted image rides along */
@@ -168,6 +172,13 @@ static void onChannelConnected(void* context, const ChannelConnectedEventArgs* e
     VRCSession* session = (VRCSession*)context;
     if (strcmp(event->name, CLIPRDR_SVC_CHANNEL_NAME) == 0)
         vrcClipboardAttach(&session->clipboard, (CliprdrClientContext*)event->pInterface);
+    else if (strcmp(event->name, DISP_DVC_CHANNEL_NAME) == 0)
+    {
+        const rdpSettings* settings = session->common.context.settings;
+        vrcDisplayAttach(&session->display, (DispClientContext*)event->pInterface,
+                         freerdp_settings_get_uint32(settings, FreeRDP_DesktopWidth),
+                         freerdp_settings_get_uint32(settings, FreeRDP_DesktopHeight));
+    }
 }
 
 static void onChannelDisconnected(void* context, const ChannelDisconnectedEventArgs* event)
@@ -175,6 +186,8 @@ static void onChannelDisconnected(void* context, const ChannelDisconnectedEventA
     VRCSession* session = (VRCSession*)context;
     if (strcmp(event->name, CLIPRDR_SVC_CHANNEL_NAME) == 0)
         vrcClipboardDetach(&session->clipboard, (CliprdrClientContext*)event->pInterface);
+    else if (strcmp(event->name, DISP_DVC_CHANNEL_NAME) == 0)
+        vrcDisplayDetach(&session->display, (DispClientContext*)event->pInterface);
 }
 
 static BOOL preConnect(freerdp* instance)
@@ -480,6 +493,9 @@ static void sendInput(VRCSession* session, const VRCInputEvent* event)
             (void)IFCALLRESULT(TRUE, context->update->RefreshRect, context, 1, &desktop);
             break;
         }
+        case VRCInputKindResize:
+            vrcDisplayRequest(&session->display, event->x, event->y);
+            break;
     }
 }
 
@@ -801,6 +817,7 @@ static BOOL clientNew(freerdp* instance, rdpContext* context)
     const bool certificate = vrcDecisionInit(&session->certificate);
     const bool gatewayConsent = vrcDecisionInit(&session->gatewayConsent);
     const bool clipboard = vrcClipboardInit(&session->clipboard, &session->callbacks, &session->userData);
+    vrcDisplayInit(&session->display);
     atomic_init(&session->certificateRejected, false);
     /* A static initializer cannot fail, so ClientFree always meets a valid mutex */
     session->credentialsMutex = (pthread_mutex_t)PTHREAD_MUTEX_INITIALIZER;
@@ -857,6 +874,7 @@ static void clientFree(freerdp* instance, rdpContext* context)
     /* A session that never connected named no cache */
     vrcKerberosCacheDestroy(freerdp_settings_get_string(context->settings, FreeRDP_KerberosCache));
     vrcClipboardDestroy(&session->clipboard);
+    vrcDisplayDestroy(&session->display);
 }
 
 static int clientStart(rdpContext* context)
@@ -1199,5 +1217,15 @@ VRCResult VRCSessionRefresh(VRCSession* session)
         return VRCResultInvalidArgument;
 
     const VRCInputEvent event = { .kind = VRCInputKindRefresh };
+    return queueInput(session, &event);
+}
+
+VRCResult VRCSessionResizeDesktop(VRCSession* session, uint32_t width, uint32_t height)
+{
+    if (!session || width == 0 || height == 0)
+        return VRCResultInvalidArgument;
+
+    /* The size rides in the coordinates of the event: a resize has no pointer */
+    const VRCInputEvent event = { .kind = VRCInputKindResize, .x = width, .y = height };
     return queueInput(session, &event);
 }

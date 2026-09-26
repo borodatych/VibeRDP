@@ -406,6 +406,15 @@ VRCResult VRCSessionCopyRemoteFiles(VRCSession* session, const char* directory, 
 VRCResult VRCSessionRefresh(VRCSession* session);
 
 /*
+ * Asks the server for a desktop of this size, in pixels, as the window changes: the server redraws the desktop
+ * at the new size and frameResized follows, as after any other change of size
+ * The width goes even and both stay within 200 and 8192, the limits of the protocol; a server without the Display
+ * Control channel keeps its size, and the app goes on scaling the frame into the window
+ * Requests go in order with the input, so a burst of them ends with the last size; InvalidState before Connected
+ */
+VRCResult VRCSessionResizeDesktop(VRCSession* session, uint32_t width, uint32_t height);
+
+/*
  * Diagnostics log: the lines of the engine and of the app in one file, for someone to read when something goes wrong
  * The log is one for the process, not for a session: it is set before the first session, as the app starts
  */

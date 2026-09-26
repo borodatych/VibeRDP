@@ -141,6 +141,16 @@ add_test(NAME clipboardRoundTrip COMMAND clipboardEchoTests roundTrip)
 set_tests_properties(clipboardRoundTrip PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77
                                               ENVIRONMENT "${VRC_TEST_ENVIRONMENT}")
 
+# The desktop that follows the window, against a stand-in for the Display Control channel
+add_executable(displayTests displayTests.c ${PROJECT_SOURCE_DIR}/src/display.c)
+target_include_directories(displayTests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_link_libraries(displayTests PRIVATE freerdp-client)
+target_compile_options(displayTests PRIVATE -Wall -Wextra -Werror)
+foreach(test IN ITEMS layoutLimits waitsForCapabilities onlyNewSizesGo detachStopsLayouts)
+  add_test(NAME ${test} COMMAND displayTests ${test})
+  set_tests_properties(${test} PROPERTIES TIMEOUT 60 ENVIRONMENT "${VRC_TEST_ENVIRONMENT}")
+endforeach()
+
 # The diagnostics log through the framework, as the app calls it
 add_executable(logTests logTests.c)
 target_link_libraries(logTests PRIVATE VibeRDPCore)
