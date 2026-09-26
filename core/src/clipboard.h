@@ -41,6 +41,8 @@ typedef struct VRCClipboard {
     bool ready;
     /* The formats the clipboard of the Mac offers, one bit for each value of VRCClipboardFormat */
     uint32_t offered;
+    /* The offers of the Mac so far, numbered in the log */
+    uint64_t offers;
     /* The format id of the server for each format it offers, 0 for none */
     uint32_t remoteFormatIds[VRC_CLIPBOARD_FORMAT_SLOTS];
     /* The entry of the table of Windows formats each of those ids stands for */

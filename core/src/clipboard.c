@@ -12,6 +12,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <inttypes.h>
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
@@ -20,6 +21,12 @@
 
 #include <freerdp/channels/cliprdr.h>
 #include <winpr/user.h>
+#include <winpr/wlog.h>
+
+/* The exchange in the diagnostics log: formats, sizes and the order of the messages, never the data itself */
+#define TAG "com.vibebrains.viberdp.clipboard"
+/* Room for the names of all formats of the app in one line of the log */
+#define FORMAT_NAMES_SIZE 64
 
 /*
  * The ids this client gives the registered formats in its own lists: the server asks for data by them
@@ -170,6 +177,40 @@ static bool knownFormat(int32_t format)
     return format > 0 && format < VRC_CLIPBOARD_FORMAT_SLOTS;
 }
 
+/* A format of the app as the log names it */
+static const char* formatName(int32_t format)
+{
+    switch (format)
+    {
+        case VRCClipboardFormatText:
+            return "text";
+        case VRCClipboardFormatHtml:
+            return "html";
+        case VRCClipboardFormatRtf:
+            return "rtf";
+        case VRCClipboardFormatImage:
+            return "image";
+        case VRCClipboardFormatFiles:
+            return "files";
+        default:
+            return "unknown";
+    }
+}
+
+/* The formats of a set of bits as the log names them, "none" for an empty set */
+static const char* formatNames(uint32_t set, char names[FORMAT_NAMES_SIZE])
+{
+    size_t used = 0;
+    names[0] = '\0';
+    for (int32_t format = 1; format < VRC_CLIPBOARD_FORMAT_SLOTS; format++)
+    {
+        if (set & formatBit(format))
+            used += (size_t)snprintf(names + used, FORMAT_NAMES_SIZE - used, "%s%s", used ? " " : "",
+                                     formatName(format));
+    }
+    return used ? names : "none";
+}
+
 /* The entry of a format in a list of the server, -1 for one the app does not take */
 static int32_t entryOfServerFormat(const CLIPRDR_FORMAT* format)
 {
@@ -262,6 +303,9 @@ static UINT onMonitorReady(CliprdrClientContext* channel, const CLIPRDR_MONITOR_
         clipboard->ready = true;
         result = sendFormatList(channel, clipboard->offered);
     }
+    char names[FORMAT_NAMES_SIZE];
+    WLog_INFO(TAG, "channel ready, the first list of the Mac: %s, sent %s", formatNames(clipboard->offered, names),
+              result == CHANNEL_RC_OK ? "ok" : "with an error");
     pthread_mutex_unlock(&clipboard->mutex);
     return result;
 }
@@ -298,6 +342,12 @@ static UINT onServerFormatList(CliprdrClientContext* channel, const CLIPRDR_FORM
         .common = { .msgType = CB_FORMAT_LIST_RESPONSE, .msgFlags = CB_RESPONSE_OK },
     };
     const UINT result = channel->ClientFormatListResponse(channel, &response);
+    uint32_t taken = 0;
+    for (size_t i = 0; i < count; i++)
+        taken |= formatBit(formats[i]);
+    char names[FORMAT_NAMES_SIZE];
+    WLog_INFO(TAG, "the server copied: list %" PRIu64 " of %" PRIu32 " formats, the Mac takes %s",
+              clipboard->remoteGeneration, list->numFormats, formatNames(taken, names));
     pthread_mutex_unlock(&clipboard->mutex);
 
     if (clipboard->callbacks->remoteClipboardChanged)
@@ -313,8 +363,17 @@ static UINT onServerFormatDataRequest(CliprdrClientContext* channel, const CLIPR
     pthread_mutex_lock(&clipboard->mutex);
     const int32_t entry = entryOfOwnId(request->requestedFormatId, clipboard->offered);
     const bool answerable = entry >= 0 && clipboard->callbacks->clipboardDataRequested;
+    if (clipboard->serverAsks != NO_ENTRY)
+        WLog_WARN(TAG, "the server asks again before the answer about %s",
+                  formatName(windowsFormats[clipboard->serverAsks].app));
     clipboard->serverAsks = answerable ? entry : NO_ENTRY;
     const UINT result = answerable ? CHANNEL_RC_OK : sendDataResponse(channel, NULL, 0);
+    if (answerable)
+        WLog_INFO(TAG, "the server pastes format 0x%04" PRIX32 ": %s, the app is asked",
+                  request->requestedFormatId, formatName(windowsFormats[entry].app));
+    else
+        WLog_INFO(TAG, "the server pastes format 0x%04" PRIX32 ", not in the list of the Mac: a failed answer",
+                  request->requestedFormatId);
     pthread_mutex_unlock(&clipboard->mutex);
 
     if (answerable)
@@ -328,6 +387,9 @@ static UINT onServerFormatDataResponse(CliprdrClientContext* channel, const CLIP
     VRCClipboard* clipboard = channel->custom;
 
     pthread_mutex_lock(&clipboard->mutex);
+    WLog_INFO(TAG, "the server answered: %s, %" PRIu32 " bytes%s",
+              (response->common.msgFlags & CB_RESPONSE_OK) ? "ok" : "failed", response->common.dataLen,
+              clipboard->lateAnswers > 0 ? ", late: dropped" : "");
     if (clipboard->lateAnswers > 0)
         clipboard->lateAnswers--;
     else if (clipboard->copyEntry != NO_ENTRY && !clipboard->copySucceeded && !clipboard->copyData)
@@ -506,9 +568,13 @@ VRCResult vrcClipboardOffer(VRCClipboard* clipboard, const VRCClipboardFormat* f
 
     pthread_mutex_lock(&clipboard->mutex);
     clipboard->offered = offered;
+    clipboard->offers++;
     /* Before Monitor Ready the offer waits: it goes out as the first list of the channel */
-    const bool sent = !clipboard->channel || !clipboard->ready ||
-                      sendFormatList(clipboard->channel, offered) == CHANNEL_RC_OK;
+    const bool waits = !clipboard->channel || !clipboard->ready;
+    const bool sent = waits || sendFormatList(clipboard->channel, offered) == CHANNEL_RC_OK;
+    char names[FORMAT_NAMES_SIZE];
+    WLog_INFO(TAG, "the Mac copied: offer %" PRIu64 " of %s, %s", clipboard->offers, formatNames(offered, names),
+              waits ? "waits for the channel" : sent ? "list sent" : "the list failed");
     pthread_mutex_unlock(&clipboard->mutex);
     return sent ? VRCResultOK : VRCResultFailure;
 }
@@ -525,7 +591,11 @@ VRCResult vrcClipboardProvide(VRCClipboard* clipboard, VRCClipboardFormat format
     const int32_t entry = clipboard->serverAsks;
     pthread_mutex_unlock(&clipboard->mutex);
     if (entry == NO_ENTRY || windowsFormats[entry].app != format)
+    {
+        WLog_WARN(TAG, "an answer of %s dropped: the server waits for %s", formatName(format),
+                  entry == NO_ENTRY ? "nothing" : formatName(windowsFormats[entry].app));
         return VRCResultInvalidState;
+    }
     /* Converted outside the lock: a long text, a large image or a deep folder must not hold the channel */
     VRCLocalFiles* files = NULL;
     if (data && format == VRCClipboardFormatFiles)
@@ -546,6 +616,11 @@ VRCResult vrcClipboardProvide(VRCClipboard* clipboard, VRCClipboardFormat format
         const size_t answerLength = files ? files->descriptorLength : convertedLength;
         result = sendDataResponse(clipboard->channel, answer, answerLength) == CHANNEL_RC_OK ? VRCResultOK
                                                                                             : VRCResultFailure;
+        if (answer)
+            WLog_INFO(TAG, "answer to the server: %s, %zu bytes from %zu of the Mac, sent %s", formatName(format),
+                      answerLength, length, result == VRCResultOK ? "ok" : "with an error");
+        else
+            WLog_INFO(TAG, "answer to the server: the Mac no longer holds %s, a failed answer", formatName(format));
         /* The server reads the files of the list it got */
         if (files && result == VRCResultOK)
         {
@@ -554,6 +629,9 @@ VRCResult vrcClipboardProvide(VRCClipboard* clipboard, VRCClipboardFormat format
             files = previous;
         }
     }
+    else
+        WLog_WARN(TAG, "an answer of %s dropped: the channel went down or the server asked anew meanwhile",
+                  formatName(format));
     pthread_mutex_unlock(&clipboard->mutex);
     vrcLocalFilesFree(files);
     free(converted);
@@ -587,6 +665,8 @@ static VRCResult fetchRemote(VRCClipboard* clipboard, VRCClipboardFormat format,
         if (result != VRCResultOK)
             clipboard->copyEntry = NO_ENTRY;
     }
+    WLog_INFO(TAG, "the Mac pastes %s of list %" PRIu64 ": %s", formatName(format), *generation,
+              formatId == 0 ? "the server does not offer it" : result == VRCResultOK ? "asked" : "the request failed");
     pthread_mutex_unlock(&clipboard->mutex);
     if (result != VRCResultOK)
         return result;
@@ -609,6 +689,8 @@ static VRCResult fetchRemote(VRCClipboard* clipboard, VRCClipboardFormat format,
         clipboard->lateAnswers++;
     pthread_mutex_unlock(&clipboard->mutex);
 
+    if (timedOut)
+        WLog_WARN(TAG, "no answer from the server about %s in %" PRIu32 " ms", formatName(format), timeoutMs);
     if (succeeded)
         return VRCResultOK;
     free(*data);
