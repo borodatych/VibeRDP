@@ -2,6 +2,7 @@
 
 pub mod cli;
 pub mod desktop;
+pub mod i18n;
 pub mod icon;
 pub mod launcher;
 pub mod protocol;

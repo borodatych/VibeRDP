@@ -20,76 +20,101 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     MB_ICONERROR, MB_ICONINFORMATION, MB_OK, MessageBoxW,
 };
 
+use vibe_seam_helper::i18n::{self, Catalog};
+
 use crate::instance;
 
 const FOLDER: &str = "VibeRDP";
 const EXE_NAME: &str = "vibe-seam-helper.exe";
 const SHORTCUT_NAME: &str = "VibeRDP Seam.lnk";
-const SHORTCUT_DESCRIPTION: &str = "VibeRDP: окна Windows отдельными окнами Mac";
 const TITLE: &str = "VibeRDP Seam";
+/// Beside the exe: the folder of languages and the file naming the chosen one
+const LANGUAGES: &str = "lang";
+const LANGUAGE_FILE: &str = "language";
+const ENGLISH_FILE: &str = "en.json";
 
 /// Copies the helper, adds the shortcut and starts the copy; the result goes to a message box
-pub fn install() {
-    match try_install() {
-        Ok(exe) => inform(&format!(
-            "Хелпер VibeRDP установлен и запущен\nОн будет стартовать при каждом входе в Windows\n\nФайл: {}",
-            exe.display()
-        )),
-        Err(error) => fail(&format!("Хелпер VibeRDP не установлен:\n{error}")),
+/// A language given with --language is kept for the messages from now on
+pub fn install(language: Option<&str>) {
+    let words = words(language);
+    match try_install(&words) {
+        Ok(exe) => inform(&words.text("install.done", &[("path", &exe.display().to_string())])),
+        Err(error) => fail(&words.text("install.failed", &[("error", &error.to_string())])),
     }
 }
 
 /// Stops the helper and removes the shortcut and the copy; the result goes to a message box
 pub fn uninstall() {
-    match try_uninstall() {
-        Ok(None) => inform("Хелпер VibeRDP остановлен и удалён из автозагрузки"),
-        Ok(Some(left)) => inform(&format!(
-            "Хелпер VibeRDP остановлен и удалён из автозагрузки\n\nФайл {} запущен сейчас и сам себя удалить не может: удалите его вручную",
-            left.display()
+    let words = words(None);
+    match try_uninstall(&words) {
+        Ok(None) => inform(&words.text("uninstall.done", &[])),
+        Ok(Some(left)) => inform(&words.text(
+            "uninstall.leftFile",
+            &[("path", &left.display().to_string())],
         )),
-        Err(error) => fail(&format!("Хелпер VibeRDP не удалён:\n{error}")),
+        Err(error) => fail(&words.text("uninstall.failed", &[("error", &error.to_string())])),
     }
 }
 
 /// The message box for an argument the helper does not know
 pub fn usage(argument: &str) {
-    fail(&format!(
-        "Неизвестный параметр: {argument}\n\nБез параметров — работа хелпера\n--install — установка в автозагрузку\n--uninstall — удаление"
-    ));
+    fail(&words(None).text("usage", &[("argument", argument)]))
 }
 
-fn try_install() -> io::Result<PathBuf> {
+/// The catalog of the chosen language: the one given now is kept, else the one kept before, else Russian
+/// English is seeded into the folder of languages, and a user's own edit of it is never overwritten
+fn words(language: Option<&str>) -> Catalog {
+    let Some(folder) =
+        std::env::var_os("LOCALAPPDATA").map(|base| PathBuf::from(base).join(FOLDER))
+    else {
+        return Catalog::base();
+    };
+    let languages = folder.join(LANGUAGES);
+    let english = languages.join(ENGLISH_FILE);
+    if !english.exists() {
+        let _ = fs::create_dir_all(&languages).and_then(|_| fs::write(&english, i18n::ENGLISH));
+    }
+    let chosen = folder.join(LANGUAGE_FILE);
+    if let Some(code) = language.filter(|code| i18n::is_code(code)) {
+        let _ = fs::write(&chosen, code);
+    }
+    let code = fs::read_to_string(&chosen).unwrap_or_default();
+    Catalog::load(&languages, code.trim())
+}
+
+fn try_install(words: &Catalog) -> io::Result<PathBuf> {
     let source = std::env::current_exe()?;
-    let folder = install_folder()?;
+    let folder = install_folder(words)?;
     let target = folder.join(EXE_NAME);
     // A running copy holds its file: it is stopped before being replaced
     if !instance::stop_running() {
-        return Err(io::Error::other(
-            "запущенный хелпер не остановился за 5 секунд",
-        ));
+        return Err(io::Error::other(words.text("error.notStopped", &[])));
     }
     fs::create_dir_all(&folder)?;
     if !same_file(&source, &target) {
         fs::copy(&source, &target)?;
     }
-    create_shortcut(&target, &startup_folder()?.join(SHORTCUT_NAME))?;
-    Command::new(&target).current_dir(&folder).spawn().map_err(|error| {
-        io::Error::other(format!(
-            "файл скопирован, но не запустился: {error}\nВозможно, запуск программ из папки пользователя запрещён политикой AppLocker"
-        ))
-    })?;
+    create_shortcut(
+        &target,
+        &startup_folder()?.join(SHORTCUT_NAME),
+        &words.text("shortcut.description", &[]),
+    )?;
+    Command::new(&target)
+        .current_dir(&folder)
+        .spawn()
+        .map_err(|error| {
+            io::Error::other(words.text("error.notStarted", &[("error", &error.to_string())]))
+        })?;
     Ok(target)
 }
 
 /// Removes what install added; returns the copy when it is this very process and cannot go
-fn try_uninstall() -> io::Result<Option<PathBuf>> {
+fn try_uninstall(words: &Catalog) -> io::Result<Option<PathBuf>> {
     if !instance::stop_running() {
-        return Err(io::Error::other(
-            "запущенный хелпер не остановился за 5 секунд",
-        ));
+        return Err(io::Error::other(words.text("error.notStopped", &[])));
     }
     remove_if_present(&startup_folder()?.join(SHORTCUT_NAME))?;
-    let folder = install_folder()?;
+    let folder = install_folder(words)?;
     let target = folder.join(EXE_NAME);
     if same_file(&std::env::current_exe()?, &target) {
         return Ok(Some(target));
@@ -98,10 +123,10 @@ fn try_uninstall() -> io::Result<Option<PathBuf>> {
     Ok(None)
 }
 
-fn install_folder() -> io::Result<PathBuf> {
+fn install_folder(words: &Catalog) -> io::Result<PathBuf> {
     std::env::var_os("LOCALAPPDATA")
         .map(|base| PathBuf::from(base).join(FOLDER))
-        .ok_or_else(|| io::Error::other("не задана переменная LOCALAPPDATA"))
+        .ok_or_else(|| io::Error::other(words.text("error.noLocalAppData", &[])))
 }
 
 fn same_file(a: &Path, b: &Path) -> bool {
@@ -127,7 +152,7 @@ fn startup_folder() -> io::Result<PathBuf> {
 }
 
 /// A shell shortcut to the exe, the way Explorer makes one
-fn create_shortcut(exe: &Path, shortcut: &Path) -> io::Result<()> {
+fn create_shortcut(exe: &Path, shortcut: &Path, description: &str) -> io::Result<()> {
     // SAFETY: COM is started and stopped around its own use on this thread
     unsafe {
         let started = CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok();
@@ -137,7 +162,7 @@ fn create_shortcut(exe: &Path, shortcut: &Path) -> io::Result<()> {
             if let Some(folder) = exe.parent() {
                 link.SetWorkingDirectory(&HSTRING::from(folder.as_os_str()))?;
             }
-            link.SetDescription(&HSTRING::from(SHORTCUT_DESCRIPTION))?;
+            link.SetDescription(&HSTRING::from(description))?;
             link.cast::<IPersistFile>()?
                 .Save(&HSTRING::from(shortcut.as_os_str()), true)
         })();

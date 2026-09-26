@@ -1,0 +1,12 @@
+{
+  "install.done": "The VibeRDP helper is installed and running\nIt will start every time you sign in to Windows\n\nFile: {path}",
+  "install.failed": "The VibeRDP helper is not installed:\n{error}",
+  "uninstall.done": "The VibeRDP helper is stopped and removed from startup",
+  "uninstall.leftFile": "The VibeRDP helper is stopped and removed from startup\n\nThe file {path} is running now and cannot remove itself: remove it by hand",
+  "uninstall.failed": "The VibeRDP helper is not removed:\n{error}",
+  "usage": "Unknown option: {argument}\n\nNo options: the helper runs\n--install: installs it to start with Windows\n--install --language en: installs it with messages from the file en.json\n--uninstall: removes it",
+  "error.notStopped": "the running helper did not stop within 5 seconds",
+  "error.notStarted": "the file is copied but did not start: {error}\nAn AppLocker policy may block programs in the user's folder",
+  "error.noLocalAppData": "the LOCALAPPDATA variable is not set",
+  "shortcut.description": "VibeRDP: Windows windows as windows of the Mac"
+}

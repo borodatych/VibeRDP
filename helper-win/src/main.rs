@@ -30,7 +30,7 @@ fn main() {
     use vibe_seam_helper::cli::Mode;
     match Mode::parse(std::env::args().skip(1)) {
         Mode::Run => helper::run(),
-        Mode::Install => setup::install(),
+        Mode::Install { language } => setup::install(language.as_deref()),
         Mode::Uninstall => setup::uninstall(),
         Mode::Unknown(argument) => setup::usage(&argument),
     }
