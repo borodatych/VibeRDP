@@ -641,7 +641,7 @@
 2. Открыть `%LOCALAPPDATA%\VibeRDP\seam-helper.log`
    Ожидается: `started`; после подключения VibeRDP — `channel open`, `client VibeRDP … speaks version 1`, `snapshot sent: N windows`
 3. На Маке включить журнал ([diagnostics.md](diagnostics.md)) и подключиться к этой Windows
-   Ожидается: в журнале VibeRDP категория `seam` — состояние `greeting`, затем `helper vibe-seam-helper 0.1.0 is ready: commands, icons, windows`; через минуту нет `lost`
+   Ожидается: в журнале VibeRDP категория `seam` — состояние `greeting`, затем `helper vibe-seam-helper <версия> is ready: commands, icons, keyboard-layout, launcher, windows`; через минуту нет `lost`
 4. Запустить установленный exe ещё раз двойным щелчком
    Ожидается: второго процесса нет
 5. Выйти из Windows и войти снова
