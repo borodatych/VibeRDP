@@ -54,8 +54,8 @@ final class DiagnosticsSettings {
         let url = folder.appending(path: name)
         guard openLog(url) else { return }
         file = url
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
-        Diagnostics.info("app", "VibeRDP \(version), macOS \(ProcessInfo.processInfo.operatingSystemVersionString)")
+        Diagnostics.info(
+            "app", "VibeRDP \(AppDelegate.appVersion), macOS \(ProcessInfo.processInfo.operatingSystemVersionString)")
     }
 
     func revealFolder() {

@@ -45,7 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let content = ConnectionViewController(
             trusted: TrustedCertificates(), keyboard: keyboard, profiles: profiles,
             sessionFrameName: SessionWindowController.frameName)
-        let window = MainWindow.make(title: Self.appName, content: content)
+        let window = MainWindow.make(title: Self.mainWindowTitle, content: content)
         window.makeKeyAndOrderFront(nil)
         mainWindow = window
         NSApp.activate()
@@ -82,5 +82,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Product name from Info.plist: a name, so no language translates it
     static var appName: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? ProcessInfo.processInfo.processName
+    }
+
+    /// Product version from Info.plist, empty when it has none
+    static var appVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+    }
+
+    /// The name and the version over the main window: a new build is told from the last one at a glance
+    static var mainWindowTitle: String {
+        appVersion.isEmpty ? appName : "\(appName) \(appVersion)"
     }
 }

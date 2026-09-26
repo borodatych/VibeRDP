@@ -10,7 +10,8 @@ final class MainWindowTests: XCTestCase {
         let delegate = try XCTUnwrap(NSApp.delegate as? AppDelegate)
         let window = try XCTUnwrap(delegate.mainWindow)
         XCTAssertTrue(window.isVisible)
-        XCTAssertEqual(window.title, AppDelegate.appName)
+        XCTAssertEqual(window.title, "VibeRDP \(AppDelegate.appVersion)")
+        XCTAssertFalse(AppDelegate.appVersion.isEmpty, "the build writes the version into Info.plist")
         XCTAssertEqual(AppDelegate.appName, "VibeRDP")
     }
 
