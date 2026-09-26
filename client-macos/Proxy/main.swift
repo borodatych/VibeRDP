@@ -5,27 +5,20 @@ import AppKit
 /// VibeRDP copies this app once a program, gives the copy the name and the icon of the program and starts it:
 /// the copy has no windows, only its icon in the Dock and in Cmd-Tab
 /// Choosing the icon brings the windows of the program forward in VibeRDP; quitting it closes them on the host
-/// The copy ends when VibeRDP asks, and when VibeRDP itself ends
+/// The copy ends when VibeRDP quits it, and when VibeRDP itself ends
 @MainActor
 final class ProxyDelegate: NSObject, NSApplicationDelegate {
-    /// The names both sides post under, with the bundle identifier of the copy as the object
+    /// The names the copy posts under, with its bundle identifier as the object
     static let activated = Notification.Name("tech.vibebrains.viberdp.proxy.activated")
     static let quitRequested = Notification.Name("tech.vibebrains.viberdp.proxy.quitRequested")
-    static let quit = Notification.Name("tech.vibebrains.viberdp.proxy.quit")
 
     private let key = Bundle.main.bundleIdentifier ?? ""
     private var parentExit: DispatchSourceProcess?
-    /// Set when VibeRDP asked the copy to go: its quit is not the user's and closes nothing on the host
+    /// Set when VibeRDP itself ended: the quit that follows is not the user's and closes nothing on the host
+    /// A quit event from VibeRDP needs no flag: VibeRDP no longer knows the program and takes no request for it
     private var leaving = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let center = DistributedNotificationCenter.default()
-        center.addObserver(forName: Self.quit, object: key, queue: .main) { _ in
-            MainActor.assumeIsolated {
-                self.leaving = true
-                NSApp.terminate(nil)
-            }
-        }
         watchParent()
     }
 

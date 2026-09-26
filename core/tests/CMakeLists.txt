@@ -202,7 +202,8 @@ target_link_libraries(h264Tests PRIVATE freerdp-client)
 target_compile_options(h264Tests PRIVATE -Wall -Wextra -Werror)
 foreach(test IN ITEMS avc420RoundTrip avc420CroppedFrame avc444RoundTrip avc444v2RoundTrip sizeChange badStreams)
   add_test(NAME ${test} COMMAND h264Tests ${test})
-  set_tests_properties(${test} PROPERTIES TIMEOUT 60 ENVIRONMENT "${VRC_TEST_ENVIRONMENT}")
+  # A machine without a hardware H.264 decoder, as a virtual CI runner, skips these
+  set_tests_properties(${test} PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77 ENVIRONMENT "${VRC_TEST_ENVIRONMENT}")
 endforeach()
 
 add_executable(pointerTests pointerTests.c ${PROJECT_SOURCE_DIR}/src/pointer.c)

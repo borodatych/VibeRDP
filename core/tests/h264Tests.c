@@ -627,12 +627,24 @@ static const TestCase tests[] = {
     { "badStreams", testBadStreams },
 };
 
+/* CTest counts a test that returns this as skipped, not failed */
+#define SKIPPED 77
+
 int main(int argc, char* argv[])
 {
     if (argc != 2)
     {
         fprintf(stderr, "usage: %s <test name>\n", argv[0]);
         return 2;
+    }
+    /*
+     * Every Mac the app runs on decodes H.264 in hardware; a virtual machine, as a CI runner is, has no such decoder,
+     * and VideoToolbox fails its frames there: the tests say so and skip rather than fail
+     */
+    if (!VTIsHardwareDecodeSupported(kCMVideoCodecType_H264))
+    {
+        printf("skipped: this machine has no hardware H.264 decoder\n");
+        return SKIPPED;
     }
     for (size_t i = 0; i < sizeof(tests) / sizeof(tests[0]); i++)
         if (strcmp(tests[i].name, argv[1]) == 0)

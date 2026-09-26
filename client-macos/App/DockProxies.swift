@@ -9,10 +9,9 @@ import UniformTypeIdentifiers
 /// Choosing the icon brings the windows of the program forward, quitting it closes them on the host
 @MainActor
 final class DockProxies {
-    /// The names the stand-in and VibeRDP post under, with the bundle identifier of the stand-in as the object
+    /// The names the stand-in posts under, with its bundle identifier as the object
     static let activated = Notification.Name("tech.vibebrains.viberdp.proxy.activated")
     static let quitRequested = Notification.Name("tech.vibebrains.viberdp.proxy.quitRequested")
-    static let quit = Notification.Name("tech.vibebrains.viberdp.proxy.quit")
     nonisolated static let identifierPrefix = "tech.vibebrains.viberdp.proxy."
     nonisolated static let templateName = "VibeRDPProxy.app"
     /// The helper sends the icon right after the window; a program without one gets the stand-in this much later
@@ -32,7 +31,8 @@ final class DockProxies {
     /// When each program without a stand-in was first seen
     private var waiting: [String: Date] = [:]
     private var starting: Set<String> = []
-    private var running: [String: NSRunningApplication] = [:]
+    /// The process of each stand-in that runs
+    private var running: [String: pid_t] = [:]
     private var observers: [NSObjectProtocol] = []
     private var waitTimer: Timer?
 
@@ -129,9 +129,15 @@ final class DockProxies {
         }
     }
 
+    /// The program stays among the starting ones until the stand-in runs or fails:
+    /// an update meanwhile must not start a second one
     private func built(_ group: DockGroup, _ bundle: URL, _ result: Result<Void, Error>) {
-        guard starting.remove(group.key) != nil, groups[group.key] != nil else { return }
+        guard starting.contains(group.key), groups[group.key] != nil else {
+            starting.remove(group.key)
+            return
+        }
         if case .failure(let error) = result {
+            starting.remove(group.key)
             Diagnostics.warning("dock", "stand-in of \(group.name) not made: \(error)")
             return
         }
@@ -140,33 +146,48 @@ final class DockProxies {
         configuration.addsToRecentItems = false
         configuration.createsNewApplicationInstance = true
         configuration.arguments = ["--parent", String(ProcessInfo.processInfo.processIdentifier)]
-        NSWorkspace.shared.openApplication(at: bundle, configuration: configuration) { app, error in
-            MainActor.assumeIsolated {
-                guard let app else {
-                    Diagnostics.warning("dock", "stand-in of \(group.name) not started: \(String(describing: error))")
-                    return
-                }
-                if self.groups[group.key] == nil {
-                    Self.post(Self.quit, key: group.key)
-                } else {
-                    self.running[group.key] = app
-                    Diagnostics.info("dock", "stand-in of \(group.name) started")
-                }
+        // LaunchServices answers on a queue of its own: the answer goes over to the main thread
+        NSWorkspace.shared.openApplication(at: bundle, configuration: configuration) { [weak self] app, error in
+            let process = app?.processIdentifier
+            let failure = error.map { String(describing: $0) }
+            Task { @MainActor [weak self] in
+                self?.launched(group, process: process, failure: failure)
             }
         }
     }
 
-    private func stop(_ key: String) {
-        waiting[key] = nil
-        starting.remove(key)
-        if running.removeValue(forKey: key) != nil {
-            Self.post(Self.quit, key: key)
+    private func launched(_ group: DockGroup, process: pid_t?, failure: String?) {
+        let wanted = starting.remove(group.key) != nil && groups[group.key] != nil
+        guard let process else {
+            Diagnostics.warning("dock", "stand-in of \(group.name) not started: \(failure ?? "no process")")
+            return
+        }
+        if wanted {
+            running[group.key] = process
+            Diagnostics.info("dock", "stand-in of \(group.name) started")
+        } else {
+            Self.end(process)
         }
     }
 
-    private static func post(_ name: Notification.Name, key: String) {
-        DistributedNotificationCenter.default().postNotificationName(
-            name, object: identifierPrefix + key, userInfo: nil, deliverImmediately: true)
+    /// Whether the stand-in of a program runs, for the tests
+    func isRunning(_ key: String) -> Bool {
+        running[key] != nil
+    }
+
+    /// A stand-in still starting is told to go once it runs: launched sees it no longer wanted
+    private func stop(_ key: String) {
+        waiting[key] = nil
+        starting.remove(key)
+        if let process = running.removeValue(forKey: key) {
+            Self.end(process)
+        }
+    }
+
+    /// Quits a stand-in the way the Dock would: a notification could come before the stand-in listens,
+    /// a quit event waits for it; its own quit is then not the user's, and VibeRDP no longer knows the program
+    private static func end(_ process: pid_t) {
+        NSRunningApplication(processIdentifier: process)?.terminate()
     }
 
     /// The icon of the host at the sides of the file, redrawn from the PNG the helper sent

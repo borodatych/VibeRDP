@@ -86,4 +86,31 @@ final class DockProxiesTests: XCTestCase {
         guard let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff) else { return nil }
         return bitmap.representation(using: .png, properties: [:])
     }
+
+    /// The path LaunchServices takes: the stand-in starts, its answer comes back to the main thread, and it goes
+    /// when the program goes; the answer once came on a queue of LaunchServices and stopped the app
+    @MainActor
+    func testStandInStartsAndGoes() async throws {
+        guard Bundle.main.sharedSupportURL.map({ FileManager.default.fileExists(atPath: $0.appending(path: DockProxies.templateName).path) }) == true
+        else { throw XCTSkip("no stand-in template in the host app") }
+        let key = "test-\(UUID().uuidString.prefix(8).lowercased())"
+        let proxies = DockProxies(onActivate: { _ in }, onQuit: { _ in })
+        defer { proxies.invalidate() }
+        let group = DockGroup(key: key, name: "TEST", windows: [1], icon: pngOfOnePixel())
+        proxies.update([group])
+        // The first start of a freshly signed bundle waits for the system to assess it: seconds, more under load
+        for _ in 0 ..< 600 where !proxies.isRunning(key) {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertTrue(proxies.isRunning(key), "the stand-in started")
+        let identifier = DockProxies.identifierPrefix + key
+        XCTAssertFalse(NSRunningApplication.runningApplications(withBundleIdentifier: identifier).isEmpty)
+        proxies.update([])
+        for _ in 0 ..< 100 where !NSRunningApplication.runningApplications(withBundleIdentifier: identifier).isEmpty {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertTrue(
+            NSRunningApplication.runningApplications(withBundleIdentifier: identifier).isEmpty, "the stand-in went")
+        try? FileManager.default.removeItem(at: DockProxies.folder.appending(path: "\(key).app"))
+    }
 }

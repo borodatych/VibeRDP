@@ -10,7 +10,9 @@
 
 `NSWorkspace.openApplication` с `createsNewApplicationInstance` и `activates = false`: копия встаёт в Dock, но не забирает фокус
 Аргументы доходят до копии через `OpenConfiguration.arguments`; процесс родителя копия ждёт `DispatchSource.makeProcessSource(.exit)`
-Проверено вживую 26.09.2026: копия из `SharedSupport` собранного приложения запускается, выходит по распределённому уведомлению и вместе с родителем
+Проверено вживую 26.09.2026: копия из `SharedSupport` собранного приложения запускается и выходит вместе с родителем
+Ответ `openApplication` приходит в очереди LaunchServices, не в главном потоке: `MainActor.assumeIsolated` в нём останавливает приложение — переход в главный поток через `Task { @MainActor … }`
+«Запущено» приходит раньше, чем копия выполнит `applicationDidFinishLaunching`: распределённое уведомление «завершись», посланное сразу, теряется; завершать копию надёжнее `NSRunningApplication(processIdentifier:)?.terminate()`
 
 ## 3. Связь
 

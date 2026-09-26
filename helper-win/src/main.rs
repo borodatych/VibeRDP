@@ -61,8 +61,10 @@ mod helper {
 
     const AGENT: &str = concat!("vibe-seam-helper ", env!("CARGO_PKG_VERSION"));
     /// The wait before reopening grows from the first to the last value while the channel stays shut
-    const RETRY_FIRST: Duration = Duration::from_secs(1);
-    const RETRY_LAST: Duration = Duration::from_secs(30);
+    /// The last one is short: a try costs next to nothing, and every second of it the user looks at the desktop
+    /// in place of the windows after a reconnection
+    const RETRY_FIRST: Duration = Duration::from_millis(500);
+    const RETRY_LAST: Duration = Duration::from_secs(2);
 
     pub fn run() {
         if !instance::claim() {
