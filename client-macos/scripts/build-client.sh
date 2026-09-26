@@ -76,6 +76,7 @@ check_app() {
     local embedded="$APP/Contents/Frameworks/VibeRDPCore.framework/Versions/A/VibeRDPCore"
 
     log "Verifying slices, deployment target, the embedded core and the signature"
+    report_weak_sources "$binary" "$DERIVED_DATA/Build/Intermediates.noindex/VibeRDP.build/Release/VibeRDP.build/Objects-normal"
     check_binary "$binary"
     check_binary "$embedded"
     # The template of the stand-ins in the Dock: copied and started by the app, so it must run where the app runs

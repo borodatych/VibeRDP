@@ -73,6 +73,27 @@ run_bounded() {
 # shellcheck disable=SC2016 # the dollar sign belongs to the symbol names, nothing expands here
 TOOLCHAIN_WEAK_SYMBOLS=' __swift_FORCE_LOAD_\$_| ____chkstk_darwin | _\$s| __availability_version_check | _dispatch_once_f | _voucher_mach_msg_set( |$)| _swift_stdlib_isStackAllocationSafe '
 
+# The object files of a build that reference each weak symbol of a binary beyond the toolchain's own:
+# the symbol names the runtime, not the source, and the compiler of one Xcode may leave it where another does not
+# objects is a folder of Objects-normal/<arch> folders; nothing is printed when every symbol is expected
+report_weak_sources() {
+    local file=$1 objects=$2
+    local arch symbol object
+
+    for arch in $ARCHS; do
+        [ -d "$objects/$arch" ] || continue
+        nm -arch "$arch" -m "$file" 2>/dev/null | grep '(undefined) weak external' |
+            grep -vE "$TOOLCHAIN_WEAK_SYMBOLS" | awk '{ if ($(NF - 1) == "(from") print $(NF - 2); else print $NF }' |
+            while read -r symbol; do
+                for object in "$objects/$arch"/*.o; do
+                    if nm -u "$object" 2>/dev/null | grep -qxF "$symbol"; then
+                        echo "$symbol ($arch) comes from $(basename "$object")" >&2
+                    fi
+                done
+            done
+    done
+}
+
 # Every slice is present, records the deployment target and uses no API newer than it
 # A weak reference to such an API resolves to NULL on an older macOS and crashes there
 check_binary() {
