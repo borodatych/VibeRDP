@@ -113,6 +113,23 @@ impl Window {
     }
 }
 
+/// The rectangle to give SetWindowPos so the visible bounds land on the target
+///
+/// The window rectangle is larger than the visible one by the invisible resize border and shadow;
+/// that margin is kept around the target, all rects are x, y, width, height
+pub fn outer_rect(target: [i32; 4], window: [i32; 4], visible: [i32; 4]) -> [i32; 4] {
+    let left = visible[0] - window[0];
+    let top = visible[1] - window[1];
+    let right = (window[0] + window[2]) - (visible[0] + visible[2]);
+    let bottom = (window[1] + window[3]) - (visible[1] + visible[3]);
+    [
+        target[0] - left,
+        target[1] - top,
+        target[2] + left + right,
+        target[3] + top + bottom,
+    ]
+}
+
 /// The windows the client has been told about, their order and the one with the focus
 #[derive(Default)]
 pub struct Desktop {
@@ -345,6 +362,18 @@ mod tests {
         desktop.observe(132290, None);
         desktop.observe(132290, Some(excel()));
         assert!(desktop.icon(132290, vec![2]).is_some());
+    }
+
+    #[test]
+    fn outer_rect_keeps_the_shadow_margin() {
+        // Windows 11: 7 px of resize border left, right and below, none above
+        let window = [93, 80, 1294, 807];
+        let visible = [100, 80, 1280, 800];
+        assert_eq!(
+            outer_rect([0, 0, 800, 600], window, visible),
+            [-7, 0, 814, 607]
+        );
+        assert_eq!(outer_rect(visible, window, visible), window);
     }
 
     #[test]

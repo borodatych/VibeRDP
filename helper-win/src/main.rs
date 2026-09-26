@@ -9,6 +9,8 @@
 #[cfg(windows)]
 mod channel;
 #[cfg(windows)]
+mod commands;
+#[cfg(windows)]
 mod icons;
 #[cfg(windows)]
 mod link;
@@ -32,11 +34,12 @@ mod helper {
     use std::time::Duration;
 
     use vibe_seam_helper::protocol::FrameReader;
-    use vibe_seam_helper::session::{Peer, Session};
+    use vibe_seam_helper::session::{self, Peer, Session};
     use windows_sys::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError};
     use windows_sys::Win32::System::Threading::CreateMutexW;
 
     use crate::channel::{self, Reader};
+    use crate::commands;
     use crate::link::Link;
     use crate::log;
     use crate::tracker::Tracker;
@@ -102,6 +105,18 @@ mod helper {
                 }
                 if !outcome.replies.is_empty() && !link.send(generation, &outcome.replies) {
                     return "reply not sent".to_string();
+                }
+                if let Some(command) = outcome.command {
+                    let result = commands::execute(command);
+                    if let Err(failure) = &result {
+                        log::line(&format!(
+                            "command {} {:?} on {}: {} {}",
+                            command.seq, command.action, command.id, failure.code, failure.message
+                        ));
+                    }
+                    if !link.send(generation, &[session::reply(command.seq, result)]) {
+                        return "reply not sent".to_string();
+                    }
                 }
                 // The client learns the windows once it has said hello in our version
                 if before != Peer::Ready && session.peer() == Peer::Ready {

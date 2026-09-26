@@ -325,7 +325,7 @@ fn is_cloaked(hwnd: HWND) -> bool {
 }
 
 /// Visible bounds without the shadow; the window rectangle when DWM has none for it
-fn bounds(hwnd: HWND) -> Option<[i32; 4]> {
+pub fn bounds(hwnd: HWND) -> Option<[i32; 4]> {
     let mut rect: RECT = unsafe { std::mem::zeroed() };
     // SAFETY: the attribute is a RECT, the buffer is one
     let extended = unsafe {

@@ -6,7 +6,7 @@
 use crate::protocol::{self, Value};
 
 /// What this build of the helper does beyond keeping the channel: grows as the window stages land
-pub const CAPABILITIES: &[&str] = &["windows", "icons"];
+pub const CAPABILITIES: &[&str] = &["windows", "icons", "commands"];
 
 /// Where the conversation is: the client greets once, and its version decides whether the two talk
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -19,19 +19,63 @@ pub enum Peer {
     Incompatible(u64),
 }
 
-/// The answer to one message: bodies to send back and a line for the log
+/// What a command asks of a window: protocol/seam-protocol.md, section 7
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Action {
+    Activate,
+    /// New visible bounds: x, y, width, height
+    Move([i32; 4]),
+    Minimize,
+    Maximize,
+    Restore,
+    Close,
+}
+
+/// A command for the Windows side to carry out and answer with reply()
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Command {
+    pub seq: u64,
+    pub id: u64,
+    pub action: Action,
+}
+
+/// Why a command was not carried out, as the error message names it
+#[derive(Debug, PartialEq)]
+pub struct Failure {
+    /// "no-window", "denied", "unsupported" or "failed"
+    pub code: &'static str,
+    pub message: String,
+}
+
+/// The answer to one message: bodies to send back, a command to carry out and a line for the log
 #[derive(Debug, Default, PartialEq)]
 pub struct Outcome {
     pub replies: Vec<Value>,
+    pub command: Option<Command>,
     pub note: Option<String>,
 }
 
 impl Outcome {
     fn note(text: String) -> Self {
         Outcome {
-            replies: Vec::new(),
             note: Some(text),
+            ..Outcome::default()
         }
+    }
+}
+
+/// The answer to a carried-out command: ack, or error with the code and the detail
+pub fn reply(seq: u64, result: Result<(), Failure>) -> Value {
+    match result {
+        Ok(()) => protocol::message("ack", vec![("seq", Value::UInt(seq))]),
+        Err(failure) => protocol::message(
+            "error",
+            vec![
+                ("seq", Value::UInt(seq)),
+                ("code", Value::Str(failure.code.to_string())),
+                ("message", Value::Str(failure.message)),
+            ],
+        ),
     }
 }
 
@@ -74,15 +118,17 @@ impl Session {
             "ping" => match seq(body) {
                 Some(seq) => Outcome {
                     replies: vec![protocol::message("pong", vec![("seq", Value::UInt(seq))])],
-                    note: None,
+                    ..Outcome::default()
                 },
                 None => Outcome::note("ping without seq skipped".to_string()),
             },
+            "command" => command(body),
             // Requests the helper has not announced still get an answer, so the client does not wait for one
-            "command" | "input.layout" => match seq(body) {
+            "input.layout" => match seq(body) {
                 Some(seq) => Outcome {
                     replies: vec![error(seq, "unsupported")],
                     note: Some(format!("\"{kind}\" is not supported by this build")),
+                    ..Outcome::default()
                 },
                 None => Outcome::note(format!("\"{kind}\" without seq skipped")),
             },
@@ -109,6 +155,52 @@ impl Session {
             ))
         }
     }
+}
+
+/// A command whose required keys are all there; an action this build does not know is answered unsupported
+fn command(body: &Value) -> Outcome {
+    let (Some(seq), Some(id), Some(action)) = (
+        seq(body),
+        body.get("id").and_then(Value::as_u64),
+        body.get("action").and_then(Value::as_str),
+    ) else {
+        return Outcome::note("command without seq, id or action skipped".to_string());
+    };
+    let action = match action {
+        "activate" => Action::Activate,
+        "move" => match body.get("rect").and_then(rect) {
+            Some(rect) => Action::Move(rect),
+            None => return Outcome::note(format!("move {seq} without a valid rect skipped")),
+        },
+        "minimize" => Action::Minimize,
+        "maximize" => Action::Maximize,
+        "restore" => Action::Restore,
+        "close" => Action::Close,
+        other => {
+            return Outcome {
+                replies: vec![error(seq, "unsupported")],
+                note: Some(format!("unknown action \"{other}\" of command {seq}")),
+                ..Outcome::default()
+            };
+        }
+    };
+    Outcome {
+        command: Some(Command { seq, id, action }),
+        ..Outcome::default()
+    }
+}
+
+/// A rect of four i32 values, with a size that is not negative
+fn rect(value: &Value) -> Option<[i32; 4]> {
+    let Value::Array(items) = value else {
+        return None;
+    };
+    let numbers: Vec<i32> = items
+        .iter()
+        .map(|item| item.as_i64().and_then(|n| i32::try_from(n).ok()))
+        .collect::<Option<_>>()?;
+    let rect: [i32; 4] = numbers.try_into().ok()?;
+    (rect[2] >= 0 && rect[3] >= 0).then_some(rect)
 }
 
 /// The request number, if it fits the u32 the protocol gives it
@@ -187,21 +279,82 @@ mod tests {
         assert_eq!(session.handle(&ping(1)), Outcome::default());
     }
 
-    #[test]
-    fn unannounced_command_is_answered_unsupported() {
+    fn command(action: &str, rect: Option<Value>) -> Value {
+        let mut entries = vec![
+            ("seq", Value::UInt(3)),
+            ("id", Value::UInt(132290)),
+            ("action", Value::Str(action.into())),
+        ];
+        entries.extend(rect.map(|rect| ("rect", rect)));
+        message("command", entries)
+    }
+
+    fn ready() -> Session {
         let mut session = Session::new("helper");
         session.handle(&client_hello(1));
-        let command = message(
-            "command",
-            vec![
-                ("seq", Value::UInt(3)),
-                ("id", Value::UInt(132290)),
-                ("action", Value::Str("activate".into())),
-            ],
-        );
+        session
+    }
+
+    #[test]
+    fn command_is_handed_out_to_carry_out() {
+        let outcome = ready().handle(&command("activate", None));
+        assert!(outcome.replies.is_empty());
         assert_eq!(
-            session.handle(&command).replies,
-            vec![error(3, "unsupported")]
+            outcome.command,
+            Some(Command {
+                seq: 3,
+                id: 132290,
+                action: Action::Activate
+            })
+        );
+        let outcome = ready().handle(&command("move", Some(protocol::rect(-10, 20, 800, 600))));
+        assert_eq!(
+            outcome.command.map(|c| c.action),
+            Some(Action::Move([-10, 20, 800, 600]))
+        );
+    }
+
+    #[test]
+    fn move_without_a_valid_rect_is_skipped() {
+        for rect in [
+            None,
+            Some(Value::Array(vec![Value::Int(1)])),
+            Some(protocol::rect(0, 0, -1, 5)),
+        ] {
+            let outcome = ready().handle(&command("move", rect));
+            assert_eq!(outcome.command, None);
+            assert!(outcome.replies.is_empty());
+            assert!(outcome.note.is_some());
+        }
+    }
+
+    #[test]
+    fn unknown_action_is_answered_unsupported() {
+        let outcome = ready().handle(&command("snap", None));
+        assert_eq!(outcome.command, None);
+        assert_eq!(outcome.replies, vec![error(3, "unsupported")]);
+    }
+
+    #[test]
+    fn reply_is_ack_or_error_with_the_same_seq() {
+        assert_eq!(
+            reply(3, Ok(())),
+            message("ack", vec![("seq", Value::UInt(3))])
+        );
+        let failure = Failure {
+            code: "no-window",
+            message: "gone".into(),
+        };
+        assert_eq!(
+            reply(3, Err(failure)),
+            message(
+                "error",
+                vec![
+                    ("seq", Value::UInt(3)),
+                    ("code", Value::Str("no-window".into())),
+                    ("message", Value::Str("gone".into())),
+                ]
+            )
         );
     }
 
