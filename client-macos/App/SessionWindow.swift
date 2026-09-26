@@ -13,6 +13,8 @@ import AppKit
 /// On a Retina display a sharp desktop takes its pixels, and a move to a display of another density asks again
 /// In full screen on all monitors each screen of the Mac gets a window of its own, each showing its part of one
 /// desktop; the monitors stay as they were at the start of the session
+/// The Seam mode lays the desktop over all screens at their sizes the same way, with frameless windows over them:
+/// they show the desktop until the windows of Windows take over, and again when the helper goes
 @MainActor
 final class SessionWindowController: NSWindowController, NSWindowDelegate {
     /// The name the window keeps its frame under, so the next session opens where and as large as the last one
@@ -42,6 +44,10 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
     let layout: MonitorLayout?
     /// The windows of the other screens, each with the desktop view of its part
     private var otherWindows: [(window: NSWindow, desktop: DesktopView)] = []
+    /// Where the windows of the host stand on the Mac, in the Seam mode
+    let seamGeometry: SeamGeometry?
+    /// The windows of the host have taken over: showing the session must not bring the desktop back over them
+    private var desktopHidden = false
 
     /// Every desktop view of the session: the one of this window first
     var desktops: [DesktopView] {
@@ -67,24 +73,25 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
         self.onResize = onResize
         let screens = NSScreen.screens
         let primary = screens.firstIndex { $0 == (screen ?? NSScreen.main) } ?? 0
-        if mode == .fullScreen, allScreens, screens.count > 1, makeDesktop != nil {
+        if mode == .seam, makeDesktop != nil {
+            // The whole of each screen: a window of the host stands where it would on that screen
+            let shown = screens.map { (frame: $0.frame, backing: $0.backingScaleFactor) }
+            let layout = MonitorLayout(screens: shown, primary: primary, sharp: sharp)
+            self.layout = layout
+            seamGeometry = SeamGeometry(layout: layout, screens: screens.map(\.frame))
+        } else if mode == .fullScreen, allScreens, screens.count > 1, makeDesktop != nil {
             let shown = screens.map { screen in
                 (frame: CGRect(origin: screen.frame.origin, size: Self.fullScreenSize(of: screen)),
                  backing: screen.backingScaleFactor)
             }
             layout = MonitorLayout(screens: shown, primary: primary, sharp: sharp)
+            seamGeometry = nil
         } else {
             layout = nil
+            seamGeometry = nil
         }
-        let window = NSWindow(
-            contentRect: NSRect(origin: .zero, size: Self.defaultSize),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
-            backing: .buffered,
-            defer: false)
+        let window = Self.makeWindow(seam: mode == .seam)
         window.title = title
-        window.collectionBehavior.insert(.fullScreenPrimary)
-        // The controller owns the window; AppKit must not free it behind that reference when it closes
-        window.isReleasedWhenClosed = false
         let content = NSView(frame: NSRect(origin: .zero, size: Self.defaultSize))
         desktop.frame = content.bounds
         desktop.autoresizingMask = [.width, .height]
@@ -113,6 +120,8 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
             if let visible {
                 window.setFrame(WindowPlacement.centered(window.frame.size, in: visible), display: false)
             }
+        case .seam:
+            window.setFrame(screens[primary].frame, display: false)
         }
         super.init(window: window)
         window.delegate = self
@@ -138,20 +147,55 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
 
     /// A window of one more screen: full screen there, closing it ends the session as closing the first one does
     private func makeOtherWindow(on screen: NSScreen, title: String, desktop: DesktopView) -> (NSWindow, DesktopView) {
-        let window = NSWindow(
-            contentRect: NSRect(origin: .zero, size: Self.defaultSize),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+        let window = Self.makeWindow(seam: mode == .seam)
         window.title = title
-        window.collectionBehavior.insert(.fullScreenPrimary)
-        window.isReleasedWhenClosed = false
         let content = NSView(frame: NSRect(origin: .zero, size: Self.defaultSize))
         desktop.frame = content.bounds
         desktop.autoresizingMask = [.width, .height]
         content.addSubview(desktop)
         window.contentView = content
-        window.setFrame(WindowPlacement.centered(window.frame.size, in: screen.visibleFrame), display: false)
+        if mode == .seam {
+            window.setFrame(screen.frame, display: false)
+        } else {
+            window.setFrame(WindowPlacement.centered(window.frame.size, in: screen.visibleFrame), display: false)
+        }
         window.delegate = self
         return (window, desktop)
+    }
+
+    /// A standard window that can go full screen, or a frameless one over a whole screen in the Seam mode
+    private static func makeWindow(seam: Bool) -> NSWindow {
+        let window: NSWindow
+        if seam {
+            window = SeamWindow(
+                contentRect: NSRect(origin: .zero, size: defaultSize), styleMask: [.borderless], backing: .buffered,
+                defer: false)
+        } else {
+            window = NSWindow(
+                contentRect: NSRect(origin: .zero, size: defaultSize),
+                styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+            window.collectionBehavior.insert(.fullScreenPrimary)
+        }
+        // The controller owns the window; AppKit must not free it behind that reference when it closes
+        window.isReleasedWhenClosed = false
+        return window
+    }
+
+    /// In the Seam mode the desktop steps aside while the windows of the host show, and comes back when they go
+    func setDesktopHidden(_ hidden: Bool) {
+        guard mode == .seam, let window else { return }
+        desktopHidden = hidden
+        for shown in [window] + otherWindows.map(\.window) {
+            if hidden {
+                shown.orderOut(nil)
+            } else {
+                shown.orderFront(nil)
+            }
+        }
+        if !hidden {
+            window.makeKeyAndOrderFront(nil)
+            window.makeFirstResponder(desktop)
+        }
     }
 
     /// A new surface of the engine goes to every view: each shows its part of it
@@ -199,6 +243,8 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
         case .window, .maximized: CGSize(width: content.width.rounded(), height: content.height.rounded())
         case .fullScreen: CGSize(width: fullScreen.width.rounded(), height: fullScreen.height.rounded())
         case .fixed: fixed.clamped.cgSize
+        // The layout gives the desktop of the Seam mode; this is only the screen, should there be no layout
+        case .seam: CGSize(width: fullScreen.width.rounded(), height: fullScreen.height.rounded())
         }
     }
 
@@ -217,17 +263,22 @@ final class SessionWindowController: NSWindowController, NSWindowDelegate {
 
     /// The user is in: the window comes up with the keyboard on the desktop, in full screen when the mode says so
     func show() {
-        guard let window, !window.isVisible else { return }
+        guard let window, !window.isVisible, !desktopHidden else { return }
         showWindow(nil)
         if mode == .fullScreen && !window.styleMask.contains(.fullScreen) {
             window.toggleFullScreen(nil)
         }
         for other in otherWindows {
             other.window.orderFront(nil)
-            other.window.toggleFullScreen(nil)
+            if mode != .seam {
+                other.window.toggleFullScreen(nil)
+            }
         }
         window.makeFirstResponder(desktop)
-        showDisconnectButton()
+        // A frameless window has no title bar to put the button in: the menu disconnects
+        if mode != .seam {
+            showDisconnectButton()
+        }
         Diagnostics.info(
             "frame", "desktop shown in \(desktop.bounds.size), backing scale \(window.backingScaleFactor)")
     }

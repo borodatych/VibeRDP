@@ -40,8 +40,11 @@ final class SessionController {
     private let onEvent: (Event) -> Void
     private var handle: SessionHandle?
     private var pendingCertificate: ServerCertificate?
-    /// The client says it shows no windows of its own yet: the Seam capability comes with the window manager
-    private var seam = SeamLink(agent: "VibeRDP \(AppDelegate.appVersion)", capabilities: [])
+    /// The link of the Seam channel; connect says whether this client shows the windows of the host
+    private var seam = SeamLink(agent: SessionController.seamAgent, capabilities: [])
+    private static let seamAgent = "VibeRDP \(AppDelegate.appVersion)"
+    /// The capability of a client that shows the windows of the host, section 5 of the specification
+    static let showsWindowsCapability = "seam"
     private var seamTimer: Timer?
 
     init(trusted: TrustedCertificates, onEvent: @escaping (Event) -> Void) {
@@ -55,9 +58,10 @@ final class SessionController {
     func connect(
         to address: ServerAddress, username: String, password: String, gateway: GatewayParameters? = nil,
         desktop: DesktopRequest, audio: VRCAudioMode = .off, microphone: Bool = false,
-        sharedFolder: String = ""
+        sharedFolder: String = "", showsWindows: Bool = false
     ) -> Bool {
         guard handle == nil else { return false }
+        seam = SeamLink(agent: Self.seamAgent, capabilities: showsWindows ? [Self.showsWindowsCapability] : [])
         let (stream, continuation) = AsyncStream.makeStream(of: CoreEvent.self)
         let sink = EventSink(continuation: continuation)
         var callbacks = EventSink.callbacks

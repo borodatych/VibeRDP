@@ -709,6 +709,7 @@ private struct ProfileEditor: View {
         case .maximized: .profileDisplayMaximized
         case .fullScreen: .profileDisplayFullScreen
         case .fixed: .profileDisplayFixed
+        case .seam: .profileDisplaySeam
         }
     }
 
@@ -721,6 +722,7 @@ private struct ProfileEditor: View {
             Localization.text(
                 .profileDisplayFixedHint,
                 ["min": String(DesktopSize.minimumSide), "max": String(DesktopSize.maximumSide)])
+        case .seam: Localization.text(.profileDisplaySeamHint)
         }
     }
 

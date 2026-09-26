@@ -19,6 +19,8 @@ final class ConnectionViewController: NSViewController {
     private var clipboard: ClipboardBridge?
     /// The window of the session, from the start of a connection; it shows once the user is in
     private var sessionWindow: SessionWindowController?
+    /// The windows of the host as windows of the Mac, in the Seam mode
+    private var seamWindows: SeamWindows?
     private var desktop: DesktopView? { sessionWindow?.desktop }
     private var wakeObserver: NSObjectProtocol?
     /// The profile of the running session and how it signs in
@@ -183,19 +185,24 @@ final class ConnectionViewController: NSViewController {
         let desktop = DesktopView(renderer: renderer)
         desktop.input = controller
         desktop.keyboard = ProfileKeyboardSettings(store: keyboard, keyboard: profile.keyboard)
+        let makeDesktop = { [keyboard] in
+            let other = DesktopView(renderer: renderer)
+            other.input = controller
+            other.keyboard = ProfileKeyboardSettings(store: keyboard, keyboard: profile.keyboard)
+            return other
+        }
         let window = SessionWindowController(
             desktop: desktop, title: profile.title, mode: profile.displayMode, fixedSize: profile.fixedSize,
             sharp: profile.sharpOnRetina, screen: view.window?.screen, frameName: sessionFrameName,
-            allScreens: profile.allScreens,
-            makeDesktop: { [keyboard] in
-                let other = DesktopView(renderer: renderer)
-                other.input = controller
-                other.keyboard = ProfileKeyboardSettings(store: keyboard, keyboard: profile.keyboard)
-                return other
-            },
+            allScreens: profile.allScreens, makeDesktop: makeDesktop,
             onDisconnect: { [weak controller] in controller?.disconnect() },
             onResize: { [weak controller] desktop in controller?.resizeDesktop(to: desktop) })
         sessionWindow = window
+        seamWindows = window.seamGeometry.map { geometry in
+            SeamWindows(
+                geometry: geometry, makeDesktop: makeDesktop,
+                onDisconnect: { [weak controller] in controller?.disconnect() })
+        }
         model.isBusy = true
         model.activeProfile = attempt.profileID
         let gateway = profile.gateway.map {
@@ -207,7 +214,8 @@ final class ConnectionViewController: NSViewController {
         let started = controller.connect(
             to: address, username: attempt.username, password: attempt.password ?? "", gateway: gateway,
             desktop: window.desktopRequest, audio: profile.audio.mode,
-            microphone: profile.microphone, sharedFolder: profile.sharedFolder)
+            microphone: profile.microphone, sharedFolder: profile.sharedFolder,
+            showsWindows: seamWindows != nil)
         if !started {
             session = nil
             sessionWindow = nil
@@ -254,26 +262,46 @@ final class ConnectionViewController: NSViewController {
             show(message)
         case .frameResized:
             sessionWindow?.setSurface(session?.frameSurface())
+            seamWindows?.setSurface(session?.frameSurface())
         case .frameUpdated:
             sessionWindow?.frameChanged()
+            seamWindows?.frameChanged()
         case .pointer(let pointer):
             sessionWindow?.setPointer(pointer)
+            seamWindows?.setPointer(pointer)
         case .remoteClipboard(let formats):
             clipboard?.remoteClipboardChanged(formats)
         case .clipboardDataRequested(let format):
             clipboard?.dataRequested(format)
-        // Anything but a ready link has no windows: a new link sends them all again after its hello
         case .seam(let state):
-            if case .ready = state {} else {
-                remoteWindows = RemoteWindows()
-            }
+            seamChanged(state)
         case .seamMessage(let message):
-            track(message)
+            if let change = track(message) {
+                seamWindows?.apply(change, remoteWindows)
+            }
+        }
+    }
+
+    /// A ready link of a helper that reports windows takes the desktop over with them; any other state gives it back
+    /// Anything but a ready link has no windows: a new link sends them all again after its hello
+    private func seamChanged(_ state: SeamLink.State) {
+        if case .ready(_, let capabilities) = state, capabilities.contains("windows"), let seamWindows {
+            sessionWindow?.setDesktopHidden(true)
+            seamWindows.activate(remoteWindows)
+            return
+        }
+        if case .ready = state {} else {
+            remoteWindows = RemoteWindows()
+        }
+        if seamWindows?.isActive == true {
+            seamWindows?.deactivate()
+            sessionWindow?.setDesktopHidden(false)
         }
     }
 
     /// The windows of the host, and in the log what changed: ids and executables, never titles or icons
-    private func track(_ message: MessagePackValue) {
+    @discardableResult
+    private func track(_ message: MessagePackValue) -> RemoteWindows.Change? {
         let outcome = remoteWindows.apply(message)
         if let note = outcome.note {
             Diagnostics.info("seam", note)
@@ -287,6 +315,7 @@ final class ConnectionViewController: NSViewController {
         case .updated, .icon, .order, .focus, nil:
             break
         }
+        return outcome.change
     }
 
     /// The session in the diagnostics log: its states and errors, and the frame at each change of size with its first
@@ -346,6 +375,8 @@ final class ConnectionViewController: NSViewController {
         }
         model.activeProfile = nil
         let wasShown = sessionWindow?.window?.isVisible == true
+        seamWindows?.deactivate()
+        seamWindows = nil
         sessionWindow?.end()
         sessionWindow = nil
         // The list comes forward with the reason the session ended in its status line

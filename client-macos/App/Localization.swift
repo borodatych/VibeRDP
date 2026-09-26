@@ -133,6 +133,7 @@ enum TextKey: String, CaseIterable {
     case profileDisplayMaximized = "profile.display.maximized"
     case profileDisplayFullScreen = "profile.display.fullScreen"
     case profileDisplayFixed = "profile.display.fixed"
+    case profileDisplaySeam = "profile.display.seam"
     case profileDisplaySize = "profile.display.size"
     case profileDisplayCustom = "profile.display.custom"
     case profileDisplaySharp = "profile.display.sharp"
@@ -143,6 +144,7 @@ enum TextKey: String, CaseIterable {
     case profileDisplayMaximizedHint = "profile.display.maximizedHint"
     case profileDisplayFullScreenHint = "profile.display.fullScreenHint"
     case profileDisplayFixedHint = "profile.display.fixedHint"
+    case profileDisplaySeamHint = "profile.display.seamHint"
     case credentialsTitleServer = "credentials.title.server"
     case credentialsTitleGateway = "credentials.title.gateway"
     case credentialsMessageAsk = "credentials.message.ask"
@@ -330,6 +332,7 @@ extension TextKey {
         case .profileDisplayMaximized: "Развёрнутое окно"
         case .profileDisplayFullScreen: "Во весь экран"
         case .profileDisplayFixed: "Фиксированный размер"
+        case .profileDisplaySeam: "Окна Windows"
         case .profileDisplaySize: "Разрешение"
         case .profileDisplayCustom: "Свой"
         case .profileDisplaySharp: "Чёткость на Retina"
@@ -344,6 +347,8 @@ extension TextKey {
             "Сессия открывается во весь экран. Если выйти из полноэкранного режима, рабочий стол подстраивается под окно."
         case .profileDisplayFixedHint:
             "Рабочий стол Windows всегда этого размера, окно показывает его целиком. Стороны — от {min} до {max} пикселей, ширина чётная."
+        case .profileDisplaySeamHint:
+            "Каждое окно Windows открывается отдельным окном Мака. Нужен хелпер VibeRDP на Windows; пока он не ответил, рабочий стол показывается на всех экранах без рамок."
         case .credentialsTitleServer: "Вход на {host}"
         case .credentialsTitleGateway: "Вход на шлюз {host}"
         case .credentialsMessageAsk: "Введите имя пользователя и пароль."

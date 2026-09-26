@@ -152,6 +152,9 @@ enum ProfileDisplayMode: String, Codable, CaseIterable, Identifiable, Sendable {
     case fullScreen
     /// The desktop keeps its size, and the window scales it with bars at the sides
     case fixed
+    /// The windows of Windows show as windows of the Mac, each on its own, once the helper on Windows answers;
+    /// the desktop spreads over all screens at their sizes, and without the helper it shows on them frameless
+    case seam
 
     var id: Self { self }
 }
