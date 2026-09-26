@@ -82,18 +82,29 @@ pub fn reply(seq: u64, result: Result<(), Failure>) -> Value {
 pub struct Session {
     peer: Peer,
     agent: String,
+    /// The client said it shows windows of its own: only then do the windows go to it
+    shows_windows: bool,
 }
+
+/// The capability of a client that shows the windows of the host, section 5 of the specification
+const SHOWS_WINDOWS: &str = "seam";
 
 impl Session {
     pub fn new(agent: &str) -> Self {
         Session {
             peer: Peer::Waiting,
             agent: agent.to_string(),
+            shows_windows: false,
         }
     }
 
     pub fn peer(&self) -> Peer {
         self.peer
+    }
+
+    /// A ready client that shows windows: the windows, their icons and their order go to it
+    pub fn wants_windows(&self) -> bool {
+        self.peer == Peer::Ready && self.shows_windows
     }
 
     /// The first body on a freshly opened channel
@@ -146,7 +157,16 @@ impl Session {
             .unwrap_or("unknown client");
         if version == u64::from(protocol::VERSION) {
             self.peer = Peer::Ready;
-            Outcome::note(format!("client {agent} speaks version {version}"))
+            self.shows_windows = matches!(body.get("capabilities"), Some(Value::Array(items))
+                if items.iter().any(|item| item.as_str() == Some(SHOWS_WINDOWS)));
+            Outcome::note(format!(
+                "client {agent} speaks version {version}{}",
+                if self.shows_windows {
+                    ", shows windows"
+                } else {
+                    ", keeps the desktop"
+                }
+            ))
         } else {
             self.peer = Peer::Incompatible(version);
             Outcome::note(format!(
@@ -248,6 +268,25 @@ mod tests {
         let greeting = Session::new("vibe-seam-helper 0.1.0").greeting();
         assert_eq!(greeting.get("type").and_then(Value::as_str), Some("hello"));
         assert_eq!(greeting.get("version").and_then(Value::as_u64), Some(1));
+    }
+
+    #[test]
+    fn only_a_client_that_shows_windows_wants_them() {
+        let mut session = Session::new("helper");
+        assert!(!session.wants_windows());
+        session.handle(&client_hello(1));
+        assert!(session.wants_windows());
+        let mut desktop = Session::new("helper");
+        desktop.handle(&message(
+            "hello",
+            vec![
+                ("version", Value::UInt(1)),
+                ("capabilities", Value::Array(vec![])),
+                ("agent", Value::Str("VibeRDP".into())),
+            ],
+        ));
+        assert_eq!(desktop.peer(), Peer::Ready);
+        assert!(!desktop.wants_windows());
     }
 
     #[test]

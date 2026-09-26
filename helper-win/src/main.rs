@@ -126,8 +126,8 @@ mod helper {
                         return "reply not sent".to_string();
                     }
                 }
-                // The client learns the windows once it has said hello in our version
-                if before != Peer::Ready && session.peer() == Peer::Ready {
+                // The client learns the windows once it has said hello in our version and shows them
+                if before != Peer::Ready && session.wants_windows() {
                     tracker.snapshot(generation);
                 }
             }
