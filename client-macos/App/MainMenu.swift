@@ -10,6 +10,9 @@ struct MainMenu {
     let disconnectItem: NSMenuItem
     /// The desktop in place of the windows of Windows, in a session of that mode; the app sets its target
     let windowsDesktopItem: NSMenuItem
+    /// The Start menu of the host and the item of the bar that holds it, filled by StartMenu
+    let startMenu: NSMenu
+    let startItem = NSMenuItem()
 
     init(appName: String) {
         let app = ["app": appName]
@@ -50,8 +53,9 @@ struct MainMenu {
             .menuWindowWindowsDesktop, [:], #selector(ConnectionViewController.toggleWindowsDesktop(_:)))
         windowMenu.addItem(windowsDesktopItem)
 
-        for submenu in [application, file, windowMenu] {
-            let holder = NSMenuItem()
+        startMenu = NSMenu(title: Localization.text(.menuStart))
+        for submenu in [application, file, startMenu, windowMenu] {
+            let holder = submenu === startMenu ? startItem : NSMenuItem()
             holder.submenu = submenu
             bar.addItem(holder)
         }

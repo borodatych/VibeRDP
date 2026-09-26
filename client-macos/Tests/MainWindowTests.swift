@@ -15,10 +15,13 @@ final class MainWindowTests: XCTestCase {
         XCTAssertEqual(AppDelegate.appName, "VibeRDP")
     }
 
-    func testMenuBarHasApplicationFileAndWindowMenus() throws {
+    func testMenuBarHasApplicationFileStartAndWindowMenus() throws {
         let bar = try XCTUnwrap(NSApp.mainMenu)
-        XCTAssertEqual(bar.items.count, 3)
-        XCTAssertIdentical(NSApp.windowsMenu, bar.items[2].submenu)
+        XCTAssertEqual(bar.items.count, 4)
+        XCTAssertIdentical(NSApp.windowsMenu, bar.items[3].submenu)
+        // The Start menu of the host waits hidden for a session in the mode of Windows windows
+        XCTAssertEqual(bar.items[2].submenu?.title, Localization.text(.menuStart))
+        XCTAssertTrue(bar.items[2].isHidden)
 
         let application = try XCTUnwrap(bar.items[0].submenu)
         let quit = try XCTUnwrap(application.items.first { $0.action == #selector(NSApplication.terminate(_:)) })
@@ -40,7 +43,7 @@ final class MainWindowTests: XCTestCase {
         XCTAssertEqual(settings.title, Localization.text(.menuAppSettings))
 
         // The shortcut is the system's own, so only the item is checked
-        XCTAssertNotNil(bar.items[2].submenu?.items.first { $0.action == #selector(NSWindow.toggleFullScreen(_:)) })
+        XCTAssertNotNil(bar.items[3].submenu?.items.first { $0.action == #selector(NSWindow.toggleFullScreen(_:)) })
         let window = try XCTUnwrap((NSApp.delegate as? AppDelegate)?.mainWindow)
         XCTAssertTrue(window.collectionBehavior.contains(.fullScreenPrimary))
     }

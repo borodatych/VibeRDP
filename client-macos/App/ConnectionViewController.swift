@@ -26,6 +26,9 @@ final class ConnectionViewController: NSViewController {
     private var prefersDesktop = false
     /// The programs of the host in the Dock while their windows show
     private var dockProxies: DockProxies?
+    /// The Start menu of the host in the menu bar, and the programs of the current session
+    var startMenu: StartMenu?
+    private var remoteApps = RemoteApps()
     private var desktop: DesktopView? { sessionWindow?.desktop }
     private var wakeObserver: NSObjectProtocol?
     /// The profile of the running session and how it signs in
@@ -295,7 +298,9 @@ final class ConnectionViewController: NSViewController {
         case .seam(let state):
             seamChanged(state)
         case .seamMessage(let message):
-            if let change = track(message) {
+            if remoteApps.apply(message) {
+                startMenu?.show(seamWindows?.isActive == true ? remoteApps : nil)
+            } else if let change = track(message) {
                 seamWindows?.apply(change, remoteWindows)
                 if seamWindows?.isActive == true {
                     dockProxies?.update(DockGroup.groups(of: remoteWindows))
@@ -318,6 +323,7 @@ final class ConnectionViewController: NSViewController {
         seamState = state
         if case .ready = state {} else {
             remoteWindows = RemoteWindows()
+            remoteApps = RemoteApps()
         }
         applySeamMode()
     }
@@ -335,10 +341,22 @@ final class ConnectionViewController: NSViewController {
             sessionWindow?.setDesktopHidden(true)
             seamWindows.activate(remoteWindows)
             dockProxies?.update(DockGroup.groups(of: remoteWindows))
+            showStartMenu()
         } else if !showsWindows && seamWindows.isActive {
             seamWindows.deactivate()
             dockProxies?.stopAll()
+            startMenu?.show(nil)
             sessionWindow?.setDesktopHidden(false)
+        }
+    }
+
+    /// The Start menu of a helper that has one: asked for once a link, shown while the windows show
+    private func showStartMenu() {
+        guard case .ready(_, let capabilities) = seamState, capabilities.contains("launcher") else { return }
+        startMenu?.onLaunch = { [weak session] id in session?.launchApp(id) }
+        startMenu?.show(remoteApps)
+        if remoteApps.apps.isEmpty {
+            session?.requestApps()
         }
     }
 
@@ -422,6 +440,9 @@ final class ConnectionViewController: NSViewController {
         seamWindows = nil
         dockProxies?.invalidate()
         dockProxies = nil
+        startMenu?.show(nil)
+        startMenu?.onLaunch = nil
+        remoteApps = RemoteApps()
         seamState = .closed
         prefersDesktop = false
         sessionWindow?.end()

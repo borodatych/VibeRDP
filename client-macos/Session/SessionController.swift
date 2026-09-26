@@ -228,6 +228,20 @@ final class SessionController {
         }
     }
 
+    /// Asks the helper for the programs of the Start menu of the host
+    func requestApps() {
+        if let body = seam.appsRequest() {
+            send([body])
+        }
+    }
+
+    /// Asks the helper to start a program of the Start menu of the host
+    func launchApp(_ id: String) {
+        if let body = seam.launch(id) {
+            send([body])
+        }
+    }
+
     /// Bodies for the helper, each framed by the core
     private func send(_ bodies: [MessagePackValue]) {
         guard let handle else { return }

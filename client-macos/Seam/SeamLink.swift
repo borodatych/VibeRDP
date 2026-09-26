@@ -135,6 +135,22 @@ struct SeamLink {
         return .map(entries)
     }
 
+    /// Asks the helper for the programs of its Start menu; nil while the link is not ready
+    mutating func appsRequest() -> MessagePackValue? {
+        request("apps.request", [])
+    }
+
+    /// Asks the helper to start a program of its Start menu; nil while the link is not ready
+    mutating func launch(_ id: String) -> MessagePackValue? {
+        request("launch", [("id", .string(id))])
+    }
+
+    private mutating func request(_ type: String, _ entries: [(String, MessagePackValue)]) -> MessagePackValue? {
+        guard case .ready = state else { return nil }
+        defer { nextSeq &+= 1 }
+        return .map([("type", .string(type)), ("seq", .uint(UInt64(nextSeq)))] + entries)
+    }
+
     /// The clock moved: a ping when one is due, and the timeouts of the greeting and of the pongs
     mutating func tick(at now: Date) -> [MessagePackValue] {
         switch state {
