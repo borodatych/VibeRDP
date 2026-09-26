@@ -88,7 +88,12 @@ report_weak_sources() {
             while read -r symbol; do
                 for object in "$objects/$arch"/*.o; do
                     if nm -u "$object" 2>/dev/null | grep -qxF "$symbol"; then
-                        echo "$symbol ($arch) comes from $(basename "$object")" >&2
+                        echo "$symbol ($arch) comes from $(basename "$object"), in:" >&2
+                        # The object file may hold code of another source: batch mode puts shared specializations
+                        # in the first file of a batch, so the functions that make the reference are named too
+                        { objdump -d -r "$object" 2>/dev/null |
+                            awk -v symbol="$symbol" '/^[0-9a-f]+ <.*>:$/ { fn = $2 } index($0, symbol) { print fn }' ||
+                            true; } | sort -u | tr -d '<>:' | xcrun swift-demangle | sed 's/^/    /' >&2
                     fi
                 done
             done
