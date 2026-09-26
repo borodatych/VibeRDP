@@ -72,6 +72,18 @@ final class SeamWindows: NSObject, NSWindowDelegate {
         }
     }
 
+    /// The windows of a program brought forward, the topmost one key: its icon in the Dock was chosen
+    /// Making it key sends activate, so the host brings it forward as well
+    func bringForward(_ ids: [UInt64]) {
+        let windows = ids.compactMap { shown[$0]?.window }
+        guard let top = windows.first else { return }
+        NSApp.activate()
+        for window in windows.reversed() {
+            window.orderFront(nil)
+        }
+        top.makeKeyAndOrderFront(nil)
+    }
+
     /// The Mac window of a window of the host, while it shows
     func window(for id: UInt64) -> NSWindow? {
         shown[id]?.window

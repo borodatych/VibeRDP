@@ -24,6 +24,8 @@ final class ConnectionViewController: NSViewController {
     /// The state of the Seam link, and whether the user asked for the desktop in place of the windows
     private var seamState = SeamLink.State.closed
     private var prefersDesktop = false
+    /// The programs of the host in the Dock while their windows show
+    private var dockProxies: DockProxies?
     private var desktop: DesktopView? { sessionWindow?.desktop }
     private var wakeObserver: NSObjectProtocol?
     /// The profile of the running session and how it signs in
@@ -207,6 +209,11 @@ final class ConnectionViewController: NSViewController {
             onDisconnect: { [weak controller] in controller?.disconnect() },
             onResize: { [weak controller] desktop in controller?.resizeDesktop(to: desktop) })
         sessionWindow = window
+        if window.seamGeometry != nil {
+            dockProxies = DockProxies(
+                onActivate: { [weak self] ids in self?.seamWindows?.bringForward(ids) },
+                onQuit: { [weak controller] ids in ids.forEach { controller?.sendSeam(.close, window: $0) } })
+        }
         seamWindows = window.seamGeometry.map { geometry in
             SeamWindows(
                 geometry: geometry, makeDesktop: makeDesktop,
@@ -289,6 +296,9 @@ final class ConnectionViewController: NSViewController {
         case .seamMessage(let message):
             if let change = track(message) {
                 seamWindows?.apply(change, remoteWindows)
+                if seamWindows?.isActive == true {
+                    dockProxies?.update(DockGroup.groups(of: remoteWindows))
+                }
             }
         }
     }
@@ -314,8 +324,10 @@ final class ConnectionViewController: NSViewController {
         if showsWindows && !seamWindows.isActive {
             sessionWindow?.setDesktopHidden(true)
             seamWindows.activate(remoteWindows)
+            dockProxies?.update(DockGroup.groups(of: remoteWindows))
         } else if !showsWindows && seamWindows.isActive {
             seamWindows.deactivate()
+            dockProxies?.stopAll()
             sessionWindow?.setDesktopHidden(false)
         }
     }
@@ -398,6 +410,8 @@ final class ConnectionViewController: NSViewController {
         let wasShown = sessionWindow?.window?.isVisible == true
         seamWindows?.deactivate()
         seamWindows = nil
+        dockProxies?.invalidate()
+        dockProxies = nil
         seamState = .closed
         prefersDesktop = false
         sessionWindow?.end()

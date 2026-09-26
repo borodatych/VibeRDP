@@ -78,6 +78,10 @@ check_app() {
     log "Verifying slices, deployment target, the embedded core and the signature"
     check_binary "$binary"
     check_binary "$embedded"
+    # The template of the stand-ins in the Dock: copied and started by the app, so it must run where the app runs
+    local proxy="$APP/Contents/SharedSupport/VibeRDPProxy.app/Contents/MacOS/VibeRDPProxy"
+    [ -x "$proxy" ] || die "$APP carries no stand-in template at $proxy"
+    check_binary "$proxy"
     # The output is read whole first: grep -q stops at the first match, and under pipefail the writer's SIGPIPE fails
     local libraries commands
     libraries=$(otool -L "$binary")
