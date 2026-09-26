@@ -20,10 +20,11 @@
 
 /*
  * Parts of the engine the log keeps in full, at DEBUG, whatever the level of the rest
- * The clipboard channel: what Windows does with the lists of the Mac shows only in its messages,
- * and a Windows machine is not at hand to repeat a case
+ * The clipboard and device channels: what Windows does with the lists of the Mac and with a shared folder
+ * shows only in their messages, and a Windows machine is not at hand to repeat a case
  */
-static const char* const tracedTags[] = { "com.freerdp.channels.cliprdr.client" };
+static const char* const tracedTags[] = { "com.freerdp.channels.cliprdr.client",
+                                           "com.freerdp.channels.rdpdr.client" };
 
 /* Set once a file receives the log: before that, lines of the app go nowhere */
 static pthread_mutex_t logMutex = PTHREAD_MUTEX_INITIALIZER;

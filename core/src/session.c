@@ -37,6 +37,8 @@
 #include <winpr/thread.h>
 #include <winpr/wlog.h>
 
+#include <limits.h>
+
 /* The session in the diagnostics log, beside the lines the app writes under the same tag */
 #define TAG "com.vibebrains.viberdp.session"
 
@@ -1023,10 +1025,18 @@ static BOOL applySharedFolder(rdpSettings* settings, const VRCConnectionParams* 
         return TRUE;
     const char* name = params->sharedFolderName && params->sharedFolderName[0] != '\0' ? params->sharedFolderName
                                                                                      : NULL;
+    /* The last part of the path, a trailing slash aside: the folder picker of the Mac ends paths with one */
+    char folderName[PATH_MAX] = { 0 };
     if (!name)
     {
-        const char* slash = strrchr(params->sharedFolder, '/');
-        name = slash && slash[1] != '\0' ? slash + 1 : params->sharedFolder;
+        size_t end = strnlen(params->sharedFolder, sizeof(folderName) - 1);
+        while (end > 1 && params->sharedFolder[end - 1] == '/')
+            end--;
+        size_t start = end;
+        while (start > 0 && params->sharedFolder[start - 1] != '/')
+            start--;
+        memcpy(folderName, params->sharedFolder + start, end - start);
+        name = folderName[0] != '\0' ? folderName : params->sharedFolder;
     }
     const char* const device[] = { "drive", name, params->sharedFolder };
     return freerdp_settings_set_bool(settings, FreeRDP_DeviceRedirection, TRUE) &&

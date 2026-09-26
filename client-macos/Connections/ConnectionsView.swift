@@ -686,7 +686,12 @@ private struct ProfileEditor: View {
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
         if panel.runModal() == .OK, let url = panel.url {
-            model.update { $0.sharedFolder = url.path(percentEncoded: false) }
+            // The picker ends the path with a slash, and Windows would show it in the name of the drive
+            var path = url.path(percentEncoded: false)
+            while path.count > 1 && path.hasSuffix("/") {
+                path.removeLast()
+            }
+            model.update { $0.sharedFolder = path }
         }
     }
 
