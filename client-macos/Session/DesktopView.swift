@@ -76,9 +76,11 @@ final class DesktopView: NSView {
         super.init(frame: .zero)
         wantsLayer = true
         // The visible rect is tracked as the view changes, so one area serves for good
+        // Moves count in every window of the app, not only the key one: a session on several monitors or in windows
+        // of the host has one key window, and Windows must see the pointer over the others too
         addTrackingArea(
             NSTrackingArea(
-                rect: .zero, options: [.mouseMoved, .cursorUpdate, .activeInKeyWindow, .inVisibleRect], owner: self,
+                rect: .zero, options: [.mouseMoved, .cursorUpdate, .activeInActiveApp, .inVisibleRect], owner: self,
                 userInfo: nil))
     }
 
@@ -234,13 +236,19 @@ final class DesktopView: NSView {
         let local = convert(event.locationInWindow, from: nil)
         let scale = layer.contentsScale
         let drawablePoint = CGPoint(x: local.x * scale, y: (bounds.height - local.y) * scale)
-        guard
-            let shown = shownSize,
-            let pixel = FrameGeometry.desktopPixel(at: drawablePoint, source: shown, into: layer.drawableSize)
-        else { return nil }
-        // The part a view shows starts where its monitor starts in the desktop
-        let origin = FrameRenderer.part(of: texture, region: region).origin
-        return DesktopPoint(x: UInt32(pixel.x + origin.x), y: UInt32(pixel.y + origin.y))
+        // A view of a part counts from where the part starts and reaches past it into the rest of the desktop
+        let pixel: CGPoint?
+        if region != nil {
+            pixel = FrameGeometry.desktopPixel(
+                at: drawablePoint, part: FrameRenderer.part(of: texture, region: region),
+                whole: CGSize(width: texture.width, height: texture.height), into: layer.drawableSize)
+        } else {
+            pixel = shownSize.flatMap {
+                FrameGeometry.desktopPixel(at: drawablePoint, source: $0, into: layer.drawableSize)
+            }
+        }
+        guard let pixel else { return nil }
+        return DesktopPoint(x: UInt32(pixel.x), y: UInt32(pixel.y))
     }
 
     // MARK: Keyboard

@@ -27,4 +27,17 @@ struct FrameGeometry: Equatable {
         let y = ((point.y - geometry.covered.minY) / geometry.scale).rounded(.down)
         return CGPoint(x: min(max(x, 0), source.width - 1), y: min(max(y, 0), source.height - 1))
     }
+
+    /// The pixel of the whole desktop under a point, for a view that shows a part of it
+    /// Past the part the point goes on into the rest of the desktop: a drag that leaves the window of one monitor
+    /// or of one window of the host goes on across the desktop, as it would on Windows; only its edges hold it
+    static func desktopPixel(at point: CGPoint, part: CGRect, whole: CGSize, into destination: CGSize) -> CGPoint? {
+        let geometry = fit(source: part.size, into: destination)
+        guard geometry.covered.width > 0, geometry.covered.height > 0, whole.width > 0, whole.height > 0 else {
+            return nil
+        }
+        let x = part.minX + ((point.x - geometry.covered.minX) / geometry.scale).rounded(.down)
+        let y = part.minY + ((point.y - geometry.covered.minY) / geometry.scale).rounded(.down)
+        return CGPoint(x: min(max(x, 0), whole.width - 1), y: min(max(y, 0), whole.height - 1))
+    }
 }

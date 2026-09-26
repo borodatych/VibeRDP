@@ -72,4 +72,28 @@ final class FrameGeometryTests: XCTestCase {
         XCTAssertNil(FrameGeometry.desktopPixel(at: .zero, source: .zero, into: CGSize(width: 10, height: 10)))
         XCTAssertNil(FrameGeometry.desktopPixel(at: .zero, source: CGSize(width: 10, height: 10), into: .zero))
     }
+
+    /// A part of 400 by 300 pixels at 1000,200 of a desktop of 3000 by 1200, shown at twice its size
+    func testPartCountsFromItsStart() {
+        let part = CGRect(x: 1000, y: 200, width: 400, height: 300)
+        let whole = CGSize(width: 3000, height: 1200)
+        let drawable = CGSize(width: 800, height: 600)
+        XCTAssertEqual(
+            FrameGeometry.desktopPixel(at: CGPoint(x: 100, y: 60), part: part, whole: whole, into: drawable),
+            CGPoint(x: 1050, y: 230))
+    }
+
+    /// A drag that leaves the window goes on into the desktop, and stops only at its edges
+    func testPointPastThePartReachesTheRestOfTheDesktop() {
+        let part = CGRect(x: 1000, y: 200, width: 400, height: 300)
+        let whole = CGSize(width: 3000, height: 1200)
+        let drawable = CGSize(width: 400, height: 300)
+        XCTAssertEqual(
+            FrameGeometry.desktopPixel(at: CGPoint(x: 500, y: -50), part: part, whole: whole, into: drawable),
+            CGPoint(x: 1500, y: 150))
+        XCTAssertEqual(
+            FrameGeometry.desktopPixel(at: CGPoint(x: -5000, y: 5000), part: part, whole: whole, into: drawable),
+            CGPoint(x: 0, y: 1199))
+        XCTAssertNil(FrameGeometry.desktopPixel(at: .zero, part: part, whole: .zero, into: drawable))
+    }
 }
