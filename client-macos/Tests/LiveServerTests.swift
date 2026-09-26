@@ -194,6 +194,47 @@ final class LiveServerTests: XCTestCase {
         await endsCleanly(session)
     }
 
+    /// Two copies on the Mac one after the other: the server gets the second, not the first
+    /// The echo server asks for the data at once, as Windows does with its clipboard history on
+    func testSecondCopyReplacesTheFirst() async throws {
+        guard let socket = ProcessInfo.processInfo.environment["VIBERDP_CLIPBOARD_SERVER_SOCKET"] else {
+            throw XCTSkip("no clipboard test server: build it with core/scripts/build-test-server.sh")
+        }
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("tech.vibebrains.viberdp.tests.\(UUID().uuidString)"))
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.clearContents()
+        pasteboard.setString("строка 1", forType: .string)
+
+        suiteName = "tech.vibebrains.viberdp.tests.\(UUID().uuidString)"
+        let trusted = TrustedCertificates(defaults: try XCTUnwrap(UserDefaults(suiteName: suiteName)))
+        let session = LiveSession(trusted: trusted)
+        let address = try XCTUnwrap(ServerAddress(socket))
+        // The sample server has no logon of its own: a name and a password spare the question
+        XCTAssertTrue(
+            session.controller.connect(to: address, username: "tester", password: "unused", desktop: Self.desktop))
+        let bridge = ClipboardBridge(pasteboard: pasteboard, channel: session.controller)
+        session.clipboard = bridge
+        bridge.start()
+
+        let first = await session.wait("the echo of the first copy", timeout: Self.timeout) {
+            session.remoteClipboards > 0
+        }
+        XCTAssertTrue(first)
+        XCTAssertEqual(pasteboard.string(forType: .string), "echo: строка 1")
+
+        pasteboard.clearContents()
+        pasteboard.setString("строка 2", forType: .string)
+        let second = await session.wait("the echo of the second copy", timeout: Self.timeout) {
+            session.remoteClipboards > 1
+        }
+        XCTAssertTrue(second)
+        XCTAssertEqual(pasteboard.string(forType: .string), "echo: строка 2")
+        XCTAssertEqual(session.failures, [])
+
+        bridge.stop()
+        await endsCleanly(session)
+    }
+
     /// Files make the round trip through the echo server: a folder and a file of the Mac go over by their contents,
     /// come back as the remote clipboard, and the paste on the Mac brings them into the staging folder
     /// The copy waits over the panel of the app, as it does when Finder pastes
