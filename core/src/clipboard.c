@@ -310,6 +310,34 @@ static UINT onMonitorReady(CliprdrClientContext* channel, const CLIPRDR_MONITOR_
     return result;
 }
 
+/* What the server takes, for the log: whether it locks its clipboard and how it names formats changes its answers */
+static UINT onServerCapabilities(CliprdrClientContext* channel, const CLIPRDR_CAPABILITIES* capabilities)
+{
+    (void)channel;
+    for (UINT32 i = 0; i < capabilities->cCapabilitiesSets; i++)
+    {
+        const CLIPRDR_CAPABILITY_SET* set = &capabilities->capabilitySets[i];
+        if (set->capabilitySetType == CB_CAPSTYPE_GENERAL)
+        {
+            const CLIPRDR_GENERAL_CAPABILITY_SET* general = (const CLIPRDR_GENERAL_CAPABILITY_SET*)set;
+            WLog_INFO(TAG, "the server takes: version %" PRIu32 ", flags 0x%08" PRIX32, general->version,
+                      general->generalFlags);
+        }
+    }
+    return CHANNEL_RC_OK;
+}
+
+/* The server took a list of the Mac or turned it down: a list it turned down leaves its clipboard as it was */
+static UINT onServerFormatListResponse(CliprdrClientContext* channel, const CLIPRDR_FORMAT_LIST_RESPONSE* response)
+{
+    (void)channel;
+    if (response->common.msgFlags & CB_RESPONSE_OK)
+        WLog_INFO(TAG, "the server took the list of the Mac");
+    else
+        WLog_WARN(TAG, "the server turned down the list of the Mac: flags 0x%04" PRIX16, response->common.msgFlags);
+    return CHANNEL_RC_OK;
+}
+
 /* The clipboard of the server changed: the list is acknowledged, and the app learns what it may paste */
 static UINT onServerFormatList(CliprdrClientContext* channel, const CLIPRDR_FORMAT_LIST* list)
 {
@@ -522,6 +550,8 @@ void vrcClipboardAttach(VRCClipboard* clipboard, CliprdrClientContext* channel)
     pthread_mutex_lock(&clipboard->mutex);
     channel->custom = clipboard;
     channel->MonitorReady = onMonitorReady;
+    channel->ServerCapabilities = onServerCapabilities;
+    channel->ServerFormatListResponse = onServerFormatListResponse;
     channel->ServerFormatList = onServerFormatList;
     channel->ServerFormatDataRequest = onServerFormatDataRequest;
     channel->ServerFormatDataResponse = onServerFormatDataResponse;
