@@ -9,6 +9,8 @@
 #[cfg(windows)]
 mod channel;
 #[cfg(windows)]
+mod icons;
+#[cfg(windows)]
 mod link;
 #[cfg(windows)]
 mod log;

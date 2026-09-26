@@ -30,6 +30,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS, WM_APP,
 };
 
+use crate::icons;
 use crate::link::Link;
 use crate::log;
 
@@ -193,9 +194,15 @@ fn snapshot(watch: &mut Watch, generation: u64) {
         .filter_map(|id| read(id, None))
         .collect();
     let count = windows.len();
+    let apps: Vec<u64> = windows
+        .iter()
+        .filter(|w| w.kind == Kind::App)
+        .map(|w| w.id)
+        .collect();
     // SAFETY: plain call
     let foreground = id(unsafe { GetForegroundWindow() });
-    let messages = watch.desktop.snapshot(windows, foreground);
+    let mut messages = watch.desktop.snapshot(windows, foreground);
+    messages.extend(apps.into_iter().filter_map(|id| icon(watch, id)));
     if watch.link.send(generation, &messages) {
         watch.live = generation;
         log::line(&format!("snapshot sent: {count} windows"));
@@ -212,9 +219,28 @@ fn handle(watch: &mut Watch, event: u32, id: u64) {
     if event == EVENT_SYSTEM_FOREGROUND {
         messages.extend(watch.desktop.focus(id));
     }
+    // No event says an icon changed: it is looked at when a window appears, is renamed or takes the focus
+    if icon_may_change(event) && watch.desktop.get(id).is_some_and(|w| w.kind == Kind::App) {
+        messages.extend(icon(watch, id));
+    }
     if !messages.is_empty() {
         watch.link.send(watch.live, &messages);
     }
+}
+
+fn icon_may_change(event: u32) -> bool {
+    matches!(
+        event,
+        EVENT_OBJECT_CREATE
+            | EVENT_OBJECT_SHOW
+            | EVENT_OBJECT_UNCLOAKED
+            | EVENT_OBJECT_NAMECHANGE
+            | EVENT_SYSTEM_FOREGROUND
+    )
+}
+
+fn icon(watch: &mut Watch, id: u64) -> Option<vibe_seam_helper::protocol::Value> {
+    watch.desktop.icon(id, icons::png(hwnd(id))?)
 }
 
 fn id(hwnd: HWND) -> u64 {

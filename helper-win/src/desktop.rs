@@ -4,6 +4,7 @@
 //! so the rules of protocol/seam-protocol.md, section 6, stay testable on any host
 
 use std::collections::HashMap;
+use std::hash::{DefaultHasher, Hash, Hasher};
 
 use crate::protocol::{self, Value};
 
@@ -118,6 +119,8 @@ pub struct Desktop {
     windows: HashMap<u64, Window>,
     order: Vec<u64>,
     foreground: u64,
+    /// A hash of the icon each window was last sent with: the same icon is not sent twice
+    icons: HashMap<u64, u64>,
 }
 
 impl Desktop {
@@ -128,6 +131,7 @@ impl Desktop {
     /// Forgets what the client knew and tells it everything: windows top to bottom, their order, the focus
     pub fn snapshot(&mut self, windows: Vec<Window>, foreground: u64) -> Vec<Value> {
         self.windows.clear();
+        self.icons.clear();
         self.order.clear();
         self.foreground = 0;
         let order: Vec<u64> = windows.iter().map(|w| w.id).collect();
@@ -153,6 +157,7 @@ impl Desktop {
             }
             (None, Some(_)) => {
                 self.windows.remove(&id);
+                self.icons.remove(&id);
                 self.order.retain(|&known| known != id);
                 if self.foreground == id {
                     self.foreground = 0;
@@ -180,6 +185,23 @@ impl Desktop {
         Some(protocol::message(
             "zorder",
             vec![("ids", Value::Array(ids))],
+        ))
+    }
+
+    /// The icon of a known window as PNG; says window.icon when it differs from the one sent before
+    pub fn icon(&mut self, id: u64, png: Vec<u8>) -> Option<Value> {
+        if !self.windows.contains_key(&id) {
+            return None;
+        }
+        let mut hasher = DefaultHasher::new();
+        png.hash(&mut hasher);
+        let hash = hasher.finish();
+        if self.icons.insert(id, hash) == Some(hash) {
+            return None;
+        }
+        Some(protocol::message(
+            "window.icon",
+            vec![("id", Value::UInt(id)), ("png", Value::Bin(png))],
         ))
     }
 
@@ -304,6 +326,25 @@ mod tests {
             desktop.focus(99),
             Some(message("foreground", vec![("id", Value::UInt(0))]))
         );
+    }
+
+    #[test]
+    fn icon_is_sent_once_per_change_and_only_for_known_windows() {
+        let mut desktop = Desktop::default();
+        assert_eq!(desktop.icon(132290, vec![1]), None);
+        desktop.observe(132290, Some(excel()));
+        assert_eq!(
+            desktop.icon(132290, vec![1]),
+            Some(message(
+                "window.icon",
+                vec![("id", Value::UInt(132290)), ("png", Value::Bin(vec![1]))]
+            ))
+        );
+        assert_eq!(desktop.icon(132290, vec![1]), None);
+        assert!(desktop.icon(132290, vec![2]).is_some());
+        desktop.observe(132290, None);
+        desktop.observe(132290, Some(excel()));
+        assert!(desktop.icon(132290, vec![2]).is_some());
     }
 
     #[test]

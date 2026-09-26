@@ -6,7 +6,7 @@
 use crate::protocol::{self, Value};
 
 /// What this build of the helper does beyond keeping the channel: grows as the window stages land
-pub const CAPABILITIES: &[&str] = &["windows"];
+pub const CAPABILITIES: &[&str] = &["windows", "icons"];
 
 /// Where the conversation is: the client greets once, and its version decides whether the two talk
 #[derive(Clone, Copy, Debug, PartialEq)]
