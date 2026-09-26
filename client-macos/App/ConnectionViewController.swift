@@ -29,6 +29,8 @@ final class ConnectionViewController: NSViewController {
     /// The Start menu of the host in the menu bar, and the programs of the current session
     var startMenu: StartMenu?
     private var remoteApps = RemoteApps()
+    /// The server refused RemoteApp: when this session ends, the same attempt starts again without it
+    private var retryWithoutRemoteApp: LoginAttempt?
     private var desktop: DesktopView? { sessionWindow?.desktop }
     private var wakeObserver: NSObjectProtocol?
     /// The profile of the running session and how it signs in
@@ -174,7 +176,8 @@ final class ConnectionViewController: NSViewController {
         start(LoginAttempt.first(for: profile, typed: typed, saved: saved, savedGateway: savedGateway))
     }
 
-    private func start(_ attempt: LoginAttempt) {
+    /// remoteApp false keeps RemoteApp off even when the profile asks for it: the server refused it before
+    private func start(_ attempt: LoginAttempt, remoteApp: Bool = true) {
         guard let profile = model.store.profile(attempt.profileID) else { return }
         guard let address = ServerAddress(profile.address) else {
             model.status = Localization.text(.connectionStatusInvalidHost)
@@ -237,7 +240,8 @@ final class ConnectionViewController: NSViewController {
             to: address, username: attempt.username, password: attempt.password ?? "", gateway: gateway,
             desktop: window.desktopRequest, audio: profile.audio.mode,
             microphone: profile.microphone, sharedFolder: profile.sharedFolder,
-            showsWindows: seamWindows != nil)
+            showsWindows: seamWindows != nil,
+            remoteApp: remoteApp && seamWindows != nil && profile.remoteApp)
         if !started {
             session = nil
             sessionWindow = nil
@@ -297,6 +301,10 @@ final class ConnectionViewController: NSViewController {
             clipboard?.dataRequested(format)
         case .seam(let state):
             seamChanged(state)
+        // RemoteApp comes back as a new connection: the desktop of the refusal lacks the graphics pipeline
+        case .remoteAppRefused:
+            retryWithoutRemoteApp = attempt
+            session?.disconnect()
         case .seamMessage(let message):
             if remoteApps.apply(message) {
                 startMenu?.show(seamWindows?.isActive == true ? remoteApps : nil)
@@ -457,6 +465,13 @@ final class ConnectionViewController: NSViewController {
         model.isBusy = false
         let ended = attempt
         attempt = nil
+        if let retry = retryWithoutRemoteApp {
+            retryWithoutRemoteApp = nil
+            failure = nil
+            Diagnostics.info("rail", "connecting again without RemoteApp")
+            start(retry, remoteApp: false)
+            return
+        }
         model.status = failure?.message ?? Localization.text(.connectionStatusDisconnected, ["host": host])
         guard let ended, let failure, let profile = model.store.profile(ended.profileID) else { return }
         // A wrong password is asked for again, and the answer starts a new connection

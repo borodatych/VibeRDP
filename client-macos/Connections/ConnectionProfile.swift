@@ -28,6 +28,8 @@ struct ConnectionProfile: Codable, Equatable, Identifiable, Sendable {
     var fixedSize: DesktopSize
     /// In full screen the desktop spreads over every screen of the Mac, a window on each
     var allScreens: Bool
+    /// In the mode of Windows windows, RemoteApp is tried first; a server without it gets the helper and the desktop
+    var remoteApp: Bool
     /// On a Retina display the desktop takes its pixels, so the text is sharp; off, the display stretches it,
     /// with four times fewer pixels to send
     var sharpOnRetina: Bool
@@ -47,7 +49,7 @@ struct ConnectionProfile: Codable, Equatable, Identifiable, Sendable {
         remembersPassword: Bool = true, keyboard: ProfileKeyboard = .settings, gatewayAddress: String = "",
         gatewayUsesServerCredentials: Bool = true, gatewayUsername: String = "", gatewayBypassLocal: Bool = false,
         displayMode: ProfileDisplayMode = .window, fixedSize: DesktopSize = .standard, allScreens: Bool = false,
-        sharpOnRetina: Bool = true,
+        sharpOnRetina: Bool = true, remoteApp: Bool = false,
         audio: ProfileAudio = .local, microphone: Bool = false, sharedFolder: String = "", isFavorite: Bool = false,
         lastConnected: Date? = nil
     ) {
@@ -65,6 +67,7 @@ struct ConnectionProfile: Codable, Equatable, Identifiable, Sendable {
         self.fixedSize = fixedSize
         self.sharpOnRetina = sharpOnRetina
         self.allScreens = allScreens
+        self.remoteApp = remoteApp
         self.audio = audio
         self.sharedFolder = sharedFolder
         self.microphone = microphone
@@ -96,6 +99,7 @@ struct ConnectionProfile: Codable, Equatable, Identifiable, Sendable {
         fixedSize = try container.decodeIfPresent(DesktopSize.self, forKey: .fixedSize) ?? defaults.fixedSize
         sharpOnRetina = try container.decodeIfPresent(Bool.self, forKey: .sharpOnRetina) ?? defaults.sharpOnRetina
         allScreens = try container.decodeIfPresent(Bool.self, forKey: .allScreens) ?? defaults.allScreens
+        remoteApp = try container.decodeIfPresent(Bool.self, forKey: .remoteApp) ?? defaults.remoteApp
         audio = try container.decodeIfPresent(ProfileAudio.self, forKey: .audio) ?? defaults.audio
         sharedFolder = try container.decodeIfPresent(String.self, forKey: .sharedFolder) ?? defaults.sharedFolder
         microphone = try container.decodeIfPresent(Bool.self, forKey: .microphone) ?? defaults.microphone

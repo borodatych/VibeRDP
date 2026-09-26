@@ -60,6 +60,21 @@ final class LiveServerTests: XCTestCase {
         await endsCleanly(session)
     }
 
+    /// A server without RemoteApp answers the request with a desktop: the app hears the refusal once, and the session
+    /// goes on drawing, as the fallback to a connection without RemoteApp expects
+    func testServerWithoutRemoteAppRefusesIt() async throws {
+        let session = try start(socketIn: "VIBERDP_TEST_SERVER_SOCKET", remoteApp: true)
+        let refused = await session.wait("the refusal of RemoteApp", timeout: Self.timeout) {
+            session.remoteAppRefusals > 0
+        }
+        XCTAssertTrue(refused)
+        let drawn = await session.wait("the first frame", timeout: Self.timeout) { session.frames > 0 }
+        XCTAssertTrue(drawn)
+        XCTAssertEqual(session.remoteAppRefusals, 1)
+        XCTAssertEqual(session.failures, [])
+        await endsCleanly(session)
+    }
+
     func testRecordedDesktopArrivesInItsColors() async throws {
         guard let renderer = FrameRenderer() else {
             throw XCTSkip("no GPU that runs Metal Performance Shaders on this machine")
@@ -310,7 +325,7 @@ final class LiveServerTests: XCTestCase {
 
     /// Connects to the server whose socket the environment names, accepting its certificate
     private func start(
-        socketIn variable: String, audio: VRCAudioMode = .off, sharedFolder: String = ""
+        socketIn variable: String, audio: VRCAudioMode = .off, sharedFolder: String = "", remoteApp: Bool = false
     ) throws -> LiveSession {
         guard let socket = ProcessInfo.processInfo.environment[variable] else {
             throw XCTSkip("no test server: build it with core/scripts/build-test-server.sh, build-client.sh starts it")
@@ -322,7 +337,7 @@ final class LiveServerTests: XCTestCase {
         XCTAssertTrue(
             session.controller.connect(
                 to: address, username: "", password: "", desktop: Self.desktop, audio: audio,
-                sharedFolder: sharedFolder))
+                sharedFolder: sharedFolder, remoteApp: remoteApp))
         return session
     }
 
@@ -369,6 +384,7 @@ private final class LiveSession {
     private(set) var failures: [VRCErrorKind] = []
     private(set) var frames = 0
     private(set) var credentialsQuestions = 0
+    private(set) var remoteAppRefusals = 0
     private(set) var reconnectAttempts = 0
     private(set) var remoteClipboards = 0
     private(set) var resized = false
@@ -444,6 +460,8 @@ private final class LiveSession {
             clipboard?.dataRequested(format)
         case .seam, .seamMessage:
             break
+        case .remoteAppRefused:
+            remoteAppRefusals += 1
         }
         check?()
     }

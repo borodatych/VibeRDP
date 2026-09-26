@@ -166,6 +166,17 @@ foreach(test IN ITEMS frameSplitAcrossChunks framesInOneChunk longFrameBreaksOnc
   set_tests_properties(${test} PROPERTIES TIMEOUT 60 ENVIRONMENT "${VRC_TEST_ENVIRONMENT}")
 endforeach()
 
+# RemoteApp: window orders built by hand, as the engine hands them over
+add_executable(railTests railTests.c ${PROJECT_SOURCE_DIR}/src/rail.c)
+target_include_directories(railTests PRIVATE ${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/include)
+target_link_libraries(railTests PRIVATE freerdp-client)
+target_compile_options(railTests PRIVATE -Wall -Wextra -Werror)
+foreach(test IN ITEMS newWindowCarriesItsFields updateCarriesOnlyItsFields cachedIconComesBack
+                      desktopOrderAndFocus refusalsReachTheApp commandsWaitForTheProgram)
+  add_test(NAME ${test} COMMAND railTests ${test})
+  set_tests_properties(${test} PROPERTIES TIMEOUT 60 ENVIRONMENT "${VRC_TEST_ENVIRONMENT}")
+endforeach()
+
 # The diagnostics log through the framework, as the app calls it
 add_executable(logTests logTests.c)
 target_link_libraries(logTests PRIVATE VibeRDPCore)

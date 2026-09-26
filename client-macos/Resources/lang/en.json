@@ -135,6 +135,7 @@
   "profile.display.fullScreen": "Full screen",
   "profile.display.fixed": "Fixed size",
   "profile.display.seam": "Windows windows",
+  "profile.display.remoteApp": "Try RemoteApp first",
   "profile.display.size": "Resolution",
   "profile.display.custom": "Custom",
   "profile.display.sharp": "Sharp on Retina",

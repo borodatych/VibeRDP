@@ -133,6 +133,49 @@ typedef struct VRCMonitor {
 /* The longest body a Seam frame may carry, protocol/seam-protocol.md, section 2 */
 #define VRC_SEAM_MAX_BODY (1u << 20)
 
+/* RemoteApp (RAIL): whether the server started the program, or refused, and the session is a desktop then */
+typedef VRC_ENUM(VRCRailState) {
+    VRCRailStateStarted = 1,
+    VRCRailStateRefused = 2,
+} VRCRailState;
+
+/* The commands RAIL takes for a window, besides activating and moving it */
+typedef VRC_ENUM(VRCRailCommand) {
+    VRCRailCommandMinimize = 1,
+    VRCRailCommandMaximize = 2,
+    VRCRailCommandRestore = 3,
+    VRCRailCommandClose = 4,
+} VRCRailCommand;
+
+/* The fields a window order carries: an update brings only those that changed */
+enum {
+    VRCRailFieldOwner = 1 << 0,
+    VRCRailFieldStyle = 1 << 1,
+    VRCRailFieldShow = 1 << 2,
+    VRCRailFieldTitle = 1 << 3,
+    VRCRailFieldOffset = 1 << 4,
+    VRCRailFieldSize = 1 << 5,
+    VRCRailFieldVisibleOffset = 1 << 6,
+    VRCRailFieldVisibleRegion = 1 << 7,
+};
+
+/* A window order of RAIL, in pixels of the desktop of the server */
+typedef struct VRCRailWindow {
+    uint32_t id;
+    bool created;         /* The window is new: the fields describe all of it */
+    uint32_t fields;      /* VRCRailField values */
+    uint32_t owner;       /* 0 for none */
+    uint32_t style;       /* WS_ values of Windows */
+    uint32_t extendedStyle;
+    uint32_t showState;   /* SW_ values: 0 hidden, 2 minimized, 3 maximized, 5 shown */
+    const char* title;    /* UTF-8; valid only during the call */
+    int32_t x, y;         /* The window with its frame */
+    uint32_t width, height;
+    int32_t visibleX, visibleY;       /* Where the visible region is counted from */
+    int32_t regionX, regionY;         /* The rectangle around the visible region, from the visible offset */
+    uint32_t regionWidth, regionHeight;
+} VRCRailWindow;
+
 /* Where the sound of the remote computer plays */
 typedef VRC_ENUM(VRCAudioMode) {
     VRCAudioModeOff = 0,    /* Nowhere: the server does not send it */
@@ -281,6 +324,20 @@ typedef struct VRCCallbacks {
     void (*seamOpened)(void* userData);
     void (*seamReceived)(void* userData, const uint8_t* body, size_t length);
     void (*seamClosed)(void* userData);
+
+    /*
+     * RemoteApp, when the connection asked for it: the program started, or the server refused and gave a desktop
+     * code is the result of the server for a refused program, 0 otherwise
+     */
+    void (*railState)(void* userData, VRCRailState state, uint32_t code);
+    /* A window of the server appeared or changed; the fields say what the order carries */
+    void (*railWindow)(void* userData, const VRCRailWindow* window);
+    void (*railWindowDeleted)(void* userData, uint32_t id);
+    /* The icon of a window, BGRA top-down; valid only during the call */
+    void (*railIcon)(void* userData, uint32_t id, const uint8_t* pixels, uint32_t width, uint32_t height);
+    /* The window with the focus, and the order of the windows top first, each when the server sends it */
+    void (*railDesktop)(void* userData, uint32_t activeId, bool hasActive, const uint32_t* order, size_t count,
+                        bool hasOrder);
 } VRCCallbacks;
 
 /*
@@ -316,6 +373,12 @@ typedef struct VRCConnectionParams {
     const char* gatewayUsername;       /* Optional, as username; ignored when the server credentials are used */
     const char* gatewayDomain;         /* Optional */
     const char* gatewayPassword;       /* Optional */
+
+    /*
+     * RemoteApp: the server starts the file manager and sends its windows as RAIL window orders, railState says
+     * how it went; the graphics pipeline stays off, so every window is drawn into the one desktop frame
+     */
+    bool remoteApp;
 } VRCConnectionParams;
 
 /*
@@ -468,6 +531,14 @@ VRCResult VRCSessionResizeDesktop(VRCSession* session, uint32_t width, uint32_t 
  * Callable from any thread; InvalidState while the channel is not open, InvalidArgument above VRC_SEAM_MAX_BODY
  */
 VRCResult VRCSessionSendSeam(VRCSession* session, const uint8_t* body, size_t length);
+
+/*
+ * RemoteApp commands for a window of the server, callable from any thread
+ * InvalidState until railState reports the program started; the rectangle of a move is the window with its frame
+ */
+VRCResult VRCSessionRailActivate(VRCSession* session, uint32_t id);
+VRCResult VRCSessionRailSystemCommand(VRCSession* session, uint32_t id, VRCRailCommand command);
+VRCResult VRCSessionRailMove(VRCSession* session, uint32_t id, int32_t x, int32_t y, uint32_t width, uint32_t height);
 
 /*
  * Diagnostics log: the lines of the engine and of the app in one file, for someone to read when something goes wrong

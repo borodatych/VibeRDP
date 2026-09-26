@@ -1,5 +1,6 @@
 import Foundation
 import IOSurface
+import ImageIO
 import VibeRDPCore
 
 /// One connection attempt to one server: wraps a VRCSession and brings its callbacks to the main thread
@@ -31,7 +32,14 @@ final class SessionController {
         case seam(SeamLink.State)
         /// A message of the helper beyond the greeting and the pings: windows, icons, answers to commands
         case seamMessage(MessagePackValue)
+        /// The server refused RemoteApp: the session is a desktop, and a new one without RemoteApp does better
+        case remoteAppRefused
     }
+
+    /// What RemoteApp calls itself where the helper would give its name
+    static let remoteAppAgent = "RemoteApp"
+    /// RemoteApp reports windows and takes commands for them, as a helper with these capabilities does
+    static let remoteAppCapabilities: Set<String> = ["windows", "commands"]
 
     /// How often the Seam link looks at its clock: the shortest of its intervals, the hello timeout, is 2 seconds
     private static let seamTick: TimeInterval = 0.5
@@ -46,6 +54,9 @@ final class SessionController {
     /// The capability of a client that shows the windows of the host, section 5 of the specification
     static let showsWindowsCapability = "seam"
     private var seamTimer: Timer?
+    /// RemoteApp in the words of the Seam protocol, while the server runs the program
+    private var rail = RailBridge()
+    private var railActive = false
 
     init(trusted: TrustedCertificates, onEvent: @escaping (Event) -> Void) {
         self.trusted = trusted
@@ -58,7 +69,7 @@ final class SessionController {
     func connect(
         to address: ServerAddress, username: String, password: String, gateway: GatewayParameters? = nil,
         desktop: DesktopRequest, audio: VRCAudioMode = .off, microphone: Bool = false,
-        sharedFolder: String = "", showsWindows: Bool = false
+        sharedFolder: String = "", showsWindows: Bool = false, remoteApp: Bool = false
     ) -> Bool {
         guard handle == nil else { return false }
         seam = SeamLink(agent: Self.seamAgent, capabilities: showsWindows ? [Self.showsWindowsCapability] : [])
@@ -102,6 +113,7 @@ final class SessionController {
             params.gatewayUsername = strings.copy(gateway.username)
             params.gatewayPassword = strings.copy(gateway.password)
         }
+        params.remoteApp = remoteApp
         // The engine copies the strings during the call, so they may go right after it
         let result = withExtendedLifetime(strings) { VRCSessionConnect(session, &params) }
         return result == .OK
@@ -190,6 +202,19 @@ final class SessionController {
             onEvent(.remoteClipboard(formats))
         case .clipboardDataRequested(let format):
             onEvent(.clipboardDataRequested(format))
+        case .railState(let state, let code):
+            railChanged(state, code: code)
+        case .railWindow(let order):
+            rail.window(order).forEach { onEvent(.seamMessage($0)) }
+        case .railWindowDeleted(let id):
+            rail.deleted(id).forEach { onEvent(.seamMessage($0)) }
+        case .railIcon(let id, let png):
+            rail.icon(id, png: png).forEach { onEvent(.seamMessage($0)) }
+        case .railDesktop(let active, let order):
+            rail.desktop(active: active, order: order).forEach { onEvent(.seamMessage($0)) }
+        // Under RemoteApp the windows are the server's: a helper, should one answer too, is not asked
+        case .seamOpened where railActive, .seamReceived where railActive, .seamClosed where railActive:
+            break
         case .seamOpened:
             send(seam.opened(at: Date()))
             startSeamTimer()
@@ -221,10 +246,52 @@ final class SessionController {
         }
     }
 
-    /// Asks the helper to act on a window of the host; nothing goes while the link is not ready
+    /// Asks the helper to act on a window of the host, or RemoteApp when the server runs the program;
+    /// nothing goes while neither is ready
     func sendSeam(_ command: SeamLink.Command, window id: UInt64) {
-        if let body = seam.command(command, window: id) {
+        if railActive {
+            sendRail(command, window: id)
+        } else if let body = seam.command(command, window: id) {
             send([body])
+        }
+    }
+
+    private func sendRail(_ command: SeamLink.Command, window id: UInt64) {
+        guard let handle, let window = UInt32(exactly: id) else { return }
+        let result: VRCResult
+        switch command {
+        case .activate:
+            result = VRCSessionRailActivate(handle.session, window)
+        case .move(let visible):
+            guard let frame = rail.frame(of: id, visible: visible) else { return }
+            result = VRCSessionRailMove(
+                handle.session, window, Int32(frame.minX), Int32(frame.minY), UInt32(max(frame.width, 0)),
+                UInt32(max(frame.height, 0)))
+        case .minimize:
+            result = VRCSessionRailSystemCommand(handle.session, window, .minimize)
+        case .maximize:
+            result = VRCSessionRailSystemCommand(handle.session, window, .maximize)
+        case .restore:
+            result = VRCSessionRailSystemCommand(handle.session, window, .restore)
+        case .close:
+            result = VRCSessionRailSystemCommand(handle.session, window, .close)
+        }
+        if result != .OK {
+            Diagnostics.warning("rail", "\(command.action) of window \(id) not sent: \(result.rawValue)")
+        }
+    }
+
+    /// The program started: the windows come as a ready helper's would; refused, the app starts over without it
+    private func railChanged(_ state: VRCRailState, code: UInt32) {
+        switch state {
+        case .started:
+            Diagnostics.info("rail", "the program started")
+            railActive = true
+            onEvent(.seam(.ready(agent: Self.remoteAppAgent, capabilities: Self.remoteAppCapabilities)))
+        case .refused:
+            Diagnostics.warning("rail", "RemoteApp refused, code \(code)")
+            railActive = false
+            onEvent(.remoteAppRefused)
         }
     }
 
@@ -337,6 +404,11 @@ private enum CoreEvent: Sendable {
     case seamOpened
     case seamReceived(Data)
     case seamClosed
+    case railState(VRCRailState, code: UInt32)
+    case railWindow(RailBridge.Order)
+    case railWindowDeleted(UInt64)
+    case railIcon(UInt64, png: Data)
+    case railDesktop(active: UInt64?, order: [UInt64]?)
 }
 
 /// The userData of the session: the callbacks run on the session thread and only enqueue, never block
@@ -403,8 +475,64 @@ private final class EventSink: Sendable {
             },
             seamClosed: { userData in
                 eventSink(userData).continuation.yield(.seamClosed)
+            },
+            railState: { userData, state, code in
+                eventSink(userData).continuation.yield(.railState(state, code: code))
+            },
+            railWindow: { userData, window in
+                guard let window = window?.pointee else { return }
+                eventSink(userData).continuation.yield(.railWindow(railOrder(window)))
+            },
+            railWindowDeleted: { userData, id in
+                eventSink(userData).continuation.yield(.railWindowDeleted(UInt64(id)))
+            },
+            railIcon: { userData, id, pixels, width, height in
+                guard let pixels, let png = pngOfBGRA(pixels, width: Int(width), height: Int(height)) else { return }
+                eventSink(userData).continuation.yield(.railIcon(UInt64(id), png: png))
+            },
+            railDesktop: { userData, active, hasActive, order, count, hasOrder in
+                let ids = hasOrder ? (order.map { Array(UnsafeBufferPointer(start: $0, count: count)) } ?? []) : nil
+                eventSink(userData).continuation.yield(
+                    .railDesktop(active: hasActive ? UInt64(active) : nil, order: ids?.map(UInt64.init)))
             })
     }
+}
+
+/// A window order out of the core, its title copied: the core keeps it only for the call
+private func railOrder(_ window: VRCRailWindow) -> RailBridge.Order {
+    let fields = window.fields
+    func has(_ field: Int) -> Bool { fields & UInt32(field) != 0 }
+    var order = RailBridge.Order(id: UInt64(window.id), created: window.created)
+    if has(VRCRailFieldOwner) { order.owner = UInt64(window.owner) }
+    if has(VRCRailFieldStyle) { order.style = window.style }
+    if has(VRCRailFieldShow) { order.showState = window.showState }
+    if has(VRCRailFieldTitle) { order.title = window.title.map { String(cString: $0) } ?? "" }
+    if has(VRCRailFieldOffset) { order.offset = CGPoint(x: Int(window.x), y: Int(window.y)) }
+    if has(VRCRailFieldSize) { order.size = CGSize(width: Int(window.width), height: Int(window.height)) }
+    if has(VRCRailFieldVisibleOffset) {
+        order.visibleOffset = CGPoint(x: Int(window.visibleX), y: Int(window.visibleY))
+    }
+    if has(VRCRailFieldVisibleRegion) {
+        order.region = CGRect(
+            x: Int(window.regionX), y: Int(window.regionY), width: Int(window.regionWidth),
+            height: Int(window.regionHeight))
+    }
+    return order
+}
+
+/// BGRA pixels of the core as PNG, the form the model keeps icons in
+private func pngOfBGRA(_ pixels: UnsafePointer<UInt8>, width: Int, height: Int) -> Data? {
+    guard width > 0, height > 0,
+        let context = CGContext(
+            data: UnsafeMutableRawPointer(mutating: pixels), width: width, height: height, bitsPerComponent: 8,
+            bytesPerRow: width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue),
+        let image = context.makeImage()
+    else { return nil }
+    let data = NSMutableData()
+    guard let destination = CGImageDestinationCreateWithData(data, "public.png" as CFString, 1, nil) else { return nil }
+    CGImageDestinationAddImage(destination, image, nil)
+    return CGImageDestinationFinalize(destination) ? data as Data : nil
 }
 
 /// The pointer out of the core, with its pixels copied: the core keeps them only for the call

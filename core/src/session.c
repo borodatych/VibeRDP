@@ -14,6 +14,7 @@
 #include "input.h"
 #include "kerberos.h"
 #include "pointer.h"
+#include "rail.h"
 #include "seam.h"
 
 #include <pthread.h>
@@ -112,6 +113,9 @@ struct VRCSession {
 
     /* The Seam channel of the helper on Windows */
     VRCSeam seam;
+
+    /* RemoteApp, when the connection asked for it */
+    VRCRail rail;
 };
 
 /* The pointer FreeRDP allocates with the size the core registers: the converted image rides along */
@@ -184,6 +188,8 @@ static void onChannelConnected(void* context, const ChannelConnectedEventArgs* e
     WLog_INFO(TAG, "channel connected: %s", event->name);
     if (strcmp(event->name, CLIPRDR_SVC_CHANNEL_NAME) == 0)
         vrcClipboardAttach(&session->clipboard, (CliprdrClientContext*)event->pInterface);
+    else if (strcmp(event->name, RAIL_SVC_CHANNEL_NAME) == 0)
+        vrcRailAttach(&session->rail, (RailClientContext*)event->pInterface, session->common.context.update);
     else if (strcmp(event->name, DISP_DVC_CHANNEL_NAME) == 0)
     {
         const rdpSettings* settings = session->common.context.settings;
@@ -201,6 +207,8 @@ static void onChannelDisconnected(void* context, const ChannelDisconnectedEventA
         vrcClipboardDetach(&session->clipboard, (CliprdrClientContext*)event->pInterface);
     else if (strcmp(event->name, DISP_DVC_CHANNEL_NAME) == 0)
         vrcDisplayDetach(&session->display, (DispClientContext*)event->pInterface);
+    else if (strcmp(event->name, RAIL_SVC_CHANNEL_NAME) == 0)
+        vrcRailDetach(&session->rail, (RailClientContext*)event->pInterface);
 }
 
 static BOOL preConnect(freerdp* instance)
@@ -407,6 +415,7 @@ static BOOL postConnect(freerdp* instance)
     context->update->DesktopResize = desktopResize;
     registerPointer(context);
     notifyFrameResized(session, width, height);
+    vrcRailConnected(&session->rail, context->settings);
     return TRUE;
 }
 
@@ -840,6 +849,7 @@ static BOOL clientNew(freerdp* instance, rdpContext* context)
     const bool clipboard = vrcClipboardInit(&session->clipboard, &session->callbacks, &session->userData);
     vrcDisplayInit(&session->display);
     vrcSeamInit(&session->seam, &session->callbacks, &session->userData);
+    vrcRailInit(&session->rail, &session->callbacks, &session->userData);
     atomic_init(&session->certificateRejected, false);
     /* A static initializer cannot fail, so ClientFree always meets a valid mutex */
     session->credentialsMutex = (pthread_mutex_t)PTHREAD_MUTEX_INITIALIZER;
@@ -898,6 +908,7 @@ static void clientFree(freerdp* instance, rdpContext* context)
     vrcClipboardDestroy(&session->clipboard);
     vrcDisplayDestroy(&session->display);
     vrcSeamDestroy(&session->seam);
+    vrcRailDestroy(&session->rail);
 }
 
 static int clientStart(rdpContext* context)
@@ -1163,7 +1174,9 @@ VRCResult VRCSessionConnect(VRCSession* session, const VRCConnectionParams* para
     rdpSettings* settings = session->common.context.settings;
     if (!applyParams(settings, params) || !applySecurity(settings) || !applyKerberos(settings) ||
         !applyReconnection(settings) || !applyGraphics(settings) ||
-        !applyNetwork(settings) || !vrcSeamApply(settings) || freerdp_client_start(&session->common.context) != 0)
+        !applyNetwork(settings) || !vrcSeamApply(settings) ||
+        (params->remoteApp && !vrcRailApply(&session->rail, settings)) ||
+        freerdp_client_start(&session->common.context) != 0)
         return VRCResultFailure;
     return VRCResultOK;
 }
@@ -1176,6 +1189,26 @@ VRCSeam* vrcSessionSeam(rdpContext* context)
 VRCResult VRCSessionSendSeam(VRCSession* session, const uint8_t* body, size_t length)
 {
     return session ? vrcSeamSend(&session->seam, body, length) : VRCResultInvalidArgument;
+}
+
+VRCRail* vrcSessionRail(rdpContext* context)
+{
+    return &((VRCSession*)context)->rail;
+}
+
+VRCResult VRCSessionRailActivate(VRCSession* session, uint32_t id)
+{
+    return session ? vrcRailActivate(&session->rail, id) : VRCResultInvalidArgument;
+}
+
+VRCResult VRCSessionRailSystemCommand(VRCSession* session, uint32_t id, VRCRailCommand command)
+{
+    return session ? vrcRailSystemCommand(&session->rail, id, command) : VRCResultInvalidArgument;
+}
+
+VRCResult VRCSessionRailMove(VRCSession* session, uint32_t id, int32_t x, int32_t y, uint32_t width, uint32_t height)
+{
+    return session ? vrcRailMove(&session->rail, id, x, y, width, height) : VRCResultInvalidArgument;
 }
 
 void VRCSessionDisconnect(VRCSession* session)

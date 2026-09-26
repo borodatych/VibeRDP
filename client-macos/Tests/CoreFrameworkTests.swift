@@ -16,7 +16,7 @@ final class CoreFrameworkTests: XCTestCase {
             stateChanged: nil, error: nil, verifyCertificate: nil, frameResized: nil, frameUpdated: nil,
             pointerChanged: nil, credentialsNeeded: nil, gatewayMessage: nil, reconnecting: nil,
             remoteClipboardChanged: nil, clipboardDataRequested: nil, seamOpened: nil, seamReceived: nil,
-            seamClosed: nil)
+            seamClosed: nil, railState: nil, railWindow: nil, railWindowDeleted: nil, railIcon: nil, railDesktop: nil)
         let session = VRCSessionCreate(&callbacks, nil)
         XCTAssertNotNil(session)
         VRCSessionDestroy(session)
