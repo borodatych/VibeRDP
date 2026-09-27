@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Keeps where the user leaves the main window, for the next launch
     private var mainWindowFrame: WindowFrameKeeper?
     private(set) var settingsWindow: SettingsWindowController?
+    private var aboutWindow: AboutWindowController?
     let keyboard = KeyboardSettingsStore()
     let sessionSettings = SessionSettings()
     /// Read at launch, before any text is shown: every window and menu speaks the language chosen for this launch
@@ -85,29 +86,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         content.open(urls)
     }
 
-    /// The side of the donation code in the About window, in points: large enough for a phone camera
-    private static let donationCodeSide: CGFloat = 160
-
-    /// The menu command: the About window of the system, with the donation code under the version
-    /// The image is the code alone, cut from the picture of the bank without the name and the contract
+    /// The menu command: one About window, made when first asked for
     @objc func showAbout(_ sender: Any?) {
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.alignment = .center
-        let credits = NSMutableAttributedString(
-            string: Localization.text(.aboutDonate) + "\n",
-            attributes: [
-                .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
-                .foregroundColor: NSColor.labelColor, .paragraphStyle: paragraph,
-            ])
-        if let image = NSImage(named: "Donate") {
-            let attachment = NSTextAttachment()
-            attachment.image = image
-            attachment.bounds = CGRect(x: 0, y: 0, width: Self.donationCodeSide, height: Self.donationCodeSide)
-            let code = NSMutableAttributedString(attachment: attachment)
-            code.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: code.length))
-            credits.append(code)
-        }
-        NSApp.orderFrontStandardAboutPanel(options: [.credits: credits])
+        let controller = aboutWindow ?? AboutWindowController()
+        aboutWindow = controller
+        controller.showWindow(sender)
         NSApp.activate()
     }
 
