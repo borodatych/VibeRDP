@@ -436,6 +436,37 @@ private struct ConnectionTile: View {
     }
 }
 
+/// The name of a setting with a question mark after it: the text shows on hover and, since a tooltip comes late
+/// and is easy to miss, in a popover on a click as well
+private struct HelpLabel: View {
+    static let popoverWidth: CGFloat = 340
+
+    let title: TextKey
+    let help: TextKey
+    @State private var shown = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text(Localization.text(title))
+            Button {
+                shown.toggle()
+            } label: {
+                Image(systemName: "questionmark.circle")
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.borderless)
+            .help(Localization.text(help))
+            .accessibilityLabel(Localization.text(.profileDisplayHelp))
+            .popover(isPresented: $shown, arrowEdge: .trailing) {
+                Text(Localization.text(help))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(width: Self.popoverWidth, alignment: .leading)
+                    .padding()
+            }
+        }
+    }
+}
+
 /// A connection as a row: a small picture, the name and the address, the user at the end
 private struct ConnectionRow: View {
     static let pictureSize = CGSize(width: 64, height: 40)
@@ -632,22 +663,27 @@ private struct ProfileEditor: View {
         let mode = model.selectedProfile?.displayMode ?? .window
         let fixed = model.selectedProfile?.fixedSize ?? .standard
         return Section {
-            Picker(
-                Localization.text(.profileDisplayMode),
-                selection: Binding(get: { mode }, set: { mode in model.update { $0.displayMode = mode } })
-            ) {
+            Picker(selection: Binding(get: { mode }, set: { mode in model.update { $0.displayMode = mode } })) {
                 ForEach(ProfileDisplayMode.allCases) { mode in
                     Text(Localization.text(ProfileDisplayMode.titleKey(of: mode))).tag(mode)
                 }
+            } label: {
+                HelpLabel(title: .profileDisplayMode, help: .profileDisplayModeHelp)
             }
             if mode == .fullScreen {
-                Toggle(Localization.text(.profileDisplayAllScreens), isOn: flag(\.allScreens))
+                Toggle(isOn: flag(\.allScreens)) {
+                    HelpLabel(title: .profileDisplayAllScreens, help: .profileDisplayAllScreensHelp)
+                }
             }
             if mode == .seam {
-                Toggle(Localization.text(.profileDisplayRemoteApp), isOn: flag(\.remoteApp))
+                Toggle(isOn: flag(\.remoteApp)) {
+                    HelpLabel(title: .profileDisplayRemoteApp, help: .profileDisplayRemoteAppHelp)
+                }
             }
             if mode != .fixed {
-                Toggle(Localization.text(.profileDisplaySharp), isOn: flag(\.sharpOnRetina))
+                Toggle(isOn: flag(\.sharpOnRetina)) {
+                    HelpLabel(title: .profileDisplaySharp, help: .profileDisplaySharpHelp)
+                }
             }
             if mode == .fixed {
                 // A size not in the list shows as the custom one; choosing it keeps the size for the fields below

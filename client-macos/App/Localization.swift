@@ -167,6 +167,11 @@ enum TextKey: String, CaseIterable {
     case profileDisplayFullScreenHint = "profile.display.fullScreenHint"
     case profileDisplayFixedHint = "profile.display.fixedHint"
     case profileDisplaySeamHint = "profile.display.seamHint"
+    case profileDisplayHelp = "profile.display.help"
+    case profileDisplayModeHelp = "profile.display.modeHelp"
+    case profileDisplayAllScreensHelp = "profile.display.allScreensHelp"
+    case profileDisplayRemoteAppHelp = "profile.display.remoteAppHelp"
+    case profileDisplaySharpHelp = "profile.display.sharpHelp"
     case credentialsTitleServer = "credentials.title.server"
     case credentialsTitleGateway = "credentials.title.gateway"
     case credentialsMessageAsk = "credentials.message.ask"
@@ -401,6 +406,16 @@ extension TextKey {
             "Рабочий стол Windows всегда этого размера, окно показывает его целиком. Стороны — от {min} до {max} пикселей, ширина чётная."
         case .profileDisplaySeamHint:
             "Каждое окно Windows открывается отдельным окном Мака. Нужен хелпер VibeRDP на Windows; пока он не ответил, рабочий стол показывается на всех экранах без рамок."
+        case .profileDisplayHelp:
+            "Подробнее"
+        case .profileDisplayModeHelp:
+            "Как показать рабочий стол Windows на Маке:\nПо окну — в окне Мака, рабочий стол подстраивается под его размер\nРазвёрнутое окно — то же окно, но сразу на всё свободное место экрана\nВо весь экран — в отдельном пространстве Мака\nФиксированный размер — рабочий стол заданного разрешения\nОкна Windows — каждое окно Windows отдельным окном Мака, со своей иконкой в Dock; нужен хелпер VibeRDP на Windows"
+        case .profileDisplayAllScreensHelp:
+            "Рабочий стол Windows занимает все мониторы Мака, по монитору Windows на каждый\nВыключено — только тот экран, где открыто окно сессии"
+        case .profileDisplayRemoteAppHelp:
+            "Включено — VibeRDP сначала просит сервер показать окна средствами самого RDP, без хелпера\nЕсли сервер откажет, VibeRDP переподключится обычным образом, и окна покажет хелпер\nВыключено — сразу обычное подключение, на одно переподключение быстрее\nВключайте, только если хелпер поставить нельзя, а администратор сервера разрешил RemoteApp"
+        case .profileDisplaySharpHelp:
+            "Включено — рабочий стол идёт в пикселях экрана Мака, Windows ставит масштаб 200%, и текст такой же чёткий, как в программах Мака\nВыключено — рабочий стол вдвое меньшего разрешения, Мак его растягивает: текст мягче, зато данных вчетверо меньше и на медленном канале заметно быстрее\nНа экране без Retina разницы нет"
         case .credentialsTitleServer: "Вход на {host}"
         case .credentialsTitleGateway: "Вход на шлюз {host}"
         case .credentialsMessageAsk: "Введите имя пользователя и пароль."
