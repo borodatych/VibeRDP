@@ -37,6 +37,8 @@ struct RemoteWindows {
         case icon(UInt64)
         case order
         case focus
+        /// A drag of the window began on the host from this edge, or ended with nil: the Mac moves the window meanwhile
+        case moveSize(UInt64, MoveEdge?)
     }
 
     /// The outcome of one message: the change, or a line for the log when the message was skipped
@@ -87,6 +89,22 @@ struct RemoteWindows {
             guard let ids = message["ids"]?.array?.compactMap(\.uint64) else { return skipped(kind, "without ids") }
             order = ids.filter { windows[$0] != nil }
             return Outcome(change: .order)
+        case "window.movesize":
+            guard let id = message["id"]?.uint64, let phase = message["phase"]?.string else {
+                return skipped(kind, "without id or phase")
+            }
+            guard windows[id] != nil else { return skipped(kind, "of unknown window \(id)") }
+            switch phase {
+            case "start":
+                guard let edge = message["edge"]?.string.flatMap(MoveEdge.init) else {
+                    return skipped(kind, "with an unknown edge")
+                }
+                return Outcome(change: .moveSize(id, edge))
+            case "end":
+                return Outcome(change: .moveSize(id, nil))
+            default:
+                return skipped(kind, "with an unknown phase \(phase)")
+            }
         case "foreground":
             guard let id = message["id"]?.uint64 else { return skipped(kind, "without id") }
             foreground = windows[id] != nil ? id : 0

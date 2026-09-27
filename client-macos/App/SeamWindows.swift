@@ -19,6 +19,12 @@ final class SeamWindows: NSObject, NSWindowDelegate {
     /// Set while this class places a window: its own moves must not go back to the host
     private var placing = false
     private var shown: [UInt64: (window: SeamWindow, desktop: DesktopView)] = [:]
+    /// The window the user drags on the Mac while the host waits in its drag loop; nil for none
+    private var drag: LocalDrag?
+    /// Whether the left button is held and where the mouse is on the screens: the system, or a stand-in in tests
+    var mouse: () -> (held: Bool, location: CGPoint) = {
+        (NSEvent.pressedMouseButtons & 1 != 0, NSEvent.mouseLocation)
+    }
     private var surface: IOSurfaceRef?
     private var pointer = RemotePointer.system
     /// The windows show only while the link is ready; the desktop shows otherwise
@@ -50,6 +56,7 @@ final class SeamWindows: NSObject, NSWindowDelegate {
     /// The link is gone: the windows go, and the desktop takes over
     func deactivate() {
         isActive = false
+        drag = nil
         for id in Array(shown.keys) {
             remove(id)
         }
@@ -73,6 +80,28 @@ final class SeamWindows: NSObject, NSWindowDelegate {
         // Icons go to the Dock with the integration of the next stage
         case .icon:
             break
+        case .moveSize(let id, let edge?):
+            beginDrag(id, from: edge)
+        case .moveSize(let id, nil):
+            endDrag(id, windows)
+        }
+    }
+
+    /// The host began to drag a window: while the button is held on the Mac, the window follows the mouse here
+    /// A drag the keyboard began, or one whose button is already up, stays with the host
+    private func beginDrag(_ id: UInt64, from edge: MoveEdge) {
+        let mouse = mouse()
+        guard mouse.held, let window = shown[id]?.window else { return }
+        drag = LocalDrag(id: id, edge: edge, startFrame: window.frame, startPoint: mouse.location)
+        Diagnostics.info("seam", "window \(id) dragged on the Mac from \(edge.rawValue)")
+    }
+
+    /// The host ended the drag without the release of the Mac, by Escape or on its own: its place stands
+    private func endDrag(_ id: UInt64, _ windows: RemoteWindows) {
+        guard drag?.id == id else { return }
+        drag = nil
+        if let window = windows.windows[id] {
+            place(window)
         }
     }
 
@@ -117,6 +146,8 @@ final class SeamWindows: NSObject, NSWindowDelegate {
         }
         let entry = shown[remote.id] ?? open(remote.id)
         entry.window.title = remote.title
+        // A window dragged on the Mac keeps the place of the mouse until the release; the host follows it then
+        guard drag?.id != remote.id else { return }
         // A menu or a tooltip must not take the keyboard: its owner keeps it, as on Windows,
         // and the activate that a key popup would send makes Windows close the menu
         entry.window.takesKeyboard = remote.kind == .app
@@ -146,6 +177,7 @@ final class SeamWindows: NSObject, NSWindowDelegate {
         let desktop = makeDesktop()
         desktop.surface = surface
         desktop.pointer = pointer
+        desktop.localDrag = self
         // Resizable lets full screen give the window the size of the screen: a frameless one keeps its size there
         let window = SeamWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1, height: 1), styleMask: [.borderless, .resizable],
@@ -166,6 +198,9 @@ final class SeamWindows: NSObject, NSWindowDelegate {
     }
 
     private func remove(_ id: UInt64) {
+        if drag?.id == id {
+            drag = nil
+        }
         guard let entry = shown.removeValue(forKey: id) else { return }
         entry.window.parent?.removeChildWindow(entry.window)
         entry.window.delegate = nil
@@ -230,6 +265,31 @@ final class SeamWindows: NSObject, NSWindowDelegate {
     /// The menu command while one of these windows is key: the window delegate is in the responder chain
     @objc func disconnect(_ sender: Any?) {
         onDisconnect()
+    }
+}
+
+extension SeamWindows: LocalDragTarget {
+    func isDragging(_ view: DesktopView) -> Bool {
+        guard let drag else { return false }
+        return shown[drag.id]?.desktop === view
+    }
+
+    /// The picture of the window goes with it; for a border drag it stretches until the host draws the new size
+    func dragged(_ view: DesktopView, to point: CGPoint) {
+        guard let drag, let window = shown[drag.id]?.window else { return }
+        placing = true
+        window.setFrame(drag.frame(at: point), display: true)
+        placing = false
+    }
+
+    func released(_ view: DesktopView, at point: CGPoint) -> CGRect? {
+        guard let drag, let window = shown[drag.id]?.window else { return nil }
+        self.drag = nil
+        placing = true
+        window.setFrame(drag.frame(at: point), display: true)
+        placing = false
+        Diagnostics.info("seam", "window \(drag.id) dropped on the Mac, the host moves it")
+        return geometry.remoteRect(of: window.frame).map(geometry.region(of:))
     }
 }
 

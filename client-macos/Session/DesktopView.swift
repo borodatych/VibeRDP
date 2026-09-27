@@ -25,6 +25,8 @@ final class DesktopView: NSView {
 
     /// The session the mouse and the keyboard go to
     weak var input: DesktopInput?
+    /// The window of the Seam mode this view shows, which moves it on the Mac while the host drags it
+    weak var localDrag: LocalDragTarget?
 
     /// The speed of trackpad scrolling from the settings, read at each event so a change applies at once
     var scrollSpeed: () -> Double = { 1 }
@@ -222,22 +224,42 @@ final class DesktopView: NSView {
     }
 
     private func moved(_ event: NSEvent) {
+        if let localDrag, localDrag.isDragging(self) {
+            localDrag.dragged(self, to: NSEvent.mouseLocation)
+            return
+        }
         if let point = desktopPoint(of: event) {
             input?.mouseMoved(to: point)
         }
     }
 
     private func button(_ button: VRCMouseButton, pressed: Bool, _ event: NSEvent) {
+        // The host waits in its drag loop for the release: it gets the mouse at the drop point, then the button,
+        // and moves the window there in one step
+        if button == .left, !pressed, let localDrag, localDrag.isDragging(self) {
+            let screenPoint = NSEvent.mouseLocation
+            let region = localDrag.released(self, at: screenPoint)
+            // The window moved to the drop point after the event was made: its location in the window is stale
+            let local = window.map { convert($0.convertPoint(fromScreen: screenPoint), from: nil) }
+            if let local, let point = desktopPoint(at: local, region: region ?? self.region) {
+                input?.mouseMoved(to: point)
+                input?.mouseButton(button, pressed: false, at: point)
+            }
+            return
+        }
         if let point = desktopPoint(of: event) {
             input?.mouseButton(button, pressed: pressed, at: point)
         }
     }
 
-    /// The desktop pixel under the event
-    /// The view counts from the bottom left in points, the drawable from the top left in pixels
     private func desktopPoint(of event: NSEvent) -> DesktopPoint? {
+        desktopPoint(at: convert(event.locationInWindow, from: nil), region: region)
+    }
+
+    /// The desktop pixel at a point of the view, the view showing that region of the frame
+    /// The view counts from the bottom left in points, the drawable from the top left in pixels
+    private func desktopPoint(at local: CGPoint, region: CGRect?) -> DesktopPoint? {
         guard let layer = layer as? CAMetalLayer, let texture else { return nil }
-        let local = convert(event.locationInWindow, from: nil)
         let scale = layer.contentsScale
         let drawablePoint = CGPoint(x: local.x * scale, y: (bounds.height - local.y) * scale)
         // A view of a part counts from where the part starts and reaches past it into the rest of the desktop

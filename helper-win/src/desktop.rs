@@ -140,6 +140,52 @@ pub struct Desktop {
     icons: HashMap<u64, u64>,
 }
 
+/// Where a window is dragged from on the host: its caption moves it, a border or a corner resizes it
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Edge {
+    Move,
+    Left,
+    Right,
+    Top,
+    TopLeft,
+    TopRight,
+    Bottom,
+    BottomLeft,
+    BottomRight,
+}
+
+impl Edge {
+    /// The edge an answer of WM_NCHITTEST names; any other answer, the caption or none, is a move
+    /// The keyboard move of the system menu starts the same loop with the cursor anywhere
+    pub fn of_hit(hit: u32) -> Edge {
+        match hit {
+            10 => Edge::Left,
+            11 => Edge::Right,
+            12 => Edge::Top,
+            13 => Edge::TopLeft,
+            14 => Edge::TopRight,
+            15 => Edge::Bottom,
+            16 => Edge::BottomLeft,
+            17 => Edge::BottomRight,
+            _ => Edge::Move,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Edge::Move => "move",
+            Edge::Left => "left",
+            Edge::Right => "right",
+            Edge::Top => "top",
+            Edge::TopLeft => "top-left",
+            Edge::TopRight => "top-right",
+            Edge::Bottom => "bottom",
+            Edge::BottomLeft => "bottom-left",
+            Edge::BottomRight => "bottom-right",
+        }
+    }
+}
+
 impl Desktop {
     pub fn get(&self, id: u64) -> Option<&Window> {
         self.windows.get(&id)
@@ -222,6 +268,23 @@ impl Desktop {
         ))
     }
 
+    /// A move or a resize of a window of the list began, with the edge it goes from, or ended, with None
+    /// The client moves the window itself meanwhile: section 6 of the specification
+    pub fn move_size(&self, id: u64, edge: Option<Edge>) -> Option<Value> {
+        if !self.windows.contains_key(&id) {
+            return None;
+        }
+        let mut entries = vec![("id", Value::UInt(id))];
+        match edge {
+            Some(edge) => {
+                entries.push(("phase", Value::Str("start".to_string())));
+                entries.push(("edge", Value::Str(edge.name().to_string())));
+            }
+            None => entries.push(("phase", Value::Str("end".to_string()))),
+        }
+        Some(protocol::message("window.movesize", entries))
+    }
+
     /// The window with the focus; one outside the list counts as none
     pub fn focus(&mut self, id: u64) -> Option<Value> {
         let id = if self.windows.contains_key(&id) {
@@ -244,6 +307,55 @@ impl Desktop {
 mod tests {
     use super::*;
     use crate::protocol::message;
+
+    #[test]
+    fn hit_test_answers_name_the_edges() {
+        let edges = [
+            (10, Edge::Left),
+            (11, Edge::Right),
+            (12, Edge::Top),
+            (13, Edge::TopLeft),
+            (14, Edge::TopRight),
+            (15, Edge::Bottom),
+            (16, Edge::BottomLeft),
+            (17, Edge::BottomRight),
+        ];
+        for (hit, edge) in edges {
+            assert_eq!(Edge::of_hit(hit), edge);
+        }
+        // The caption, the client area and a failed answer all move the window
+        for hit in [2, 1, 0, u32::MAX] {
+            assert_eq!(Edge::of_hit(hit), Edge::Move);
+        }
+    }
+
+    #[test]
+    fn move_size_goes_for_known_windows_only() {
+        let mut desktop = Desktop::default();
+        desktop.snapshot(vec![excel()], 0);
+        assert_eq!(
+            desktop.move_size(132290, Some(Edge::BottomRight)),
+            Some(message(
+                "window.movesize",
+                vec![
+                    ("id", Value::UInt(132290)),
+                    ("phase", Value::Str("start".to_string())),
+                    ("edge", Value::Str("bottom-right".to_string())),
+                ]
+            ))
+        );
+        assert_eq!(
+            desktop.move_size(132290, None),
+            Some(message(
+                "window.movesize",
+                vec![
+                    ("id", Value::UInt(132290)),
+                    ("phase", Value::Str("end".to_string())),
+                ]
+            ))
+        );
+        assert_eq!(desktop.move_size(7, Some(Edge::Move)), None);
+    }
 
     fn excel() -> Window {
         Window {

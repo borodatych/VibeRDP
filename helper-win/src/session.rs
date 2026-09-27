@@ -12,6 +12,7 @@ pub const CAPABILITIES: &[&str] = &[
     "commands",
     "launcher",
     "keyboard-layout",
+    "movesize",
 ];
 
 /// Where the conversation is: the client greets once, and its version decides whether the two talk

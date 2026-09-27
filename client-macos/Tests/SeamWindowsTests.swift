@@ -87,6 +87,44 @@ final class SeamWindowsTests: XCTestCase {
     }
 
     /// The host moving a window is not sent back; the Mac moving it is
+    /// The host began a drag: the window follows the mouse on the Mac, the host places nothing meanwhile,
+    /// and the release names where the window stands for the host to take it there; no move command goes
+    func testDragOfTheHostGoesOnTheMac() throws {
+        var mouse = (held: true, location: CGPoint(x: 300, y: 700))
+        seam.mouse = { mouse }
+        seam.activate(remote)
+        send(create(1, 100, 50))
+        let window = try XCTUnwrap(seam.window(for: 1))
+        let view = try XCTUnwrap(window.contentView as? DesktopView)
+        let start = window.frame
+        send(.map([("type", .string("window.movesize")), ("id", .uint(1)), ("phase", .string("start")), ("edge", .string("move"))]))
+        XCTAssertTrue(seam.isDragging(view))
+
+        seam.dragged(view, to: CGPoint(x: 400, y: 650))
+        XCTAssertEqual(window.frame, start.offsetBy(dx: 100, dy: -50))
+        send(.map([("type", .string("window.update")), ("id", .uint(1)), ("rect", .array([.int(110), .int(50), .int(400), .int(300)]))]))
+        XCTAssertEqual(window.frame, start.offsetBy(dx: 100, dy: -50), "the host does not pull the window back")
+
+        mouse.location = CGPoint(x: 420, y: 650)
+        let region = seam.released(view, at: mouse.location)
+        XCTAssertEqual(region, CGRect(x: 220, y: 100, width: 400, height: 300))
+        XCTAssertFalse(seam.isDragging(view))
+        XCTAssertTrue(moves.isEmpty, "the host moves the window by the release, not by a command")
+
+        send(.map([("type", .string("window.update")), ("id", .uint(1)), ("rect", .array([.int(220), .int(100), .int(400), .int(300)]))]))
+        XCTAssertEqual(window.frame, start.offsetBy(dx: 120, dy: -50))
+    }
+
+    /// A drag that began without the button held, from the keyboard, stays with the host
+    func testDragWithoutTheButtonStaysWithTheHost() throws {
+        seam.mouse = { (false, .zero) }
+        seam.activate(remote)
+        send(create(1, 100, 50))
+        let view = try XCTUnwrap(seam.window(for: 1)?.contentView as? DesktopView)
+        send(.map([("type", .string("window.movesize")), ("id", .uint(1)), ("phase", .string("start")), ("edge", .string("move"))]))
+        XCTAssertFalse(seam.isDragging(view))
+    }
+
     func testOnlyMovesOfTheMacGoToTheHost() {
         seam.activate(remote)
         send(create(1, 100, 50))

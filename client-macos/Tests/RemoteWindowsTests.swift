@@ -72,6 +72,23 @@ final class RemoteWindowsTests: XCTestCase {
         XCTAssertEqual(windows.order, [132_290])
     }
 
+    func testMoveSizeStartsWithItsEdgeAndEnds() {
+        var windows = RemoteWindows()
+        _ = windows.apply(excel)
+        let start = message(
+            "window.movesize", [("id", .uint(132_290)), ("phase", .string("start")), ("edge", .string("top-left"))])
+        XCTAssertEqual(windows.apply(start).change, .moveSize(132_290, .topLeft))
+        let end = message("window.movesize", [("id", .uint(132_290)), ("phase", .string("end"))])
+        XCTAssertEqual(windows.apply(end).change, .moveSize(132_290, nil))
+        let unknown = message(
+            "window.movesize", [("id", .uint(7)), ("phase", .string("start")), ("edge", .string("move"))])
+        XCTAssertNil(windows.apply(unknown).change)
+        let badEdge = message(
+            "window.movesize", [("id", .uint(132_290)), ("phase", .string("start")), ("edge", .string("middle"))])
+        XCTAssertNil(windows.apply(badEdge).change)
+        XCTAssertNotNil(windows.apply(badEdge).note)
+    }
+
     func testMalformedMessagesAreSkipped() {
         var windows = RemoteWindows()
         let skipped: [MessagePackValue] = [

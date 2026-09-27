@@ -9,8 +9,8 @@ use std::ptr::null_mut;
 use std::sync::mpsc;
 use std::thread;
 
-use vibe_seam_helper::desktop::{Desktop, Kind, SHELL_CLASSES, State, Window};
-use windows_sys::Win32::Foundation::{CloseHandle, HWND, LPARAM, RECT};
+use vibe_seam_helper::desktop::{Desktop, Edge, Kind, SHELL_CLASSES, State, Window};
+use windows_sys::Win32::Foundation::{CloseHandle, HWND, LPARAM, POINT, RECT};
 use windows_sys::Win32::Graphics::Dwm::{
     DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute,
 };
@@ -23,11 +23,12 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     CHILDID_SELF, DispatchMessageW, EVENT_OBJECT_CLOAKED, EVENT_OBJECT_CREATE,
     EVENT_OBJECT_DESTROY, EVENT_OBJECT_HIDE, EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_NAMECHANGE,
     EVENT_OBJECT_SHOW, EVENT_OBJECT_UNCLOAKED, EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MINIMIZEEND,
-    EVENT_SYSTEM_MINIMIZESTART, EnumWindows, GA_ROOT, GW_OWNER, GWL_STYLE, GetAncestor,
-    GetClassNameW, GetForegroundWindow, GetMessageW, GetWindow, GetWindowLongW, GetWindowRect,
-    GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
-    IsZoomed, MSG, OBJID_WINDOW, PM_NOREMOVE, PeekMessageW, PostThreadMessageW,
-    WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS, WM_APP,
+    EVENT_SYSTEM_MINIMIZESTART, EVENT_SYSTEM_MOVESIZEEND, EVENT_SYSTEM_MOVESIZESTART, EnumWindows,
+    GA_ROOT, GW_OWNER, GWL_STYLE, GetAncestor, GetClassNameW, GetCursorPos, GetForegroundWindow,
+    GetMessageW, GetWindow, GetWindowLongW, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
+    GetWindowThreadProcessId, IsIconic, IsWindowVisible, IsZoomed, MSG, OBJID_WINDOW, PM_NOREMOVE,
+    PeekMessageW, PostThreadMessageW, SMTO_ABORTIFHUNG, SendMessageTimeoutW, WINEVENT_OUTOFCONTEXT,
+    WINEVENT_SKIPOWNPROCESS, WM_APP, WM_NCHITTEST,
 };
 
 use crate::icons;
@@ -40,6 +41,8 @@ const WM_SNAPSHOT: u32 = WM_APP + 1;
 const CLASS_NAME_LENGTH: usize = 256;
 /// Room for an executable path, long paths included
 const PATH_LENGTH: usize = 32_768;
+/// How long a window has to say which border is under the cursor: one that hangs must not hold the tracker
+const HIT_TEST_TIMEOUT_MS: u32 = 100;
 
 /// The tracker thread, as the rest of the helper sees it
 pub struct Tracker {
@@ -160,6 +163,8 @@ fn is_watched(event: u32) -> bool {
     matches!(
         event,
         EVENT_SYSTEM_FOREGROUND
+            | EVENT_SYSTEM_MOVESIZESTART
+            | EVENT_SYSTEM_MOVESIZEEND
             | EVENT_SYSTEM_MINIMIZESTART
             | EVENT_SYSTEM_MINIMIZEEND
             | EVENT_OBJECT_CREATE
@@ -210,6 +215,14 @@ fn snapshot(watch: &mut Watch, generation: u64) {
 }
 
 fn handle(watch: &mut Watch, event: u32, id: u64) {
+    // A drag of a window: the client moves it itself until the loop ends, section 6 of the specification
+    if event == EVENT_SYSTEM_MOVESIZESTART || event == EVENT_SYSTEM_MOVESIZEEND {
+        let edge = (event == EVENT_SYSTEM_MOVESIZESTART).then(|| Edge::of_hit(hit_test(hwnd(id))));
+        if let Some(message) = watch.desktop.move_size(id, edge) {
+            watch.link.send(watch.live, &[message]);
+        }
+        return;
+    }
     let mut messages = Vec::new();
     let window = read(id, watch.desktop.get(id));
     messages.extend(watch.desktop.observe(id, window));
@@ -241,6 +254,31 @@ fn icon_may_change(event: u32) -> bool {
 
 fn icon(watch: &mut Watch, id: u64) -> Option<vibe_seam_helper::protocol::Value> {
     watch.desktop.icon(id, icons::png(hwnd(id))?)
+}
+
+/// What the window says lies under the cursor, as WM_NCHITTEST answers; 0, nowhere, when it does not answer
+fn hit_test(hwnd: HWND) -> u32 {
+    let mut cursor = POINT { x: 0, y: 0 };
+    // SAFETY: the point is a POINT
+    if unsafe { GetCursorPos(&mut cursor) } == 0 {
+        return 0;
+    }
+    // Screen coordinates go as two signed words, x low and y high
+    let point = ((cursor.y as u16 as u32) << 16) | (cursor.x as u16 as u32);
+    let mut result = 0usize;
+    // SAFETY: the window may be gone or hung: the call then fails or times out, and result stays 0
+    let sent = unsafe {
+        SendMessageTimeoutW(
+            hwnd,
+            WM_NCHITTEST,
+            0,
+            point as LPARAM,
+            SMTO_ABORTIFHUNG,
+            HIT_TEST_TIMEOUT_MS,
+            &mut result,
+        )
+    };
+    if sent == 0 { 0 } else { result as u32 }
 }
 
 fn id(hwnd: HWND) -> u64 {

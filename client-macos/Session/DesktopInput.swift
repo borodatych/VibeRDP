@@ -6,6 +6,19 @@ struct DesktopPoint: Equatable {
     let y: UInt32
 }
 
+/// Who moves a window of the host on the Mac while the host drags it: the windows of the Seam mode
+/// Between the start of the drag and the release the mouse moves the window here and nothing goes to the host
+@MainActor
+protocol LocalDragTarget: AnyObject {
+    /// Whether the window of this view is dragged on the Mac now
+    func isDragging(_ view: DesktopView) -> Bool
+    /// The mouse moved with the button held, in screen coordinates
+    func dragged(_ view: DesktopView, to point: CGPoint)
+    /// The button went up: the drag ends, and the region of the frame where the window stands now comes back,
+    /// for the release to land at the place of the host the mouse is over
+    func released(_ view: DesktopView, at point: CGPoint) -> CGRect?
+}
+
 /// Where the desktop view sends the mouse and the keyboard: the session of the connection, or a recorder in tests
 @MainActor
 protocol DesktopInput: AnyObject {

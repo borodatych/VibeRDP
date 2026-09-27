@@ -406,7 +406,7 @@ final class ConnectionViewController: NSViewController {
             Diagnostics.info("seam", "window \(id) \(exe) created, \(remoteWindows.windows.count) in all")
         case .destroyed(let id):
             Diagnostics.info("seam", "window \(id) destroyed, \(remoteWindows.windows.count) in all")
-        case .updated, .icon, .order, .focus, nil:
+        case .updated, .icon, .order, .focus, .moveSize, nil:
             break
         }
         return outcome.change
