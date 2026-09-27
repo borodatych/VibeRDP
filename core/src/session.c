@@ -415,6 +415,10 @@ static BOOL postConnect(freerdp* instance)
     context->update->DesktopResize = desktopResize;
     registerPointer(context);
     notifyFrameResized(session, width, height);
+    /* With the connection type left to autodetection the server may choose the visual effects itself */
+    WLog_INFO(TAG, "connected: performance flags 0x%08" PRIX32 ", connection type %" PRIu32,
+              freerdp_settings_get_uint32(context->settings, FreeRDP_PerformanceFlags),
+              freerdp_settings_get_uint32(context->settings, FreeRDP_ConnectionType));
     vrcRailConnected(&session->rail, context->settings);
     return TRUE;
 }

@@ -1,0 +1,191 @@
+A message of a channel goes out over passes of the session loop, at most 64 KiB a pass:
+the loop reads the server and sends input between them, instead of standing until megabytes went out
+
+diff --git a/libfreerdp/core/channels.c b/libfreerdp/core/channels.c
+index 05f1670..7f6e23d 100644
+--- a/libfreerdp/core/channels.c
++++ b/libfreerdp/core/channels.c
+@@ -51,6 +51,13 @@
+ #define TAG FREERDP_TAG("core.channels")
+ 
+ BOOL freerdp_channel_send(rdpRdp* rdp, UINT16 channelId, const BYTE* data, size_t size)
++{
++	size_t sent = 0;
++	return freerdp_channel_send_part(rdp, channelId, data, size, &sent, SIZE_MAX);
++}
++
++BOOL freerdp_channel_send_part(rdpRdp* rdp, UINT16 channelId, const BYTE* data, size_t size,
++                               size_t* sent, size_t budget)
+ {
+ 	size_t left = 0;
+ 	UINT32 flags = 0;
+@@ -60,6 +67,7 @@ BOOL freerdp_channel_send(rdpRdp* rdp, UINT16 channelId, const BYTE* data, size_
+ 
+ 	WINPR_ASSERT(rdp);
+ 	WINPR_ASSERT(data || (size == 0));
++	WINPR_ASSERT(sent && (*sent <= size));
+ 
+ 	mcs = rdp->mcs;
+ 	WINPR_ASSERT(mcs);
+@@ -79,12 +87,14 @@ BOOL freerdp_channel_send(rdpRdp* rdp, UINT16 channelId, const BYTE* data, size_
+ 		return FALSE;
+ 	}
+ 
+-	flags = CHANNEL_FLAG_FIRST;
+-	left = size;
++	flags = (*sent == 0) ? CHANNEL_FLAG_FIRST : 0;
++	left = size - *sent;
++	data += *sent;
+ 
+ 	const UINT32 VCChunkSize = freerdp_settings_get_uint32(rdp->settings, FreeRDP_VCChunkSize);
+ 	const BOOL ServerMode = freerdp_settings_get_bool(rdp->settings, FreeRDP_ServerMode);
+-	while (left > 0)
++	size_t spent = 0;
++	while ((left > 0) && (spent < budget))
+ 	{
+ 		if (left > VCChunkSize)
+ 		{
+@@ -106,6 +116,8 @@ BOOL freerdp_channel_send(rdpRdp* rdp, UINT16 channelId, const BYTE* data, size_
+ 
+ 		data += chunkSize;
+ 		left -= chunkSize;
++		*sent += chunkSize;
++		spent += chunkSize;
+ 		flags = 0;
+ 	}
+ 
+diff --git a/libfreerdp/core/channels.h b/libfreerdp/core/channels.h
+index de15c11..2e7e56e 100644
+--- a/libfreerdp/core/channels.h
++++ b/libfreerdp/core/channels.h
+@@ -27,6 +27,11 @@ WINPR_ATTR_NODISCARD
+ FREERDP_LOCAL BOOL freerdp_channel_send(rdpRdp* rdp, UINT16 channelId, const BYTE* data,
+                                         size_t size);
+ 
++/* Sends the chunks of data from *sent on until about budget bytes went out; *sent moves past them */
++WINPR_ATTR_NODISCARD
++FREERDP_LOCAL BOOL freerdp_channel_send_part(rdpRdp* rdp, UINT16 channelId, const BYTE* data,
++                                             size_t size, size_t* sent, size_t budget);
++
+ WINPR_ATTR_NODISCARD
+ FREERDP_LOCAL BOOL freerdp_channel_send_packet(rdpRdp* rdp, UINT16 channelId, size_t totalSize,
+                                                UINT32 flags, const BYTE* data, size_t chunkSize);
+diff --git a/libfreerdp/core/client.c b/libfreerdp/core/client.c
+index 069018c..abb7e86 100644
+--- a/libfreerdp/core/client.c
++++ b/libfreerdp/core/client.c
+@@ -30,6 +30,7 @@
+ 
+ #include "rdp.h"
+ #include "client.h"
++#include "channels.h"
+ 
+ #define TAG FREERDP_TAG("core.client")
+ 
+@@ -328,6 +329,8 @@ UINT freerdp_channels_pre_connect(rdpChannels* channels, freerdp* instance)
+ 	WINPR_ASSERT(instance);
+ 
+ 	MessageQueue_Clear(channels->queue);
++	channels->sendOffset = 0;
++	channels->closing = FALSE;
+ 
+ 	for (int index = 0; index < channels->clientDataCount; index++)
+ 	{
+@@ -705,7 +708,14 @@ BOOL freerdp_channels_process_message_free(wMessage* message, DWORD type)
+ 	return TRUE;
+ }
+ 
+-static BOOL freerdp_channels_process_message(freerdp* instance, wMessage* message)
++/*
++ * The bytes a pass of the session loop sends at most: a message of megabytes, a large clipboard answer,
++ * goes out over many passes, and the loop reads the server and sends input between them
++ */
++#define CHANNEL_SEND_BUDGET (64ull * 1024ull)
++
++/* *done is FALSE while a part of the message is still to go: it stays in the queue, not freed */
++static BOOL freerdp_channels_process_message(freerdp* instance, wMessage* message, BOOL* done)
+ {
+ 	BOOL ret = TRUE;
+ 	BOOL rc = FALSE;
+@@ -735,17 +745,28 @@ static BOOL freerdp_channels_process_message(freerdp* instance, wMessage* messag
+ 
+ 		if (channel)
+ 		{
+-			pChannelOpenData->stats.bytesOut += item->DataLength;
+-			pChannelOpenData->stats.packetsOut++;
+-
+-			const UINT32 VCChunkSize =
+-			    freerdp_settings_get_uint32(instance->context->settings, FreeRDP_VCChunkSize);
+-			if (VCChunkSize == 0)
+-				goto fail;
+-			const uint64_t frags = (1ull * item->DataLength + VCChunkSize - 1ull) / VCChunkSize;
+-			pChannelOpenData->stats.fragmentsOut += frags;
+-			ret = instance->SendChannelData(instance, channel->ChannelId, item->Data,
+-			                                item->DataLength);
++			rdpChannels* channels = instance->context->channels;
++			if (channels->sendOffset == 0)
++			{
++				pChannelOpenData->stats.bytesOut += item->DataLength;
++				pChannelOpenData->stats.packetsOut++;
++
++				const UINT32 VCChunkSize =
++				    freerdp_settings_get_uint32(instance->context->settings, FreeRDP_VCChunkSize);
++				if (VCChunkSize == 0)
++					goto fail;
++				const uint64_t frags = (1ull * item->DataLength + VCChunkSize - 1ull) / VCChunkSize;
++				pChannelOpenData->stats.fragmentsOut += frags;
++			}
++			ret = freerdp_channel_send_part(instance->context->rdp, channel->ChannelId, item->Data,
++			                                item->DataLength, &channels->sendOffset,
++			                                channels->closing ? SIZE_MAX : CHANNEL_SEND_BUDGET);
++			if (ret && (channels->sendOffset < item->DataLength))
++			{
++				*done = FALSE;
++				return TRUE;
++			}
++			channels->sendOffset = 0;
+ 		}
+ 	}
+ 
+@@ -769,10 +790,15 @@ static BOOL freerdp_channels_process_sync(rdpChannels* channels, freerdp* instan
+ 
+ 	WINPR_ASSERT(channels);
+ 
+-	while (MessageQueue_Peek(channels->queue, &message, TRUE))
++	/* A message leaves the queue once sent in full, so the event of the queue wakes the loop for the rest */
++	while (MessageQueue_Peek(channels->queue, &message, FALSE))
+ 	{
+-		if (!freerdp_channels_process_message(instance, &message))
++		BOOL done = TRUE;
++		if (!freerdp_channels_process_message(instance, &message, &done))
+ 			status = FALSE;
++		if (!done)
++			break;
++		(void)MessageQueue_Peek(channels->queue, &message, TRUE);
+ 	}
+ 
+ 	return status;
+@@ -978,6 +1004,7 @@ void freerdp_channels_close(rdpChannels* channels, freerdp* instance)
+ 	WINPR_ASSERT(instance);
+ 
+ 	MessageQueue_PostQuit(channels->queue, 0);
++	channels->closing = TRUE;
+ 	freerdp_channels_check_fds(channels, instance);
+ 
+ 	/* tell all libraries we are shutting down */
+diff --git a/libfreerdp/core/client.h b/libfreerdp/core/client.h
+index ddb520f..a58ab99 100644
+--- a/libfreerdp/core/client.h
++++ b/libfreerdp/core/client.h
+@@ -108,6 +108,11 @@ struct rdp_channels
+ 	CRITICAL_SECTION channelsLock;
+ 
+ 	wHashTable* channelEvents;
++
++	/* The bytes of the message at the head of the queue already sent: it stays there until all are */
++	size_t sendOffset;
++	/* Set while the channels close: what is left in the queue goes out whole, as before */
++	BOOL closing;
+ };
+ 
+ FREERDP_LOCAL void freerdp_channels_free(rdpChannels* channels);
