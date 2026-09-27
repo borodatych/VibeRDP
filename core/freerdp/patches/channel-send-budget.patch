@@ -1,26 +1,71 @@
-A message of a channel goes out over passes of the session loop, at most 64 KiB a pass,
+A message of a channel goes out over passes of the session loop, at most 64 KiB on the wire a pass,
 and a part of a large one only once the socket is nearly empty (TCP_NOTSENT_LOWAT):
 the loop reads the server between parts, and input does not queue behind megabytes in the socket
+The client compresses what it sends on a channel with RDP 4.0 bulk compression once the server takes it,
+as the clients of Microsoft do: FreeRDP sent channel data to the server uncompressed
 
 diff --git a/libfreerdp/core/channels.c b/libfreerdp/core/channels.c
-index 05f1670..7f6e23d 100644
+index 05f1670..628a3d3 100644
 --- a/libfreerdp/core/channels.c
 +++ b/libfreerdp/core/channels.c
-@@ -51,6 +51,13 @@
+@@ -51,6 +51,56 @@
  #define TAG FREERDP_TAG("core.channels")
  
  BOOL freerdp_channel_send(rdpRdp* rdp, UINT16 channelId, const BYTE* data, size_t size)
 +{
 +	size_t sent = 0;
-+	return freerdp_channel_send_part(rdp, channelId, data, size, &sent, SIZE_MAX);
++	return freerdp_channel_send_part(rdp, channelId, data, size, &sent, SIZE_MAX, nullptr);
++}
++
++/*
++ * A client may compress what it sends on a channel that asks for it, once the server announces it takes that:
++ * RDP 4.0 bulk compression only, with one history for all channels, MS-RDPBCGR 3.1.8
++ * The flags of MPPC map onto the channel header shifted by 16 bits: compressed, at front, flushed
++ */
++static BOOL channel_compresses(rdpRdp* rdp, const rdpMcsChannel* channel)
++{
++	const rdpSettings* settings = rdp->settings;
++	if (freerdp_settings_get_bool(settings, FreeRDP_ServerMode))
++		return FALSE;
++	if ((freerdp_settings_get_uint32(settings, FreeRDP_VCFlags) & VCCAPS_COMPR_CS_8K) == 0)
++		return FALSE;
++	if ((channel->options & (CHANNEL_OPTION_COMPRESS_RDP | CHANNEL_OPTION_COMPRESS)) == 0)
++		return FALSE;
++	if (!rdp->channelCompressor)
++		rdp->channelCompressor = mppc_context_new(0, TRUE);
++	return rdp->channelCompressor != nullptr;
++}
++
++/* A chunk longer than this goes uncompressed: the server sets the chunk size, 1600 bytes unless it asks for more */
++#define CHANNEL_COMPRESS_MAX_CHUNK 16384
++
++static BOOL channel_send_chunk(rdpRdp* rdp, UINT16 channelId, size_t totalSize, UINT32 flags,
++                               const BYTE* data, size_t chunkSize, BOOL compress, size_t* wire)
++{
++	BYTE buffer[CHANNEL_COMPRESS_MAX_CHUNK];
++	const BYTE* out = data;
++	UINT32 outSize = (UINT32)chunkSize;
++
++	if (compress && (chunkSize <= sizeof(buffer)))
++	{
++		UINT32 mppcFlags = 0;
++		outSize = (UINT32)sizeof(buffer);
++		if (mppc_compress(rdp->channelCompressor, data, (UINT32)chunkSize, buffer, &out, &outSize,
++		                  &mppcFlags) < 0)
++			return FALSE;
++		flags |= (mppcFlags & 0xFF) << 16;
++	}
++	if (wire)
++		*wire += outSize;
++	return freerdp_channel_send_packet(rdp, channelId, totalSize, flags, out, outSize);
 +}
 +
 +BOOL freerdp_channel_send_part(rdpRdp* rdp, UINT16 channelId, const BYTE* data, size_t size,
-+                               size_t* sent, size_t budget)
++                               size_t* sent, size_t budget, size_t* wire)
  {
  	size_t left = 0;
  	UINT32 flags = 0;
-@@ -60,6 +67,7 @@ BOOL freerdp_channel_send(rdpRdp* rdp, UINT16 channelId, const BYTE* data, size_
+@@ -60,6 +110,7 @@ BOOL freerdp_channel_send(rdpRdp* rdp, UINT16 channelId, const BYTE* data, size_
  
  	WINPR_ASSERT(rdp);
  	WINPR_ASSERT(data || (size == 0));
@@ -28,7 +73,7 @@ index 05f1670..7f6e23d 100644
  
  	mcs = rdp->mcs;
  	WINPR_ASSERT(mcs);
-@@ -79,12 +87,14 @@ BOOL freerdp_channel_send(rdpRdp* rdp, UINT16 channelId, const BYTE* data, size_
+@@ -79,12 +130,15 @@ BOOL freerdp_channel_send(rdpRdp* rdp, UINT16 channelId, const BYTE* data, size_
  		return FALSE;
  	}
  
@@ -41,38 +86,51 @@ index 05f1670..7f6e23d 100644
  	const UINT32 VCChunkSize = freerdp_settings_get_uint32(rdp->settings, FreeRDP_VCChunkSize);
  	const BOOL ServerMode = freerdp_settings_get_bool(rdp->settings, FreeRDP_ServerMode);
 -	while (left > 0)
++	const BOOL compress = channel_compresses(rdp, channel);
 +	size_t spent = 0;
 +	while ((left > 0) && (spent < budget))
  	{
  		if (left > VCChunkSize)
  		{
-@@ -106,6 +116,8 @@ BOOL freerdp_channel_send(rdpRdp* rdp, UINT16 channelId, const BYTE* data, size_
+@@ -101,11 +155,16 @@ BOOL freerdp_channel_send(rdpRdp* rdp, UINT16 channelId, const BYTE* data, size_
+ 			flags |= CHANNEL_FLAG_SHOW_PROTOCOL;
+ 		}
+ 
+-		if (!freerdp_channel_send_packet(rdp, channelId, size, flags, data, chunkSize))
++		size_t chunkWire = 0;
++		if (!channel_send_chunk(rdp, channelId, size, flags, data, chunkSize, compress, &chunkWire))
+ 			return FALSE;
  
  		data += chunkSize;
  		left -= chunkSize;
 +		*sent += chunkSize;
-+		spent += chunkSize;
++		spent += chunkWire;
++		if (wire)
++			*wire += chunkWire;
  		flags = 0;
  	}
  
 diff --git a/libfreerdp/core/channels.h b/libfreerdp/core/channels.h
-index de15c11..2e7e56e 100644
+index de15c11..8347100 100644
 --- a/libfreerdp/core/channels.h
 +++ b/libfreerdp/core/channels.h
-@@ -27,6 +27,11 @@ WINPR_ATTR_NODISCARD
+@@ -27,6 +27,14 @@ WINPR_ATTR_NODISCARD
  FREERDP_LOCAL BOOL freerdp_channel_send(rdpRdp* rdp, UINT16 channelId, const BYTE* data,
                                          size_t size);
  
-+/* Sends the chunks of data from *sent on until about budget bytes went out; *sent moves past them */
++/*
++ * Sends the chunks of data from *sent on until about budget bytes went out on the wire; *sent moves past them
++ * and *wire, when given, grows by the bytes they took there, compressed or not
++ */
 +WINPR_ATTR_NODISCARD
 +FREERDP_LOCAL BOOL freerdp_channel_send_part(rdpRdp* rdp, UINT16 channelId, const BYTE* data,
-+                                             size_t size, size_t* sent, size_t budget);
++                                             size_t size, size_t* sent, size_t budget, size_t* wire);
 +
  WINPR_ATTR_NODISCARD
  FREERDP_LOCAL BOOL freerdp_channel_send_packet(rdpRdp* rdp, UINT16 channelId, size_t totalSize,
                                                 UINT32 flags, const BYTE* data, size_t chunkSize);
 diff --git a/libfreerdp/core/client.c b/libfreerdp/core/client.c
-index 069018c..eb9cffb 100644
+index 069018c..80ac40a 100644
 --- a/libfreerdp/core/client.c
 +++ b/libfreerdp/core/client.c
 @@ -30,6 +30,8 @@
@@ -84,16 +142,17 @@ index 069018c..eb9cffb 100644
  
  #define TAG FREERDP_TAG("core.client")
  
-@@ -328,6 +330,8 @@ UINT freerdp_channels_pre_connect(rdpChannels* channels, freerdp* instance)
+@@ -328,6 +330,9 @@ UINT freerdp_channels_pre_connect(rdpChannels* channels, freerdp* instance)
  	WINPR_ASSERT(instance);
  
  	MessageQueue_Clear(channels->queue);
 +	channels->sendOffset = 0;
++	channels->sendWire = 0;
 +	channels->closing = FALSE;
  
  	for (int index = 0; index < channels->clientDataCount; index++)
  	{
-@@ -705,7 +709,19 @@ BOOL freerdp_channels_process_message_free(wMessage* message, DWORD type)
+@@ -705,7 +710,19 @@ BOOL freerdp_channels_process_message_free(wMessage* message, DWORD type)
  	return TRUE;
  }
  
@@ -114,7 +173,7 @@ index 069018c..eb9cffb 100644
  {
  	BOOL ret = TRUE;
  	BOOL rc = FALSE;
-@@ -735,17 +751,35 @@ static BOOL freerdp_channels_process_message(freerdp* instance, wMessage* messag
+@@ -735,17 +752,41 @@ static BOOL freerdp_channels_process_message(freerdp* instance, wMessage* messag
  
  		if (channel)
  		{
@@ -151,17 +210,23 @@ index 069018c..eb9cffb 100644
 +			}
 +			ret = freerdp_channel_send_part(instance->context->rdp, channel->ChannelId, item->Data,
 +			                                item->DataLength, &channels->sendOffset,
-+			                                channels->closing ? SIZE_MAX : CHANNEL_SEND_BUDGET);
++			                                channels->closing ? SIZE_MAX : CHANNEL_SEND_BUDGET,
++			                                &channels->sendWire);
 +			if (ret && (channels->sendOffset < item->DataLength))
 +			{
 +				*done = FALSE;
 +				return TRUE;
 +			}
++			if (large)
++				WLog_INFO(TAG, "channel %s: %" PRIu32 " bytes went out as %" PRIuz "%s",
++				          pChannelOpenData->stats.channelName, item->DataLength, channels->sendWire,
++				          ret ? "" : ", then the send failed");
 +			channels->sendOffset = 0;
++			channels->sendWire = 0;
  		}
  	}
  
-@@ -769,10 +803,15 @@ static BOOL freerdp_channels_process_sync(rdpChannels* channels, freerdp* instan
+@@ -769,10 +810,15 @@ static BOOL freerdp_channels_process_sync(rdpChannels* channels, freerdp* instan
  
  	WINPR_ASSERT(channels);
  
@@ -179,7 +244,7 @@ index 069018c..eb9cffb 100644
  	}
  
  	return status;
-@@ -978,6 +1017,7 @@ void freerdp_channels_close(rdpChannels* channels, freerdp* instance)
+@@ -978,6 +1024,7 @@ void freerdp_channels_close(rdpChannels* channels, freerdp* instance)
  	WINPR_ASSERT(instance);
  
  	MessageQueue_PostQuit(channels->queue, 0);
@@ -188,21 +253,65 @@ index 069018c..eb9cffb 100644
  
  	/* tell all libraries we are shutting down */
 diff --git a/libfreerdp/core/client.h b/libfreerdp/core/client.h
-index ddb520f..a58ab99 100644
+index ddb520f..f2620e7 100644
 --- a/libfreerdp/core/client.h
 +++ b/libfreerdp/core/client.h
-@@ -108,6 +108,11 @@ struct rdp_channels
+@@ -108,6 +108,13 @@ struct rdp_channels
  	CRITICAL_SECTION channelsLock;
  
  	wHashTable* channelEvents;
 +
 +	/* The bytes of the message at the head of the queue already sent: it stays there until all are */
 +	size_t sendOffset;
++	/* The bytes that message took on the wire so far, compressed or not */
++	size_t sendWire;
 +	/* Set while the channels close: what is left in the queue goes out whole, as before */
 +	BOOL closing;
  };
  
  FREERDP_LOCAL void freerdp_channels_free(rdpChannels* channels);
+diff --git a/libfreerdp/core/rdp.c b/libfreerdp/core/rdp.c
+index 0821f00..525befe 100644
+--- a/libfreerdp/core/rdp.c
++++ b/libfreerdp/core/rdp.c
+@@ -2576,6 +2576,8 @@ BOOL rdp_reset(rdpRdp* rdp)
+ 	WINPR_ASSERT(settings);
+ 
+ 	bulk_reset(rdp->bulk);
++	if (rdp->channelCompressor)
++		mppc_context_reset(rdp->channelCompressor, FALSE);
+ 
+ 	rdp_reset_free(rdp);
+ 
+@@ -2629,6 +2631,7 @@ void rdp_free(rdpRdp* rdp)
+ 		heartbeat_free(rdp->heartbeat);
+ 		multitransport_free(rdp->multitransport);
+ 		bulk_free(rdp->bulk);
++		mppc_context_free(rdp->channelCompressor);
+ 		free(rdp->io);
+ 		PubSub_Free(rdp->pubSub);
+ 		if (rdp->abortEvent)
+diff --git a/libfreerdp/core/rdp.h b/libfreerdp/core/rdp.h
+index 654f110..10a759c 100644
+--- a/libfreerdp/core/rdp.h
++++ b/libfreerdp/core/rdp.h
+@@ -37,6 +37,7 @@
+ #include "mcs.h"
+ #include "tpkt.h"
+ #include "../codec/bulk.h"
++#include "../codec/mppc.h"
+ #include "fastpath.h"
+ #include "tpdu.h"
+ #include "nego.h"
+@@ -153,6 +154,8 @@ struct rdp_rdp
+ 	rdpMcs* mcs;
+ 	rdpNego* nego;
+ 	rdpBulk* bulk;
++	/* RDP 4.0 compression of the virtual channel data the client sends, one history for all channels */
++	MPPC_CONTEXT* channelCompressor;
+ 	rdpInput* input;
+ 	rdpUpdate* update;
+ 	rdpFastPath* fastpath;
 diff --git a/libfreerdp/core/tcp.c b/libfreerdp/core/tcp.c
 index 2dcadd5..a65c25f 100644
 --- a/libfreerdp/core/tcp.c

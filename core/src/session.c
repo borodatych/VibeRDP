@@ -1085,11 +1085,15 @@ static BOOL applyParams(rdpSettings* settings, const VRCConnectionParams* params
  * a flat white rim of one pixel around the windows that draw their own frame, as VS Code and other Electron apps do
  * The connection type is LAN, not left to autodetection: with network auto-detection on, the server picks
  * the visual effects from the measured link and drops composition on a slow one, whatever the flags ask
+ * With LAN the server follows the flags as they are, so they are those of the client of Windows on a LAN:
+ * the defaults of FreeRDP drag an outline instead of the window and cut the animation of menus
  */
 static BOOL applyGraphics(rdpSettings* settings)
 {
     return freerdp_settings_set_uint32(settings, FreeRDP_ConnectionType, CONNECTION_TYPE_LAN) &&
            freerdp_settings_set_bool(settings, FreeRDP_AllowDesktopComposition, TRUE) &&
+           freerdp_settings_set_bool(settings, FreeRDP_DisableFullWindowDrag, FALSE) &&
+           freerdp_settings_set_bool(settings, FreeRDP_DisableMenuAnims, FALSE) &&
            freerdp_settings_set_bool(settings, FreeRDP_SupportGraphicsPipeline, TRUE) &&
            freerdp_settings_set_bool(settings, FreeRDP_RemoteFxCodec, TRUE) &&
            freerdp_settings_set_bool(settings, FreeRDP_GfxH264, TRUE) &&
