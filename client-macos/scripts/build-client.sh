@@ -3,7 +3,9 @@
 # Needs the framework that core/scripts/build-core.sh produces; how to run it: docs/manuals/devSetup.md
 #
 # Environment: the same as core/scripts/build-freerdp.sh, plus
-#   XCODEGEN  xcodegen executable (default: xcodegen from PATH)
+#   XCODEGEN               xcodegen executable (default: xcodegen from PATH)
+#   VIBERDP_SIGN_IDENTITY  the identity to sign the app with (default: "VibeRDP Self-Signed" when the keychain
+#                          holds it, an ad-hoc signature otherwise); make-signing-identity.sh creates it
 
 # shellcheck source-path=SCRIPTDIR
 set -euo pipefail
@@ -24,6 +26,7 @@ TEST_SERVER_SAMPLE="$TEST_SERVER/build/server/Sample"
 # With --local-only the port only names the socket file: the server opens no TCP port
 # One server replays a recording, another answers the mouse: the sample server does either, not both
 # The third echoes the clipboard
+DEFAULT_SIGN_IDENTITY="VibeRDP Self-Signed"
 TEST_SERVER_REPLAY_PORT=3389
 TEST_SERVER_INTERACTIVE_PORT=3390
 TEST_SERVER_CLIPBOARD_PORT=3391
@@ -69,6 +72,21 @@ build_app() {
     log "Building $APP"
     xcodebuild -quiet -project "$PROJECT" -scheme "$SCHEME" -configuration Release \
         -derivedDataPath "$DERIVED_DATA" -destination "generic/platform=macOS" ONLY_ACTIVE_ARCH=NO build
+}
+
+# The keychain gives an app the passwords it saved only while its signature meets the requirement they were saved
+# under: an ad-hoc signature is a hash of this very build, so every build asked for the keychain password again
+# A self-signed identity keeps the requirement to the certificate, and one "Always Allow" lasts across builds
+sign_app() {
+    local identity=${VIBERDP_SIGN_IDENTITY:-$DEFAULT_SIGN_IDENTITY}
+    # Untrusted is fine: codesign signs with it, and the requirement names the certificate, not a chain
+    if ! security find-identity -p codesigning 2>/dev/null | grep -qF "\"$identity\""; then
+        [ -z "${VIBERDP_SIGN_IDENTITY:-}" ] || die "the keychain holds no signing identity \"$identity\""
+        log "No signing identity \"$identity\": the app keeps its ad-hoc signature"
+        return 0
+    fi
+    log "Signing $APP as \"$identity\""
+    codesign --force --deep --timestamp=none --sign "$identity" "$APP"
 }
 
 check_app() {
@@ -204,6 +222,7 @@ main() {
     check_localization
     generate_project
     build_app
+    sign_app
     check_app
     test_app "$HOST_ARCH"
 

@@ -415,9 +415,12 @@ static BOOL postConnect(freerdp* instance)
     context->update->DesktopResize = desktopResize;
     registerPointer(context);
     notifyFrameResized(session, width, height);
-    WLog_INFO(TAG, "connected: performance flags 0x%08" PRIX32 ", connection type %" PRIu32,
+    WLog_INFO(TAG, "connected: performance flags 0x%08" PRIX32 ", connection type %" PRIu32
+                   ", channel data to the server %s",
               freerdp_settings_get_uint32(context->settings, FreeRDP_PerformanceFlags),
-              freerdp_settings_get_uint32(context->settings, FreeRDP_ConnectionType));
+              freerdp_settings_get_uint32(context->settings, FreeRDP_ConnectionType),
+              (freerdp_settings_get_uint32(context->settings, FreeRDP_VCFlags) & VCCAPS_COMPR_CS_8K) ? "compressed"
+                                                                                                    : "uncompressed");
     vrcRailConnected(&session->rail, context->settings);
     return TRUE;
 }
@@ -1135,7 +1138,13 @@ static BOOL applyReconnection(rdpSettings* settings)
  */
 static BOOL applyNetwork(rdpSettings* settings)
 {
-    return freerdp_settings_set_bool(settings, FreeRDP_NetworkAutoDetect, TRUE) &&
+    /*
+     * What the client sends on a channel goes compressed once both sides announce it: a screenshot as CF_DIB
+     * is tens of megabytes that shrink many times; FreeRDP leaves the flag of the client off
+     */
+    const UINT32 channelFlags = freerdp_settings_get_uint32(settings, FreeRDP_VCFlags) | VCCAPS_COMPR_CS_8K;
+    return freerdp_settings_set_uint32(settings, FreeRDP_VCFlags, channelFlags) &&
+           freerdp_settings_set_bool(settings, FreeRDP_NetworkAutoDetect, TRUE) &&
            freerdp_settings_set_bool(settings, FreeRDP_SupportHeartbeatPdu, TRUE) &&
            freerdp_settings_set_bool(settings, FreeRDP_SupportMultitransport, FALSE);
 }
