@@ -459,7 +459,21 @@ static UINT onServerFormatDataRequest(CliprdrClientContext* channel, const CLIPR
     if (clipboard->serverAsks != NO_ENTRY)
         WLog_WARN(TAG, "the server asks again before the answer about %s",
                   formatName(windowsFormats[clipboard->serverAsks].app));
+    const bool kept = answerable && clipboard->keptAnswer && clipboard->keptOffer == clipboard->offers &&
+                      clipboard->keptEntry == entry;
+    if (kept)
+    {
+        clipboard->serverAsks = NO_ENTRY;
+        const UINT sent = sendDataResponse(channel, clipboard->keptAnswer, clipboard->keptAnswerLength);
+        WLog_INFO(TAG, "the server pastes format 0x%04" PRIX32 " again: %s, %zu bytes kept from offer %" PRIu64
+                       ", sent %s",
+                  request->requestedFormatId, formatName(windowsFormats[entry].app), clipboard->keptAnswerLength,
+                  clipboard->keptOffer, sent == CHANNEL_RC_OK ? "ok" : "with an error");
+        pthread_mutex_unlock(&clipboard->mutex);
+        return sent;
+    }
     clipboard->serverAsks = answerable ? entry : NO_ENTRY;
+    clipboard->askedOffer = clipboard->offers;
     const UINT result = answerable ? CHANNEL_RC_OK : sendDataResponse(channel, NULL, 0);
     if (answerable)
         WLog_INFO(TAG, "the server pastes format 0x%04" PRIX32 ": %s, the app is asked",
@@ -608,6 +622,7 @@ void vrcClipboardDestroy(VRCClipboard* clipboard)
     free(clipboard->copyData);
     free(clipboard->rangeData);
     free(clipboard->remoteDescriptor);
+    free(clipboard->keptAnswer);
     vrcLocalFilesFree(clipboard->localFiles);
     pthread_mutex_destroy(&clipboard->copyLock);
     pthread_mutex_destroy(&clipboard->mutex);
@@ -669,6 +684,9 @@ VRCResult vrcClipboardOffer(VRCClipboard* clipboard, const VRCClipboardFormat* f
     pthread_mutex_lock(&clipboard->mutex);
     clipboard->offered = offered;
     clipboard->offers++;
+    /* The kept answer belongs to the copy before */
+    free(clipboard->keptAnswer);
+    clipboard->keptAnswer = NULL;
     /* A new copy replaces the list that waits to go again */
     clipboard->listRetries = 0;
     clipboard->listRetryAt = 0;
@@ -730,6 +748,15 @@ VRCResult vrcClipboardProvide(VRCClipboard* clipboard, VRCClipboardFormat format
             VRCLocalFiles* previous = clipboard->localFiles;
             clipboard->localFiles = files;
             files = previous;
+        }
+        else if (converted && result == VRCResultOK)
+        {
+            free(clipboard->keptAnswer);
+            clipboard->keptAnswer = converted;
+            clipboard->keptAnswerLength = convertedLength;
+            clipboard->keptOffer = clipboard->askedOffer;
+            clipboard->keptEntry = entry;
+            converted = NULL;
         }
     }
     else

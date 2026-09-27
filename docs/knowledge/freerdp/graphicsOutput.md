@@ -61,3 +61,9 @@
 - `core/third_party/FreeRDP/libfreerdp/core/fastpath.c`, `update.c`, `surface.c`, `connection.c`, `settings.c`
 - `core/third_party/FreeRDP/libfreerdp/gdi/gfx.c`, `channels/drdynvc/client/drdynvc_main.c`
 - `core/tests/frameTests.c`, `client-macos/Tests/LiveServerTests.swift`
+
+## Композиция рабочего стола
+
+FreeRDP по умолчанию не просит композицию: `AllowDesktopComposition` выключен, флаг производительности собирается из него при отправке Client Info
+Без неё Windows 11 рисует окна со своей рамкой, как VS Code и другие приложения на Electron, с белым ободком в пиксель — он приходит в самой картинке сервера
+Ядро просит композицию вместе с графическим конвейером

@@ -294,8 +294,16 @@ static bool testServerPastesText(void)
     CHECK(vrcClipboardProvide(&clipboard, VRCClipboardFormatText, "c", 1) == VRCResultInvalidState);
     CHECK(channel.dataResponses == 1);
 
-    /* The Mac no longer holds the text: the server gets a failed answer */
+    /* The same offer asked again: the kept answer goes, the app is not asked */
     CHECK(serverAsks(CF_UNICODETEXT) == CHANNEL_RC_OK);
+    CHECK(channel.dataQuestions == 1);
+    CHECK(channel.dataResponses == 2);
+    CHECK(memcmp(channel.lastResponse, expected, sizeof(expected)) == 0);
+
+    /* The Mac no longer holds the text of a new offer: the server gets a failed answer */
+    CHECK(vrcClipboardOffer(&clipboard, &text, 1) == VRCResultOK);
+    CHECK(serverAsks(CF_UNICODETEXT) == CHANNEL_RC_OK);
+    CHECK(channel.dataQuestions == 2);
     CHECK(vrcClipboardProvide(&clipboard, VRCClipboardFormatText, NULL, 0) == VRCResultOK);
     CHECK(channel.lastResponseFlags == CB_RESPONSE_FAIL);
 
@@ -503,8 +511,21 @@ static bool testOfferImage(void)
     CHECK(channel.lastResponseLength == sizeof(onePixelDib));
     CHECK(memcmp(channel.lastResponse + 40, onePixelDib + 40, 4) == 0);
 
-    /* Broken image data is a failure for the app, and the server still waits for its answer */
+    /* The same copy asked again goes from the kept answer, without a question to the app */
+    memset(channel.lastResponse, 0, channel.lastResponseLength);
     CHECK(serverAsks(CF_DIB) == CHANNEL_RC_OK);
+    CHECK(channel.dataQuestions == 2);
+    CHECK(channel.lastResponseFlags == CB_RESPONSE_OK);
+    CHECK(channel.lastResponseLength == sizeof(onePixelDib));
+    CHECK(memcmp(channel.lastResponse + 40, onePixelDib + 40, 4) == 0);
+    CHECK(vrcClipboardProvide(&clipboard, VRCClipboardFormatImage, png, pngLength) == VRCResultInvalidState);
+
+    /* A new copy of the Mac drops the kept answer: the app is asked again */
+    CHECK(vrcClipboardOffer(&clipboard, &image, 1) == VRCResultOK);
+    CHECK(serverAsks(CF_DIB) == CHANNEL_RC_OK);
+    CHECK(channel.dataQuestions == 3);
+
+    /* Broken image data is a failure for the app, and the server still waits for its answer */
     CHECK(vrcClipboardProvide(&clipboard, VRCClipboardFormatImage, "junk", 4) == VRCResultFailure);
     CHECK(vrcClipboardProvide(&clipboard, VRCClipboardFormatImage, NULL, 0) == VRCResultOK);
     CHECK(channel.lastResponseFlags == CB_RESPONSE_FAIL);

@@ -1078,10 +1078,13 @@ static BOOL applyParams(rdpSettings* settings, const VRCConnectionParams* params
  * a client leaves both off by default, and a server may refuse a client with no codec at all
  * H.264 in both forms, AVC420 and AVC444, decodes through VideoToolbox
  * Without these settings the client tells the server that it takes no H.264
+ * Desktop composition is asked for as the client of Windows asks on a fast link: without it Windows 11 draws
+ * a flat white rim of one pixel around the windows that draw their own frame, as VS Code and other Electron apps do
  */
 static BOOL applyGraphics(rdpSettings* settings)
 {
-    return freerdp_settings_set_bool(settings, FreeRDP_SupportGraphicsPipeline, TRUE) &&
+    return freerdp_settings_set_bool(settings, FreeRDP_AllowDesktopComposition, TRUE) &&
+           freerdp_settings_set_bool(settings, FreeRDP_SupportGraphicsPipeline, TRUE) &&
            freerdp_settings_set_bool(settings, FreeRDP_RemoteFxCodec, TRUE) &&
            freerdp_settings_set_bool(settings, FreeRDP_GfxH264, TRUE) &&
            freerdp_settings_set_bool(settings, FreeRDP_GfxAVC444, TRUE);

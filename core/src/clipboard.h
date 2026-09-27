@@ -57,6 +57,17 @@ typedef struct VRCClipboard {
     int32_t remoteEntries[VRC_CLIPBOARD_FORMAT_SLOTS];
     /* The entry of the format the server asked for and waits for, NO_ENTRY when it waits for nothing */
     int32_t serverAsks;
+    /* The offer of the Mac the server asked about, for the answer to be kept under it */
+    uint64_t askedOffer;
+    /*
+     * The last answer the server got, kept while the Mac offers the same copy: Windows asks for a copy
+     * again on its own, and a screenshot as CF_DIB is megabytes the app would convert anew each time
+     * NULL when none is kept; files never are, their list holds state of its own
+     */
+    uint8_t* keptAnswer;
+    size_t keptAnswerLength;
+    uint64_t keptOffer;
+    int32_t keptEntry;
     /*
      * The files of the last list the server got, NULL before any
      * The list stays after the Mac clipboard changes: a paste on the server may still be reading it
