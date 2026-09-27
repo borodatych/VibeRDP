@@ -3,6 +3,7 @@
   "menu.app.about": "About {app}",
   "menu.app.settings": "Settings…",
   "about.donate": "Donations are welcome here",
+  "about.version": "Version {version}",
   "menu.app.hide": "Hide {app}",
   "menu.app.hideOthers": "Hide Others",
   "menu.app.showAll": "Show All",
