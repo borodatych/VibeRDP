@@ -1,5 +1,6 @@
-A message of a channel goes out over passes of the session loop, at most 64 KiB a pass:
-the loop reads the server and sends input between them, instead of standing until megabytes went out
+A message of a channel goes out over passes of the session loop, at most 64 KiB a pass,
+and a part of a large one only once the socket is nearly empty (TCP_NOTSENT_LOWAT):
+the loop reads the server between parts, and input does not queue behind megabytes in the socket
 
 diff --git a/libfreerdp/core/channels.c b/libfreerdp/core/channels.c
 index 05f1670..7f6e23d 100644
@@ -71,18 +72,19 @@ index de15c11..2e7e56e 100644
  FREERDP_LOCAL BOOL freerdp_channel_send_packet(rdpRdp* rdp, UINT16 channelId, size_t totalSize,
                                                 UINT32 flags, const BYTE* data, size_t chunkSize);
 diff --git a/libfreerdp/core/client.c b/libfreerdp/core/client.c
-index 069018c..abb7e86 100644
+index 069018c..eb9cffb 100644
 --- a/libfreerdp/core/client.c
 +++ b/libfreerdp/core/client.c
-@@ -30,6 +30,7 @@
+@@ -30,6 +30,8 @@
  
  #include "rdp.h"
  #include "client.h"
 +#include "channels.h"
++#include "transport.h"
  
  #define TAG FREERDP_TAG("core.client")
  
-@@ -328,6 +329,8 @@ UINT freerdp_channels_pre_connect(rdpChannels* channels, freerdp* instance)
+@@ -328,6 +330,8 @@ UINT freerdp_channels_pre_connect(rdpChannels* channels, freerdp* instance)
  	WINPR_ASSERT(instance);
  
  	MessageQueue_Clear(channels->queue);
@@ -91,7 +93,7 @@ index 069018c..abb7e86 100644
  
  	for (int index = 0; index < channels->clientDataCount; index++)
  	{
-@@ -705,7 +708,14 @@ BOOL freerdp_channels_process_message_free(wMessage* message, DWORD type)
+@@ -705,7 +709,19 @@ BOOL freerdp_channels_process_message_free(wMessage* message, DWORD type)
  	return TRUE;
  }
  
@@ -101,13 +103,18 @@ index 069018c..abb7e86 100644
 + * goes out over many passes, and the loop reads the server and sends input between them
 + */
 +#define CHANNEL_SEND_BUDGET (64ull * 1024ull)
++/*
++ * How long a pass waits for the socket before a part of a large message: the part goes only once the socket
++ * is nearly empty, so input sent meanwhile waits for one part, not for the whole message
++ */
++#define CHANNEL_SEND_WAIT_MS 5
 +
 +/* *done is FALSE while a part of the message is still to go: it stays in the queue, not freed */
 +static BOOL freerdp_channels_process_message(freerdp* instance, wMessage* message, BOOL* done)
  {
  	BOOL ret = TRUE;
  	BOOL rc = FALSE;
-@@ -735,17 +745,28 @@ static BOOL freerdp_channels_process_message(freerdp* instance, wMessage* messag
+@@ -735,17 +751,35 @@ static BOOL freerdp_channels_process_message(freerdp* instance, wMessage* messag
  
  		if (channel)
  		{
@@ -123,6 +130,13 @@ index 069018c..abb7e86 100644
 -			ret = instance->SendChannelData(instance, channel->ChannelId, item->Data,
 -			                                item->DataLength);
 +			rdpChannels* channels = instance->context->channels;
++			const BOOL large = (channels->sendOffset > 0) || (item->DataLength > CHANNEL_SEND_BUDGET);
++			if (large && !channels->closing &&
++			    !transport_can_write(instance->context->rdp->transport, CHANNEL_SEND_WAIT_MS))
++			{
++				*done = FALSE;
++				return TRUE;
++			}
 +			if (channels->sendOffset == 0)
 +			{
 +				pChannelOpenData->stats.bytesOut += item->DataLength;
@@ -147,7 +161,7 @@ index 069018c..abb7e86 100644
  		}
  	}
  
-@@ -769,10 +790,15 @@ static BOOL freerdp_channels_process_sync(rdpChannels* channels, freerdp* instan
+@@ -769,10 +803,15 @@ static BOOL freerdp_channels_process_sync(rdpChannels* channels, freerdp* instan
  
  	WINPR_ASSERT(channels);
  
@@ -165,7 +179,7 @@ index 069018c..abb7e86 100644
  	}
  
  	return status;
-@@ -978,6 +1004,7 @@ void freerdp_channels_close(rdpChannels* channels, freerdp* instance)
+@@ -978,6 +1017,7 @@ void freerdp_channels_close(rdpChannels* channels, freerdp* instance)
  	WINPR_ASSERT(instance);
  
  	MessageQueue_PostQuit(channels->queue, 0);
@@ -189,3 +203,79 @@ index ddb520f..a58ab99 100644
  };
  
  FREERDP_LOCAL void freerdp_channels_free(rdpChannels* channels);
+diff --git a/libfreerdp/core/tcp.c b/libfreerdp/core/tcp.c
+index 2dcadd5..a65c25f 100644
+--- a/libfreerdp/core/tcp.c
++++ b/libfreerdp/core/tcp.c
+@@ -1078,6 +1078,16 @@ BOOL freerdp_tcp_set_keep_alive_mode(const rdpSettings* settings, int sockfd)
+ 		WLog_WARN(TAG, "setsockopt() SOL_SOCKET, SO_NOSIGPIPE");
+ 	}
+ 
++	/* The socket counts as writable only while little is unsent: large channel data then waits above it,
++	 * and input written after it does not queue behind megabytes */
++	optval = 16 * 1024;
++	optlen = sizeof(optval);
++
++	if (isTcp && setsockopt(sockfd, IPPROTO_TCP, TCP_NOTSENT_LOWAT, (void*)&optval, optlen) < 0)
++	{
++		WLog_WARN(TAG, "setsockopt() IPPROTO_TCP, TCP_NOTSENT_LOWAT");
++	}
++
+ #endif
+ #ifdef TCP_USER_TIMEOUT
+ 	optval = freerdp_settings_get_uint32(settings, FreeRDP_TcpAckTimeout);
+diff --git a/libfreerdp/core/transport.c b/libfreerdp/core/transport.c
+index 2277d2a..d4e8a15 100644
+--- a/libfreerdp/core/transport.c
++++ b/libfreerdp/core/transport.c
+@@ -42,6 +42,7 @@
+ #ifndef _WIN32
+ #include <netdb.h>
+ #include <sys/socket.h>
++#include <poll.h>
+ #endif /* _WIN32 */
+ 
+ #ifdef FREERDP_HAVE_VALGRIND_MEMCHECK_H
+@@ -1971,6 +1972,24 @@ int transport_tcp_connect(rdpTransport* transport, const char* hostname, int por
+ 	                    timeout);
+ }
+ 
++BOOL transport_can_write(rdpTransport* transport, int timeoutMs)
++{
++	WINPR_ASSERT(transport);
++
++	BIO* bio = transport->frontBio;
++	if (!bio)
++		return TRUE;
++	if (BIO_wpending(bio) > 0)
++		return FALSE;
++
++	int fd = -1;
++	if ((BIO_get_fd(bio, &fd) <= 0) || (fd < 0))
++		return TRUE;
++
++	struct pollfd pfd = { .fd = fd, .events = POLLOUT, .revents = 0 };
++	return (poll(&pfd, 1, timeoutMs) == 1) && ((pfd.revents & POLLOUT) != 0);
++}
++
+ HANDLE transport_get_front_bio(rdpTransport* transport)
+ {
+ 	HANDLE hEvent = nullptr;
+diff --git a/libfreerdp/core/transport.h b/libfreerdp/core/transport.h
+index 26ac90f..bb66a19 100644
+--- a/libfreerdp/core/transport.h
++++ b/libfreerdp/core/transport.h
+@@ -152,6 +152,13 @@ FREERDP_LOCAL DWORD transport_get_event_handles(rdpTransport* transport, HANDLE*
+ WINPR_ATTR_NODISCARD
+ FREERDP_LOCAL HANDLE transport_get_front_bio(rdpTransport* transport);
+ 
++/*
++ * Whether a write would go out at once, waiting up to timeoutMs: nothing is buffered above the socket
++ * and the socket takes more; TRUE when the transport has no socket to ask, as behind a gateway
++ */
++WINPR_ATTR_NODISCARD
++FREERDP_LOCAL BOOL transport_can_write(rdpTransport* transport, int timeoutMs);
++
+ WINPR_ATTR_NODISCARD
+ FREERDP_LOCAL BOOL transport_set_blocking_mode(rdpTransport* transport, BOOL blocking);
+ 
