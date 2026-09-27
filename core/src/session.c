@@ -415,7 +415,6 @@ static BOOL postConnect(freerdp* instance)
     context->update->DesktopResize = desktopResize;
     registerPointer(context);
     notifyFrameResized(session, width, height);
-    /* With the connection type left to autodetection the server may choose the visual effects itself */
     WLog_INFO(TAG, "connected: performance flags 0x%08" PRIX32 ", connection type %" PRIu32,
               freerdp_settings_get_uint32(context->settings, FreeRDP_PerformanceFlags),
               freerdp_settings_get_uint32(context->settings, FreeRDP_ConnectionType));
@@ -1084,10 +1083,13 @@ static BOOL applyParams(rdpSettings* settings, const VRCConnectionParams* params
  * Without these settings the client tells the server that it takes no H.264
  * Desktop composition is asked for as the client of Windows asks on a fast link: without it Windows 11 draws
  * a flat white rim of one pixel around the windows that draw their own frame, as VS Code and other Electron apps do
+ * The connection type is LAN, not left to autodetection: with network auto-detection on, the server picks
+ * the visual effects from the measured link and drops composition on a slow one, whatever the flags ask
  */
 static BOOL applyGraphics(rdpSettings* settings)
 {
-    return freerdp_settings_set_bool(settings, FreeRDP_AllowDesktopComposition, TRUE) &&
+    return freerdp_settings_set_uint32(settings, FreeRDP_ConnectionType, CONNECTION_TYPE_LAN) &&
+           freerdp_settings_set_bool(settings, FreeRDP_AllowDesktopComposition, TRUE) &&
            freerdp_settings_set_bool(settings, FreeRDP_SupportGraphicsPipeline, TRUE) &&
            freerdp_settings_set_bool(settings, FreeRDP_RemoteFxCodec, TRUE) &&
            freerdp_settings_set_bool(settings, FreeRDP_GfxH264, TRUE) &&
