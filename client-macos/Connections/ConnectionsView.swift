@@ -153,6 +153,9 @@ private struct ConnectionsContent: View {
     @State private var awaitingLayout = false
     /// The lifted copy lands in its place as the drag ends
     @State private var settling = false
+    /// True while a drag gesture of a tile goes on; SwiftUI resets it when the system takes the gesture away,
+    /// as a connection begun by a double-click that moved the mouse does, and no onEnded comes then
+    @GestureState private var gestureActive = false
 
     var body: some View {
         let profiles = model.visibleProfiles
@@ -202,6 +205,11 @@ private struct ConnectionsContent: View {
                         awaitingLayout = false
                     }
                     .overlay(alignment: .topLeading) { liftedTile }
+                    .onChange(of: gestureActive) { _, active in
+                        if !active {
+                            settle()
+                        }
+                    }
                 }
                 .padding(Self.spacing)
             }
@@ -273,6 +281,7 @@ extension ConnectionsContent {
 
     private func drag(_ profile: ConnectionProfile) -> some Gesture {
         DragGesture(minimumDistance: Self.dragThreshold, coordinateSpace: .named(Self.tiles))
+            .updating($gestureActive) { _, active, _ in active = true }
             .onChanged { value in
                 if dragged == nil, let slot = frames[profile.id] {
                     model.selection = profile.id
@@ -292,19 +301,23 @@ extension ConnectionsContent {
                     withAnimation(Self.makeWay) { model.move(profile.id, to: target) }
                 }
             }
-            .onEnded { _ in
-                guard dragged == profile.id, let slot = frames[profile.id] else {
-                    dragged = nil
-                    return
-                }
-                withAnimation(Self.makeWay) {
-                    pointer = CGPoint(x: slot.midX + grab.width, y: slot.midY + grab.height)
-                    settling = true
-                } completion: {
-                    dragged = nil
-                    settling = false
-                }
-            }
+            .onEnded { _ in settle() }
+    }
+
+    /// The drag ended or was taken away: the lifted copy lands in the place of its tile, once
+    private func settle() {
+        guard let id = dragged, !settling else { return }
+        guard let slot = frames[id] else {
+            dragged = nil
+            return
+        }
+        withAnimation(Self.makeWay) {
+            pointer = CGPoint(x: slot.midX + grab.width, y: slot.midY + grab.height)
+            settling = true
+        } completion: {
+            dragged = nil
+            settling = false
+        }
     }
 }
 
@@ -355,7 +368,6 @@ private struct ConnectionTile: View {
         let selected = model.selection == profile.id
         let running = model.isBusy && model.activeProfile == profile.id
         ZStack(alignment: .bottomLeading) {
-            picture
             LinearGradient(colors: [.clear, .black.opacity(0.7)], startPoint: .center, endPoint: .bottom)
             VStack(alignment: .leading, spacing: 2) {
                 Text(ConnectionsView.title(of: profile))
@@ -369,6 +381,9 @@ private struct ConnectionTile: View {
             .lineLimit(1)
             .padding(14)
         }
+        // The picture fills the tile without sizing it: a snapshot of a session over two monitors is twice as wide,
+        // and as content it would widen the tile over its neighbours
+        .background { picture }
         .overlay(alignment: .topLeading) {
             HStack(spacing: 6) {
                 Text(Localization.text(.connectionsTileBadge))
