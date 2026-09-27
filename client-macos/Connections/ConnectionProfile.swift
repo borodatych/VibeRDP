@@ -161,6 +161,25 @@ enum ProfileDisplayMode: String, Codable, CaseIterable, Identifiable, Sendable {
     case seam
 
     var id: Self { self }
+
+    /// Whether this build offers the Windows windows: FEATURE_WINDOWS of build.env; off in the releases 1.x
+    static let windowsMode: Bool = {
+        #if WINDOWS_MODE
+            true
+        #else
+            false
+        #endif
+    }()
+
+    /// The modes the lists offer in this build
+    static var offered: [ProfileDisplayMode] {
+        windowsMode ? allCases : allCases.filter { $0 != .seam }
+    }
+
+    /// The mode a session opens in: one this build does not offer, saved by a build that did, opens by the window
+    var effective: ProfileDisplayMode {
+        self == .seam && !Self.windowsMode ? .window : self
+    }
 }
 
 /// A desktop size in pixels of Windows

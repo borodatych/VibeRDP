@@ -85,6 +85,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         content.open(urls)
     }
 
+    /// The side of the donation code in the About window, in points: large enough for a phone camera
+    private static let donationCodeSide: CGFloat = 160
+
+    /// The menu command: the About window of the system, with the donation code under the version
+    /// The image is the code alone, cut from the picture of the bank without the name and the contract
+    @objc func showAbout(_ sender: Any?) {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
+        let credits = NSMutableAttributedString(
+            string: Localization.text(.aboutDonate) + "\n",
+            attributes: [
+                .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
+                .foregroundColor: NSColor.labelColor, .paragraphStyle: paragraph,
+            ])
+        if let image = NSImage(named: "Donate") {
+            let attachment = NSTextAttachment()
+            attachment.image = image
+            attachment.bounds = CGRect(x: 0, y: 0, width: Self.donationCodeSide, height: Self.donationCodeSide)
+            let code = NSMutableAttributedString(attachment: attachment)
+            code.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: code.length))
+            credits.append(code)
+        }
+        NSApp.orderFrontStandardAboutPanel(options: [.credits: credits])
+        NSApp.activate()
+    }
+
     /// The menu command: one settings window, made when first asked for
     @objc func showSettings(_ sender: Any?) {
         guard let languages else { return }

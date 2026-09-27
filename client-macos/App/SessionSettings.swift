@@ -41,7 +41,7 @@ final class SessionSettings {
             defaults.object(forKey: Self.clipboardIntervalKey) as? Double ?? Self.defaultClipboardInterval,
             to: Self.clipboardIntervalRange)
         newConnectionMode =
-            defaults.string(forKey: Self.newConnectionModeKey).flatMap(ProfileDisplayMode.init(rawValue:))
+            defaults.string(forKey: Self.newConnectionModeKey).flatMap(ProfileDisplayMode.init(rawValue:))?.effective
             ?? Self.defaultNewConnectionMode
     }
 

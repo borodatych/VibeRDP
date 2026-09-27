@@ -660,11 +660,11 @@ private struct ProfileEditor: View {
 
     /// The desktop of the connection: by the window, in full screen, or of a fixed size chosen from the list or typed
     private var displaySection: some View {
-        let mode = model.selectedProfile?.displayMode ?? .window
+        let mode = model.selectedProfile?.displayMode.effective ?? .window
         let fixed = model.selectedProfile?.fixedSize ?? .standard
         return Section {
             Picker(selection: Binding(get: { mode }, set: { mode in model.update { $0.displayMode = mode } })) {
-                ForEach(ProfileDisplayMode.allCases) { mode in
+                ForEach(ProfileDisplayMode.offered) { mode in
                     Text(Localization.text(ProfileDisplayMode.titleKey(of: mode))).tag(mode)
                 }
             } label: {

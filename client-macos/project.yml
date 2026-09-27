@@ -15,6 +15,8 @@ settings:
     CURRENT_PROJECT_VERSION: "${VERSION}"
     ARCHS: "${ARCHS}"
     SWIFT_VERSION: "6.0"
+    # WINDOWS_MODE offers the mode "Windows windows": FEATURE_WINDOWS of build.env
+    SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) ${VIBERDP_SWIFT_CONDITIONS}"
     # Strict like the core: a warning in our code fails the build
     SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
     GCC_TREAT_WARNINGS_AS_ERRORS: YES

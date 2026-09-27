@@ -21,7 +21,7 @@ struct MainMenu {
 
         let application = NSMenu()
         application.addItem(
-            Self.item(.menuAppAbout, app, #selector(NSApplication.orderFrontStandardAboutPanel(_:))))
+            Self.item(.menuAppAbout, app, #selector(AppDelegate.showAbout(_:))))
         application.addItem(.separator())
         application.addItem(Self.item(.menuAppSettings, [:], #selector(AppDelegate.showSettings(_:)), key: ","))
         application.addItem(.separator())

@@ -234,7 +234,7 @@ final class ConnectionViewController: NSViewController {
             return other
         }
         let window = SessionWindowController(
-            desktop: desktop, title: profile.title, mode: profile.displayMode, fixedSize: profile.fixedSize,
+            desktop: desktop, title: profile.title, mode: profile.displayMode.effective, fixedSize: profile.fixedSize,
             sharp: profile.sharpOnRetina, screen: view.window?.screen, frameName: sessionFrameName,
             allScreens: profile.allScreens, makeDesktop: makeDesktop,
             onDisconnect: { [weak controller] in controller?.disconnect() },

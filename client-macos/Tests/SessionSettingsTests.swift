@@ -22,9 +22,12 @@ final class SessionSettingsTests: XCTestCase {
         let store = defaults()
         let settings = SessionSettings(defaults: store)
         settings.scrollSpeed = 2.5
-        settings.newConnectionMode = .seam
+        settings.newConnectionMode = .fullScreen
         XCTAssertEqual(SessionSettings(defaults: store).scrollSpeed, 2.5)
-        XCTAssertEqual(SessionSettings(defaults: store).newConnectionMode, .seam)
+        XCTAssertEqual(SessionSettings(defaults: store).newConnectionMode, .fullScreen)
+        // The Windows windows saved by a build that offers them read as what this build opens
+        settings.newConnectionMode = .seam
+        XCTAssertEqual(SessionSettings(defaults: store).newConnectionMode, ProfileDisplayMode.seam.effective)
         store.set(100.0, forKey: "sessionScrollSpeed")
         store.set(-1.0, forKey: "sessionClipboardInterval")
         store.set("unknown", forKey: "sessionNewConnectionMode")

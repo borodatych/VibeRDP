@@ -4,6 +4,7 @@ import os
 enum TextKey: String, CaseIterable {
     case menuAppAbout = "menu.app.about"
     case menuAppSettings = "menu.app.settings"
+    case aboutDonate = "about.donate"
     case menuAppHide = "menu.app.hide"
     case menuAppHideOthers = "menu.app.hideOthers"
     case menuAppShowAll = "menu.app.showAll"
@@ -236,6 +237,7 @@ extension TextKey {
         switch self {
         case .menuAppAbout: "О программе {app}"
         case .menuAppSettings: "Настройки…"
+        case .aboutDonate: "Донаты принимаются сюда"
         case .menuAppHide: "Скрыть {app}"
         case .menuAppHideOthers: "Скрыть остальные"
         case .menuAppShowAll: "Показать все"

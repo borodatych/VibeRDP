@@ -228,7 +228,7 @@ struct SessionSettingsView: View {
             }
             Section {
                 Picker(Localization.text(.settingsSessionNewMode), selection: $settings.newConnectionMode) {
-                    ForEach(ProfileDisplayMode.allCases) { mode in
+                    ForEach(ProfileDisplayMode.offered) { mode in
                         Text(Localization.text(ProfileDisplayMode.titleKey(of: mode))).tag(mode)
                     }
                 }

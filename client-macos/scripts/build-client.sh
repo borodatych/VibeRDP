@@ -61,7 +61,10 @@ check_localization() {
 # project.yml takes the build parameters and the framework path from the environment
 generate_project() {
     log "Generating $PROJECT"
+    local conditions=""
+    [ "$FEATURE_WINDOWS" = 1 ] && conditions=WINDOWS_MODE
     VERSION="$VERSION" \
+        VIBERDP_SWIFT_CONDITIONS="$conditions" \
         MACOSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET" \
         ARCHS="$ARCHS" \
         VIBERDP_CORE_FRAMEWORK="$FRAMEWORK" \
